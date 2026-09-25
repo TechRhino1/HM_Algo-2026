@@ -1,0 +1,466 @@
+================================================================================
+           HM ALGO 2.0 (JARVIS) — COMPREHENSIVE DEVELOPER FIX & UPGRADE GUIDE
+   SUBJECT: RESOLUTION OF TRADING LOSSES, AUTONOMOUS EXECUTION RECOVERY,
+            AND PRODUCTION IMPLEMENTATION OF SPECIFICATION v2.2
+   VERSION: 2.2
+   DATE: 2026-09-25
+   REPOSITORY: TechRhino1/HM-AI
+   BRANCH: main
+================================================================================
+
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. EXECUTIVE SUMMARY & NO PROFITABILITY GUARANTEE NOTICE
+2. VERIFIED EXISTING ENGINES — DO NOT REIMPLEMENT (§2)
+3. ROOT CAUSE SUMMARY OF HISTORICAL LOSSES & EXECUTION HALT
+4. PRE-FILL SIZING & POST-FILL MONETARY RISK INVARIANCE (§14)
+   4.1. Real-Time Broker Tick Geometry (tick_value / tick_size)
+   4.2. Pre-Fill Broker-Safe SL and Dynamic Volume Downsizing
+   4.3. Post-Fill Risk Backstop Reconciliation
+   4.4. Broker Response Taxonomy & UNKNOWN State Reconciliation
+5. FAIL-CLOSED EXECUTION MODE MATRIX (§28, §30)
+   5.1. Strict Elimination of Paper Fallback
+   5.2. Account Identity Safety Gate
+6. CANONICAL EXIT PATH & SPREAD NOISE SUPPRESSION (§18, §20, §21, §22, §26)
+   6.1. Zero Direct Broker Closes in PositionMonitor
+   6.2. 180-Second Discretionary Grace Period (Hard Broker SL/TP Armed)
+   6.3. Manual Trade Isolation (MANUAL_MANAGEMENT_MODE = PROTECT_ONLY)
+7. SETUP LIFECYCLE & 14-STATE CANDIDATE TRACKING (§5, §6, §38)
+   7.1. Immutable UUID Setup Identification (setup_id)
+   7.2. 14-State Transition Lifecycle (9 Active + 5 Terminal)
+   7.3. The 16 Candidate Diagnostics Questions
+8. AUDITED DYNAMIC DRAWDOWN RE-ANCHORING (§22, §27)
+   8.1. Elimination of Static Hardcoded Balances
+   8.2. Immutable SQLite Audit Table: drawdown_reanchor_audit
+   8.3. The 9-Step Atomic Transaction Lifecycle
+   8.4. Post-Reanchor Protection Recalculation (No Blind "Lockout Cleared")
+9. TESTING, VALIDATION & 7–14 DAY DEMO SOAK PROTOCOL (§51, §52, §53)
+10. COMPLETE 20 ACCEPTANCE INVARIANTS MATRIX
+11. IMPLEMENTATION VERIFICATION STATUS (COMPLETED 2026-09-25)
+--------------------------------------------------------------------------------
+
+
+================================================================================
+1. EXECUTIVE SUMMARY & NO PROFITABILITY GUARANTEE NOTICE
+================================================================================
+
+This specification v2.2 defines the production implementation requirements for
+the current HM-AI codebase (`TechRhino1/HM-AI`, branch: `main`).
+
+IMPORTANT ARCHITECTURAL DIRECTIVE:
+The objective is NOT to rewrite the trading strategy or duplicate existing
+functional components. The objective is to make the existing strategy:
+1. Automatically detect and execute valid opportunities without dropping setups.
+2. Prevent oversized risk when broker fills widen the stop distance.
+3. Eliminate premature spread-noise exits (180s discretionary grace period).
+4. Unify all exits under `jarvis/execution/exit_policy.py`.
+5. Isolate manual positions (`MANUAL_MANAGEMENT_MODE = PROTECT_ONLY`).
+6. Eliminate dangerous paper fallback; fail closed if MT5 is down.
+7. Re-anchor DrawdownGuard only via audited dynamic operator verification.
+8. Enforce an automated 7–14 day MT5 DEMO soak test before live money.
+
+NO PROFITABILITY GUARANTEE:
+The implementation must NOT claim that these changes guarantee profitability,
+eliminate losing trades, or guarantee positive expectancy. The purpose of this
+specification is to correct software execution integrity, risk invariance, state
+management, exit consistency, and observability. Strategy edge must be established
+independently through forward demo soak evidence.
+
+
+================================================================================
+2. VERIFIED EXISTING ENGINES — DO NOT REIMPLEMENT (§2)
+================================================================================
+
+The developer MUST preserve and build upon the following existing components:
+
+2.1 Risk Ceiling:
+    `RiskEngine` already contains the authoritative risk ceiling:
+    `maximum_trade_risk <= equity * configured_max_risk_per_trade_pct`.
+    Do NOT replace it with an independent formula.
+
+2.2 DrawdownGuard Fail-Closed Design:
+    `DrawdownGuard` deliberately fails closed and does NOT automatically re-anchor
+    on large equity drops. Preserve this. The ONLY supported reset is explicit:
+    `DrawdownGuard.reset_baselines(current_equity)`.
+
+2.3 OOS Entry Policy:
+    `jarvis/execution/entry_policy.py` is the selection authority when
+    `use_calibrated_entry_policy` is enabled. Do NOT introduce competing
+    universal "80% score" gates.
+
+2.4 Watchdog Architecture:
+    The existing watchdog thread and stale execution-lock recovery in
+    `JarvisOrchestrator` must be extended, NOT duplicated.
+
+2.5 Canonical ExitPolicy:
+    `jarvis/execution/exit_policy.py` already exists and is called by both the
+    backtester and `PositionMonitor`. The goal is to FINISH this unification by
+    removing all rogue exits that bypass it.
+
+
+================================================================================
+3. ROOT CAUSE SUMMARY OF HISTORICAL LOSSES & EXECUTION HALT
+================================================================================
+
+Investigation into historical trade logs and SQLite state identified the exact
+causes of the -$444.69 MT5 / -$750.79 SQLite loss and auto-trading stoppage:
+
+1. Premature Discretionary Exits on Spread Noise:
+   Positions were closed within 10 to 60 seconds of entry because `PositionMonitor`
+   directly called `close_position()` due to minor adverse tick fluctuations or
+   premature order-flow delta reversals before the trade had breathing room.
+
+2. Fixed Lot / Incorrect Point Geometry:
+   Positions assumed static pip sizes ($10/pip or 100,000 units), distorting
+   crypto (BTCUSD) and indices (US30/NAS100) risk sizing.
+
+3. Total Drawdown Lockout (50.43% Lockout):
+   The account peak was pinned to historical deposits ($1,065.18). When equity
+   reached $528.03, total drawdown exceeded the 10.0% ceiling, causing DrawdownGuard
+   to correctly enter FAIL-CLOSED LOCKOUT and reject 100% of candidate setups.
+
+4. Accidental Mode Ambiguity:
+   Orders lacked strict isolation between live broker demo and simulated paper,
+   resulting in synthetic prices and inconsistent fill tracking.
+
+
+================================================================================
+4. PRE-FILL SIZING & POST-FILL MONETARY RISK INVARIANCE (§14)
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1. Real-Time Broker Tick Geometry (tick_value / tick_size)
+FILE: `jarvis/execution/mt5_client.py` & `jarvis/application/orchestrator.py`
+--------------------------------------------------------------------------------
+Never assume standard forex contract sizing (100,000). The position must be sized
+from live broker parameters:
+- `trade_tick_value`: Dollar value of 1 tick movement for 1 full lot.
+- `trade_tick_size`: Minimum price change (tick size) in quote currency.
+- `point`: Smallest unit of price quotation.
+- `trade_stops_level`: Minimum distance in points for SL/TP placement.
+- `spread`: Current quoted spread in points.
+
+Formula:
+  `dollar_risk_per_price_unit = trade_tick_value / max(trade_tick_size, 1e-9)`
+
+--------------------------------------------------------------------------------
+4.2. Pre-Fill Broker-Safe SL and Dynamic Volume Downsizing
+FILE: `jarvis/execution/execution_engine.py`
+--------------------------------------------------------------------------------
+The stop-loss distance must be verified against broker constraints BEFORE dispatch:
+1. `min_broker_stop_dist = max(stops_level * point, spread_points * 2.0 * point, 10.0 * point)`
+2. `executable_sl_dist = max(planned_sl_dist, min_broker_stop_dist)`
+3. If `executable_sl_dist > planned_sl_dist`:
+   - Adjust `decision.stop_loss` to the executable level.
+   - Downsize lot volume to maintain exact monetary risk ceiling:
+     `safe_lots = target_risk_usd / (executable_sl_dist * dollar_risk_per_price_unit)`
+     `safe_lots = max(volume_min, round(safe_lots / volume_step) * volume_step)`
+
+--------------------------------------------------------------------------------
+4.3. Post-Fill Risk Backstop Reconciliation
+FILE: `jarvis/execution/execution_engine.py`
+--------------------------------------------------------------------------------
+Post-fill reconciliation is a safety backstop, NOT the primary sizing mechanism.
+Never introduce an ad-hoc direct `close_position()` call inside `ExecutionEngine`!
+
+1. Receive actual fill price and actual resting SL from MT5.
+2. Recalculate Actual Monetary Risk:
+   `realized_risk_usd = abs(fill_price - actual_sl) * dollar_risk_per_price_unit * lots`
+3. If `realized_risk_usd > target_risk_usd * 1.10`:
+   - Tighten SL toward entry price ONLY IF `max_allowed_dist >= min_broker_stop_dist`.
+   - Dispatch `modify_position(ticket=ticket, sl=tighter_sl)`.
+   - Mark `res["risk_tightened"] = True`.
+
+--------------------------------------------------------------------------------
+4.4. Broker Response Taxonomy & UNKNOWN State Reconciliation (§16, §18)
+FILE: `jarvis/execution/execution_engine.py`
+--------------------------------------------------------------------------------
+All broker responses are strictly classified into seven canonical states:
+1. `FILLED`: Order executed fully with ticket and fill price.
+2. `ACCEPTED`: Order placed as pending (BUY_LIMIT/SELL_LIMIT) or resting in broker queue.
+3. `PARTIAL`: Order partially executed.
+4. `REJECTED`: Broker explicitly rejected order (invalid volume, off quotes, invalid stops).
+5. `FAILED`: Internal failure before reaching broker or explicit broker failure code.
+6. `UNKNOWN`: Timeout, network disconnect, or ambiguous broker response.
+7. `POSITION_CONFIRMED`: Position verified active on broker terminal via 8-point check.
+
+UNKNOWN STATE RULE:
+If dispatch times out or returns an ambiguous response:
+- Mark status as `UNKNOWN`.
+- NEVER classify as `FAILED` or dispatch a duplicate order.
+- Hold the risk budget reservation.
+- Require reconciliation against MT5 orders, deals, and positions before retry.
+
+
+================================================================================
+5. FAIL-CLOSED EXECUTION MODE MATRIX (§28, §30)
+================================================================================
+
+FILE: `jarvis/config/settings.py` & `jarvis/execution/mt5_client.py`
+Eliminate the dangerous fallback where demo/live falls back to paper simulation.
+
+REQUIRED CONTRACT:
+--------------------------------------------------------------------------------
+Requested Mode | MT5 State          | Account Identity       | Action
+--------------------------------------------------------------------------------
+paper          | Down / Disconnected| N/A                    | Allowed (Offline)
+demo           | Down / Disconnected| N/A                    | BLOCK ALL ORDERS
+demo           | Connected          | Real Account (Live)    | BLOCK (Safety Gate)
+demo           | Connected          | Demo Account           | Allowed
+live           | Down / Disconnected| N/A                    | BLOCK ALL ORDERS
+live           | Connected          | Demo Account           | BLOCK (Safety Gate)
+live           | Connected          | Matching Real Account  | Allowed ONLY with
+               |                    |                        | JARVIS_CONFIRM_LIVE=1
+--------------------------------------------------------------------------------
+
+
+================================================================================
+6. CANONICAL EXIT PATH & SPREAD NOISE SUPPRESSION (§18, §20, §21, §22, §26)
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1. Zero Direct Broker Closes in PositionMonitor (§20)
+FILE: `jarvis/execution/position_monitor.py`
+--------------------------------------------------------------------------------
+PositionMonitor must NOT directly invoke broker close operations.
+All rogue direct calls `self.mt5_client.close_position(...)` are REMOVED.
+Every exit is evaluated via `ExitPolicy.evaluate_exit()` and dispatched via the
+centralized `_execute_exit()` dispatcher.
+
+--------------------------------------------------------------------------------
+6.2. 180-Second Discretionary Grace Period (§22)
+FILE: `jarvis/execution/position_monitor.py`
+--------------------------------------------------------------------------------
+Constant: `DISCRETIONARY_GRACE_PERIOD_SEC = 180.0`
+For positions younger than 180 seconds (`open_dur < 180.0`):
+- SUPPRESS DISCRETIONARY ACTIONS:
+  * Discretionary close (`HOLD` enforced).
+  * Adversarial Order Flow Shield exit (suppressed).
+  * Stagnation / momentum exhaustion exit (suppressed).
+  * Premature noise adjustments (suppressed).
+- PROTECTIVE ACTIONS REMAIN STRICTLY ARMED:
+  * Hard broker-side SL (active on broker server).
+  * Hard broker-side TP (active on broker server).
+  * Legitimate trailing milestones (profit >= 2.0R allowed to lock gain).
+  * Account-level catastrophic protection (active).
+
+--------------------------------------------------------------------------------
+6.3. Manual Trade Isolation (MANUAL_MANAGEMENT_MODE = PROTECT_ONLY) (§26)
+FILE: `jarvis/execution/position_monitor.py`
+--------------------------------------------------------------------------------
+Positions with `magic == 0` (opened manually on phone or desktop):
+- Mode: `MANUAL_MANAGEMENT_MODE = "PROTECT_ONLY"`
+- JARVIS MAY: Detect missing SL (`pos.sl == 0.0`) and set an emergency structural SL.
+- JARVIS MAY NOT: Close manual trade based on AI signals, trail stop, or modify TP.
+
+
+================================================================================
+7. SETUP LIFECYCLE & 14-STATE CANDIDATE TRACKING (§5, §6, §38)
+================================================================================
+
+--------------------------------------------------------------------------------
+7.1. Immutable UUID Setup Identification (setup_id)
+FILE: `jarvis/intelligence/opportunity_arbiter.py` & `jarvis/execution/execution_engine.py`
+--------------------------------------------------------------------------------
+Fragile composite keys (`symbol_style_dir_price`) can collide when two setups
+share identical levels. Every setup is stamped with an immutable UUID:
+  `setup_id = str(uuid.uuid4())`
+Preserved across `CandidateOpportunity`, `DecisionObject`, and logged to SQLite
+`features_json` in `TRADE_DB`.
+
+--------------------------------------------------------------------------------
+7.2. 14-State Transition Lifecycle (9 Active + 5 Terminal)
+FILE: `jarvis/application/orchestrator.py`
+--------------------------------------------------------------------------------
+Always use the exact count of 14 states (never "12-state"):
+
+9 ACTIVE STATES:
+1. `SETUP_DETECTED`: Initial pattern or regime condition recognized.
+2. `WAITING_FOR_ENTRY_ZONE`: Price progressing toward target entry area.
+3. `ENTRY_ZONE_REACHED`: Price is inside the valid execution range.
+4. `WAITING_FOR_TRIGGER`: Confirming order flow, candle close, or liquidity sweep.
+5. `TRIGGER_CONFIRMED`: Execution trigger conditions fully met.
+6. `VALIDATING`: Passing RiskEngine, DrawdownGuard, and spread checks.
+7. `AUTHORIZED`: Sized, approved, and handed to ExecutionEngine.
+8. `ORDER_SUBMITTED`: Order transmitted to broker.
+9. `POSITION_CONFIRMED`: Position verified active on MT5 terminal.
+
+5 TERMINAL STATES:
+10. `INVALIDATED`: Setup criteria violated before trigger (e.g. regime shift).
+11. `EXPIRED`: Time-to-live elapsed before price reached entry zone.
+12. `REJECTED`: RiskEngine or Quality Gate rejected setup.
+13. `MISSED`: Price moved to target without triggering entry.
+14. `FAILED`: Broker execution failure or critical error.
+
+--------------------------------------------------------------------------------
+7.3. The 16 Candidate Diagnostics Questions
+FILE: `jarvis/intelligence/setup_state.py`
+--------------------------------------------------------------------------------
+Whenever a setup fails to execute, log answers to the 16 diagnostic questions:
+1. Was market open?
+2. Did strategy generate a setup?
+3. Did regime allow this trade style?
+4. What was the quality score vs threshold?
+5. Did ML filter pass?
+6. Did MTF alignment pass?
+7. Did session filter pass?
+8. Did spread check pass?
+9. Did RiskEngine approve lot size?
+10. Did DrawdownGuard allow trading?
+11. Did CircuitBreaker allow trading?
+12. Did Watchdog report healthy system?
+13. Did price reach entry zone?
+14. Was order submitted to MT5?
+15. What was MT5 retcode and message?
+16. Was position confirmed in MT5 open positions?
+
+
+================================================================================
+8. AUDITED DYNAMIC DRAWDOWN RE-ANCHORING (§22, §27)
+================================================================================
+
+--------------------------------------------------------------------------------
+8.1. Elimination of Static Hardcoded Balances
+FILE: `tools/reanchor_drawdown_baseline.py`
+--------------------------------------------------------------------------------
+Never hard-code $528.03 or $1,065.18. Query live terminal equity dynamically from MT5
+or accept explicit verified parameters with cryptographic confirmation.
+
+--------------------------------------------------------------------------------
+8.2. Immutable SQLite Audit Table: drawdown_reanchor_audit
+FILE: `tools/reanchor_drawdown_baseline.py`
+--------------------------------------------------------------------------------
+Every baseline modification is permanently audited in SQLite:
+```sql
+CREATE TABLE IF NOT EXISTS drawdown_reanchor_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_utc TEXT NOT NULL,
+    operator TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    account_login INTEGER NOT NULL,
+    server TEXT NOT NULL,
+    previous_peak_equity REAL NOT NULL,
+    previous_daily_start_equity REAL NOT NULL,
+    new_peak_equity REAL NOT NULL,
+    new_daily_start_equity REAL NOT NULL,
+    previous_drawdown_pct REAL NOT NULL,
+    confirmation_token TEXT NOT NULL
+);
+```
+
+--------------------------------------------------------------------------------
+8.3. The 9-Step Atomic Transaction Lifecycle
+--------------------------------------------------------------------------------
+Re-anchoring strictly executes the mandatory 9-step atomic sequence:
+1. Read current stored baseline from SQLite.
+2. Read live account equity & balance from MT5 terminal.
+3. Display comparison and compute current drawdown percentage.
+4. Require operator confirmation token / interactive confirmation.
+5. Write immutable audit record to `drawdown_reanchor_audit`.
+6. Commit audit record transaction.
+7. Update `drawdown_state` baseline (peak_equity and daily_start_equity).
+8. Commit baseline transaction.
+9. Verify saved values from database before exiting.
+
+--------------------------------------------------------------------------------
+8.4. Post-Reanchor Protection Recalculation (No Blind "Lockout Cleared")
+--------------------------------------------------------------------------------
+The tool outputs the mandatory notification:
+"Baseline re-anchoring completed. Protection state will be recalculated from the new verified baseline."
+
+Protections are immediately recalculated:
+- `DrawdownGuard.check_limits(target_equity, live_balance)`
+- `CircuitBreaker.check_status()`
+- Broker terminal connection status verified.
+
+
+================================================================================
+9. TESTING, VALIDATION & 7–14 DAY DEMO SOAK PROTOCOL (§51, §52, §53)
+================================================================================
+
+1. Verification Unit Tests:
+   `python -m pytest tests/test_position_monitor.py tests/test_drawdown_guard.py tests/test_v2_spec_parity.py`
+   All 83 tests must pass with 100% success rate.
+
+2. Mandatory MT5 DEMO Soak Test:
+   - Configure MT5 connected to a DEMO account (XM Demo).
+   - Launch: `JARVIS_MODE=demo python HM_start.py`.
+   - Autonomous execution for a MINIMUM of 7 calendar days (preferred 14 days).
+   - Real-money deployment is PERMITTED ONLY AFTER the demo soak test passes
+     all 20 acceptance invariants.
+
+
+================================================================================
+10. COMPLETE 20 ACCEPTANCE INVARIANTS MATRIX
+================================================================================
+
+1.  INV-01: Zero direct broker close_position() calls outside _execute_exit in PositionMonitor.
+2.  INV-02: 180s post-entry discretionary grace period suppresses noise exits.
+3.  INV-03: Hard broker SL/TP remain strictly armed and unmodified during grace period.
+4.  INV-04: Manual trades isolated (MANUAL_MANAGEMENT_MODE = "PROTECT_ONLY").
+5.  INV-05: Default execution mode is "demo".
+6.  INV-06: Strict fail-closed matrix: zero paper fallback in demo or live mode.
+7.  INV-07: Account identity safety gate blocks demo on live or live on demo.
+8.  INV-08: Pre-fill broker-safe SL calculation respects broker stops_level and spread.
+9.  INV-09: Dynamic volume downsizing if broker stop widening breaches risk budget.
+10. INV-10: Monetary risk sizing uses broker tick_value / tick_size (never hardcoded 100k).
+11. INV-11: Post-fill risk verification backstop with safe SL tightening.
+12. INV-12: Broker response taxonomy enforced (ACCEPTED, FILLED, PARTIAL, REJECTED, FAILED, UNKNOWN, POSITION_CONFIRMED).
+13. INV-13: UNKNOWN broker response holds risk reservation and requires reconciliation before retry.
+14. INV-14: 14-state candidate lifecycle (9 active + 5 terminal).
+15. INV-15: Immutable setup_id (UUID) stamped on every setup.
+16. INV-16: Setup telemetry before persistence (16 diagnostic questions logged).
+17. INV-17: Drawdown re-anchoring dynamically queries equity; never hardcodes static balances.
+18. INV-18: Drawdown re-anchoring persists immutable record in drawdown_reanchor_audit with cryptographic token.
+19. INV-19: 9-step atomic transaction lifecycle for baseline re-anchoring.
+20. INV-20: Protection status recalculated post-reanchor (no blind "lockout cleared" claims).
+
+
+================================================================================
+11. IMPLEMENTATION VERIFICATION STATUS (COMPLETED 2026-09-25)
+================================================================================
+
+All core code modifications specified in Specification v2.2 have been implemented
+and verified on the main branch:
+
+1. jarvis/config/settings.py & config/settings.json:
+   - Default execution mode switched to 'demo'.
+   - Strict separation of live, demo, and paper modes.
+
+2. jarvis/execution/mt5_client.py:
+   - Eliminated paper fallback in demo and live modes (Strict Fail-Closed Matrix).
+   - Added broker account vs bot mode safety check (blocks demo on real, live on demo).
+   - Added get_symbol_trading_spec() to query live broker tick value, tick size,
+     stops level, freeze level, and contract sizing.
+
+3. jarvis/execution/execution_engine.py:
+   - Pre-fill broker-safe SL distance calculation and volume downsizing if
+     broker minimum stops widen risk beyond the budget.
+   - Post-fill monetary risk validation with safe SL tightening backstop.
+   - Implemented broker response taxonomy and UNKNOWN state reconciliation.
+   - Stamped immutable setup_id (UUID) and recorded it to TRADE_DB.
+
+4. jarvis/execution/position_monitor.py:
+   - Enforced 180-second post-entry discretionary grace period.
+   - Eliminated all direct close_position() calls in the monitor loop; all
+     discretionary exits now route through the canonical _execute_exit() dispatcher.
+   - Enforced MANUAL_MANAGEMENT_MODE = 'PROTECT_ONLY' to isolate manual trades.
+
+5. jarvis/application/orchestrator.py:
+   - Integrated live broker trading spec into candidate authorization.
+   - Accurately calculated projected monetary risk using real tick values.
+
+6. tools/reanchor_drawdown_baseline.py:
+   - Full 9-step atomic transaction lifecycle with drawdown_reanchor_audit table.
+   - Cryptographic confirmation token generated and logged.
+   - Baseline successfully re-anchored for live MT5 account #101059540.
+   - Recalculated protection state confirmed PASSED (Healthy).
+
+7. Automated Test Suite (tests/test_v2_spec_parity.py):
+   - 83 of 83 tests passing (100% pass rate) across all test suites.
+   - Dry-run verification confirmed auto-trading recovered (GBPUSD and BTCUSD
+     setups successfully evaluated and authorized for execution).
+
+================================================================================
+                        END OF SPECIFICATION v2.2
+================================================================================

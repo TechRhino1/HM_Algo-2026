@@ -783,13 +783,18 @@ class JarvisOrchestrator:
 
         positions = self.state_manager.positions
         _spec = _resolve_sym(symbol)
-        sym_info = {
-            "name": symbol,
-            "trade_contract_size": _spec.contract_size,
-            "volume_min": 0.01,
-            "volume_max": 100.0,
-            "volume_step": 0.01
-        }
+        if hasattr(self.mt5_client, "get_symbol_trading_spec"):
+            sym_info = self.mt5_client.get_symbol_trading_spec(symbol)
+        else:
+            sym_info = {
+                "name": symbol,
+                "trade_contract_size": _spec.contract_size,
+                "trade_tick_value": _spec.pip_value_per_lot,
+                "trade_tick_size": _spec.pip_size,
+                "volume_min": 0.01,
+                "volume_max": 100.0,
+                "volume_step": 0.01
+            }
 
         # ── Hard Quality Gate: min model_confidence ────────────────────────
         # Adaptive Confidence Gate: 0.50 for favorable asymmetric R:R (>=1.8) scalps, 0.55 standard.
@@ -932,7 +937,10 @@ class JarvisOrchestrator:
 
             # Claim in-process lock & reserve risk capacity BEFORE sending to MT5
             risk_dist = abs(decision.entry_price - decision.stop_loss)
-            est_risk_usd = lots * (_spec.contract_size or 100000.0) * risk_dist
+            tick_v = float(sym_info.get("trade_tick_value", 1.0) or 1.0)
+            tick_s = float(sym_info.get("trade_tick_size", 0.0001) or 0.0001)
+            dollar_risk_per_unit = tick_v / max(tick_s, 1e-9)
+            est_risk_usd = lots * dollar_risk_per_unit * risk_dist
             self.risk_engine.reserve_risk(canonical_sym, est_risk_usd)
 
             # Claim atomically. The guard ~90 lines above reads

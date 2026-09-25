@@ -10,13 +10,16 @@ logger = logging.getLogger("JARVIS_Config")
 def verify_execution_mode(mode: str) -> str:
     """
     Verifies execution mode.
-    Defaults to 'live' for real trading execution.
-    If 'paper' (or 'backtest', 'simulated', 'demo') is explicitly specified, returns that mode for testing.
+    Defaults to 'demo' for broker-connected paper testing (safe default).
+    Returns 'live' only when explicitly requested.
+    Returns 'paper' for offline / backtest simulation.
     """
-    norm_mode = str(mode or "live").lower().strip()
-    if norm_mode in {"paper", "backtest", "simulated", "demo"}:
-        return norm_mode
-    return "live"
+    norm_mode = str(mode or "demo").lower().strip()
+    if norm_mode == "live":
+        return "live"
+    if norm_mode in {"paper", "backtest", "simulated", "offline"}:
+        return "paper"
+    return "demo"
 
 
 @dataclass
@@ -43,7 +46,7 @@ class RiskSettings:
 
 @dataclass
 class TradingSettings:
-    default_mode: str = "live"
+    default_mode: str = "demo"
     magic_number: int = 888999
     primary_timeframe: str = "H1"
     macro_timeframe: str = "D1"

@@ -75,6 +75,10 @@ class MT5Client:
             return True
 
         if not MT5_AVAILABLE or mt5 is None:
+            if self.mode in ("live", "demo"):
+                logger.error(f"FAIL-CLOSED: MetaTrader5 package unavailable in {self.mode.upper()} mode. Refusing paper fallback.")
+                self.is_connected = False
+                return False
             logger.warning("MetaTrader5 python package not available. Falling back to PAPER mode.")
             self.mode = "paper"
             self.is_connected = True
@@ -86,31 +90,10 @@ class MT5Client:
         for attempt in range(len(delays) + 1):
             def _init():
                 with self._lock:
-                    # Go through the ONE process-wide gate instead of calling
-                    # `mt5.initialize()` here. With no terminal answering, that
-                    # call blocks ~60-100s inside native code while HOLDING THE
-                    # GIL; six threads each doing it, five times over with
-                    # backoff, starved the main thread so completely that
-                    # `run_web_server` never reached `ThreadingHTTPServer` —
-                    # measured: HM_start.py live stayed up for 40+ minutes with
-                    # both tunnels healthy and no listener on :8501.
-                    # `ensure_mt5_terminal` serialises on one lock and refuses to
-                    # retry inside a cooldown, so a dead terminal costs one
-                    # attempt per window for the whole process, not one per
-                    # thread. Imported lazily: broker_symbols resolves the MT5
-                    # package the same way this module does.
                     from jarvis.data.broker_symbols import ensure_mt5_terminal
 
                     if not ensure_mt5_terminal():
                         err = mt5.last_error()
-                        # Log once per distinct reason, not once per attempt.
-                        # This sits inside a six-attempt backoff loop that every
-                        # broker-touching worker calls, so an unconditional
-                        # ERROR here produced 544 lines in 30 minutes on the live
-                        # platform — for a state that is expected (no terminal
-                        # running) and already explained by the gate's own
-                        # warning. An ERROR that fires 18 times a minute for a
-                        # known condition is how a real error gets missed.
                         if err != self._last_init_error:
                             self._last_init_error = err
                             logger.warning(
@@ -122,7 +105,19 @@ class MT5Client:
                     self._last_init_error = None
                     acc = mt5.account_info()
                     if acc:
-                        logger.info(f"Connected to MT5 Server: {acc.server} | Login: #{acc.login} | Equity: ${acc.equity:.2f}")
+                        trade_mode = getattr(acc, "trade_mode", 0)
+                        mode_str = "DEMO" if trade_mode == 0 else ("REAL" if trade_mode == 2 else "CONTEST")
+                        logger.info(f"Connected to MT5 Server: {acc.server} | Login: #{acc.login} | TradeMode: {mode_str} | Equity: ${acc.equity:.2f}")
+                        if self.mode == "demo" and trade_mode == 2:
+                            logger.critical(
+                                f"SAFETY WARNING: Execution mode is DEMO, but connected to REAL MT5 account #{acc.login}! "
+                                "Live order dispatch will be blocked to protect real capital."
+                            )
+                        elif self.mode == "live" and trade_mode == 0:
+                            logger.critical(
+                                f"SAFETY WARNING: Execution mode is LIVE, but connected to DEMO MT5 account #{acc.login}! "
+                                "Live order dispatch will be blocked due to account mismatch."
+                            )
                     return True
 
             res = TimeoutGuard.run_sync(_init, timeout_sec=self.timeout_sec, default=False, task_name="MT5_Init")
@@ -200,6 +195,58 @@ class MT5Client:
         res = TimeoutGuard.run_sync(_resolve, timeout_sec=2.0, default=symbol, task_name=f"ResolveSymbol_{symbol}")
         self.symbol_alias_cache[symbol] = res
         return res
+
+    def get_symbol_trading_spec(self, symbol: str) -> Dict[str, Any]:
+        """Fetches live broker trading specifications for a symbol with fallback to symbol registry."""
+        resolved = self.resolve_symbol_name(symbol)
+        spec_dict = {
+            "symbol": resolved,
+            "canonical": symbol,
+            "trade_contract_size": 100000.0,
+            "trade_tick_value": 1.0,
+            "trade_tick_size": 0.0001,
+            "trade_stops_level": 0,
+            "trade_freeze_level": 0,
+            "point": 0.0001,
+            "digits": 5,
+            "spread": 0,
+            "volume_min": 0.01,
+            "volume_max": 100.0,
+            "volume_step": 0.01,
+        }
+        if not MT5_AVAILABLE or mt5 is None or not self.is_connected or self.mode == "paper":
+            from jarvis.data.symbol_registry import resolve as resolve_sym
+            s = resolve_sym(symbol)
+            spec_dict.update({
+                "trade_contract_size": s.contract_size,
+                "trade_tick_value": s.pip_value_per_lot,
+                "trade_tick_size": s.pip_size,
+                "point": s.pip_size,
+                "digits": s.digits,
+                "spread": int(s.typical_spread_pips * 10),
+            })
+            return spec_dict
+
+        try:
+            with self._lock:
+                sym_info = mt5.symbol_info(resolved)
+                if sym_info:
+                    spec_dict.update({
+                        "trade_contract_size": float(getattr(sym_info, "trade_contract_size", 100000.0) or 100000.0),
+                        "trade_tick_value": float(getattr(sym_info, "trade_tick_value", 1.0) or 1.0),
+                        "trade_tick_size": float(getattr(sym_info, "trade_tick_size", 0.0001) or 0.0001),
+                        "trade_stops_level": int(getattr(sym_info, "trade_stops_level", 0) or 0),
+                        "trade_freeze_level": int(getattr(sym_info, "trade_freeze_level", 0) or 0),
+                        "point": float(getattr(sym_info, "point", 0.0001) or 0.0001),
+                        "digits": int(getattr(sym_info, "digits", 5) or 5),
+                        "spread": int(getattr(sym_info, "spread", 0) or 0),
+                        "volume_min": float(getattr(sym_info, "volume_min", 0.01) or 0.01),
+                        "volume_max": float(getattr(sym_info, "volume_max", 100.0) or 100.0),
+                        "volume_step": float(getattr(sym_info, "volume_step", 0.01) or 0.01),
+                    })
+        except Exception as e:
+            logger.warning(f"Failed to fetch MT5 symbol info for {resolved}: {e}")
+        return spec_dict
 
     def get_account_snapshot(self) -> AccountSnapshot:
         # `_reconnect_if_needed()` first: it is what rewrites self.mode to
@@ -480,11 +527,29 @@ class MT5Client:
         self._reconnect_if_needed()
         resolved = self.resolve_symbol_name(symbol)
 
+        if requested_mode in ("live", "demo"):
+            if not MT5_AVAILABLE or not self.is_connected or mt5 is None:
+                logger.error(
+                    f"FAIL-CLOSED: MT5 is disconnected/unavailable in {requested_mode.upper()} mode. "
+                    "Refusing paper fallback. Order blocked."
+                )
+                return {
+                    "status": "FAILED",
+                    "reason": f"FAIL_CLOSED: MT5 broker disconnected in {requested_mode.upper()} mode"
+                }
+            acc = mt5.account_info()
+            if acc:
+                trade_mode = getattr(acc, "trade_mode", 0)
+                if requested_mode == "demo" and trade_mode == 2:
+                    logger.critical(f"SAFETY BLOCK: Refusing order in DEMO mode because connected MT5 account #{acc.login} is REAL!")
+                    return {"status": "BLOCKED", "reason": f"SAFETY_BLOCK: Connected to REAL MT5 account #{acc.login} while bot in DEMO mode"}
+                elif requested_mode == "live" and trade_mode == 0:
+                    logger.critical(f"SAFETY BLOCK: Refusing order in LIVE mode because connected MT5 account #{acc.login} is DEMO!")
+                    return {"status": "BLOCKED", "reason": f"SAFETY_BLOCK: Connected to DEMO MT5 account #{acc.login} while bot in LIVE mode"}
+
         if self.mode == "paper" or not MT5_AVAILABLE:
             # A simulated fill is what paper mode ASKED for, so the row is
-            # honest as `paper`. The same branch also runs for a live/demo
-            # client whenever `MT5_AVAILABLE` is false, and that one is a
-            # fallback: the journal must be able to tell the two apart.
+            # honest as `paper`.
             is_fallback = requested_mode != "paper"
             price = self._paper_fill_price(symbol, reference_price)
             if price is None:
@@ -697,6 +762,27 @@ class MT5Client:
 
         self._reconnect_if_needed()
         resolved = self.resolve_symbol_name(symbol)
+        requested_mode = str(self.mode or "").lower()
+
+        if requested_mode in ("live", "demo"):
+            if not MT5_AVAILABLE or not self.is_connected or mt5 is None:
+                logger.error(
+                    f"FAIL-CLOSED: MT5 is disconnected/unavailable in {requested_mode.upper()} mode. "
+                    "Refusing paper fallback for pending order. Order blocked."
+                )
+                return {
+                    "status": "FAILED",
+                    "reason": f"FAIL_CLOSED: MT5 broker disconnected in {requested_mode.upper()} mode"
+                }
+            acc = mt5.account_info()
+            if acc:
+                trade_mode = getattr(acc, "trade_mode", 0)
+                if requested_mode == "demo" and trade_mode == 2:
+                    logger.critical(f"SAFETY BLOCK: Refusing pending order in DEMO mode because connected MT5 account #{acc.login} is REAL!")
+                    return {"status": "BLOCKED", "reason": f"SAFETY_BLOCK: Connected to REAL MT5 account #{acc.login} while bot in DEMO mode"}
+                elif requested_mode == "live" and trade_mode == 0:
+                    logger.critical(f"SAFETY BLOCK: Refusing pending order in LIVE mode because connected MT5 account #{acc.login} is DEMO!")
+                    return {"status": "BLOCKED", "reason": f"SAFETY_BLOCK: Connected to DEMO MT5 account #{acc.login} while bot in LIVE mode"}
 
         if self.mode == "paper" or not MT5_AVAILABLE:
             ticket = int(time.time() * 1000) % 100000000

@@ -56,6 +56,12 @@ JARVIS_MAGIC_NUMBER        = 888999
 # Spread blowout: pause modifications if spread > 2× typical
 SPREAD_BLOWOUT_MULT        = 2.0
 
+# 180s Post-entry discretionary grace period (Spec v2.1 Refinement 3)
+DISCRETIONARY_GRACE_PERIOD_SEC = 180.0
+
+# Manual trade isolation mode (Spec v2.1 Refinement 4)
+MANUAL_MANAGEMENT_MODE         = "PROTECT_ONLY"
+
 
 class PositionMonitorEngine:
     """
@@ -250,6 +256,26 @@ class PositionMonitorEngine:
             except Exception as e:
                 logger.error(f"Error managing position #{pos.ticket}: {e}", exc_info=True)
 
+    def _execute_exit(self, pos: PositionSnapshot, reason: str) -> bool:
+        """Central canonical exit dispatcher with grace period enforcement and audit logging."""
+        open_dur_sec = self._get_position_duration_sec(pos)
+        if open_dur_sec < DISCRETIONARY_GRACE_PERIOD_SEC:
+            logger.info(
+                f"🛡️ GRACE PERIOD: Discretionary exit '{reason}' suppressed for #{pos.ticket} "
+                f"({pos.symbol}) — age {open_dur_sec:.1f}s < {DISCRETIONARY_GRACE_PERIOD_SEC:.0f}s."
+            )
+            return False
+
+        logger.info(
+            f"🚪 CANONICAL EXIT: Closing #{pos.ticket} {pos.symbol} {pos.type} @ {pos.current_price:.5f} | "
+            f"Reason={reason} | Duration={open_dur_sec/60:.1f}m | Floating PnL=${pos.profit:.2f}"
+        )
+        res = self.mt5_client.close_position(pos.ticket)
+        if res and res.get("status") in ("CLOSED", "PARTIALLY_CLOSED"):
+            self._remember_closed_excursions(pos.ticket)
+            return True
+        return False
+
     # ─── Single-Position Logic ──────────────────────────────────────────────────
 
     def _manage_single_position(
@@ -293,6 +319,22 @@ class PositionMonitorEngine:
         new_tp  = pos.tp
         actions = []
 
+        # ── Manual Trade Isolation (Spec v2.1 Refinement 4) ─────────────────
+        if is_manual:
+            if MANUAL_MANAGEMENT_MODE == "PROTECT_ONLY":
+                # Emergency SL only if missing
+                if pos.sl <= 0:
+                    new_sl, act = self._handle_manual_sl(pos, c_price, atr, new_sl)
+                    if new_sl != pos.sl and new_sl > 0:
+                        logger.info(f"🛡️ MANUAL PROTECT_ONLY: Emergency SL set on #{pos.ticket}: {new_sl:.4f}")
+                        self.mt5_client.modify_position(ticket=pos.ticket, sl=new_sl, tp=pos.tp)
+                # NEVER trail, partial close, or discretionary close manual trades!
+                return
+
+        # ── 180s Post-Entry Discretionary Grace Period (Spec v2.1 Refinement 3) ──
+        open_dur_sec = self._get_position_duration_sec(pos)
+        in_grace_period = (open_dur_sec < DISCRETIONARY_GRACE_PERIOD_SEC)
+
         # ─────────────────────────────────────────────────────────────────────
         # EMERGENCY BRAKE: tighten everything to breakeven
         # ─────────────────────────────────────────────────────────────────────
@@ -302,13 +344,9 @@ class PositionMonitorEngine:
                 actions.append(f"EMERGENCY_BRAKE→BE@{new_sl:.4f}")
 
         else:
-            # ── 0. Partial Profit-Taking (§B-2 / §B-3) ──────────────────────────
-            if pos.ticket not in self._partially_closed_tickets and pos.volume >= 0.02:
+            # ── 0. Partial Profit-Taking (§B-2 / §B-3, Suppressed in Grace Period) ──
+            if not in_grace_period and pos.ticket not in self._partially_closed_tickets and pos.volume >= 0.02:
                 decision_obj = self.state_manager.latest_decisions.get(symbol)
-                # Coerce defensively: the decision object may be absent or carry
-                # a non-numeric attribute (e.g. a mock in tests). Any bad value
-                # falls back to the R-based default rather than raising, because a
-                # monitoring loop must never die on one malformed decision.
                 first_target = self._coerce_positive_float(
                     getattr(decision_obj, "first_target_price", None)
                 )
@@ -333,9 +371,6 @@ class PositionMonitorEngine:
                             self._partially_closed_tickets.add(pos.ticket)
                             logger.info(f"🎯 PARTIAL TP HIT: #{pos.ticket} {symbol} closed {close_volume} lots @ {c_price:.4f}. Remaining: {remaining_volume}")
                             actions.append(f"PARTIAL_TP_{int(target_pct*100)}%@{c_price:.4f}")
-                            # De-risk the remainder immediately: lock a breakeven
-                            # floor using the canonical policy buffer so the offset
-                            # matches what evaluate_exit would compute later.
                             _p = self._exit_policy.get(pos.ticket) or ExitPolicy.for_symbol(symbol, spec)
                             _be_buf = _p.buffer_distance(risk_dist_init)
                             be_candidate = round(
@@ -349,30 +384,27 @@ class PositionMonitorEngine:
                                 new_sl = be_candidate
                                 actions.append(f"PARTIAL_BE@{new_sl:.4f}")
 
-            # ── 1. Manual trade: auto-set or tighten emergency SL ──────────
-            if is_manual:
-                new_sl, act = self._handle_manual_sl(pos, c_price, atr, new_sl)
-                if act:
-                    actions.append(act)
-
-            # ── 1.5 Adversarial Order Flow Shield ───────────────────────────
-            shield_triggered, shield_action = self._check_adversarial_order_flow_shield(pos, ctx, c_price, atr, digits)
-            if shield_triggered:
-                if shield_action == "CLOSE":
-                    logger.warning(
-                        f"🛡️ ADVERSARIAL ORDER FLOW SHIELD: Closing underwater/flat #{pos.ticket} ({pos.symbol} {pos.type}) "
-                        f"to prevent full stop-out."
-                    )
-                    self.mt5_client.close_position(pos.ticket)
-                    return
-                elif shield_action is not None and isinstance(shield_action, (int, float)):
-                    shield_sl = float(shield_action)
-                    if pos.type == "BUY" and shield_sl > new_sl and shield_sl < c_price:
-                        new_sl = shield_sl
-                        actions.append(f"ADVERSARIAL_SHIELD@{new_sl:.4f}")
-                    elif pos.type == "SELL" and (new_sl == 0 or shield_sl < new_sl) and shield_sl > c_price:
-                        new_sl = shield_sl
-                        actions.append(f"ADVERSARIAL_SHIELD@{new_sl:.4f}")
+            # ── 1.5 Adversarial Order Flow Shield (Suppressed in Grace Period) ────
+            if not in_grace_period:
+                shield_triggered, shield_action = self._check_adversarial_order_flow_shield(pos, ctx, c_price, atr, digits)
+                if shield_triggered:
+                    if shield_action == "CLOSE":
+                        logger.warning(
+                            f"🛡️ ADVERSARIAL ORDER FLOW SHIELD: Closing underwater/flat #{pos.ticket} ({pos.symbol} {pos.type}) "
+                            f"to prevent full stop-out."
+                        )
+                        self._execute_exit(pos, reason="ADVERSARIAL_ORDER_FLOW_SHIELD")
+                        return
+                    elif shield_action is not None and isinstance(shield_action, (int, float)):
+                        shield_sl = float(shield_action)
+                        if pos.type == "BUY" and shield_sl > new_sl and shield_sl < c_price:
+                            new_sl = shield_sl
+                            actions.append(f"ADVERSARIAL_SHIELD@{new_sl:.4f}")
+                        elif pos.type == "SELL" and (new_sl == 0 or shield_sl < new_sl) and shield_sl > c_price:
+                            new_sl = shield_sl
+                            actions.append(f"ADVERSARIAL_SHIELD@{new_sl:.4f}")
+            else:
+                logger.debug(f"🛡️ [GRACE_PERIOD] #{pos.ticket} ({symbol}): Discretionary shield suppressed ({open_dur_sec:.1f}s / {DISCRETIONARY_GRACE_PERIOD_SEC:.0f}s).")
 
             # ── 2. Canonical R-multiple stop management ─────────────────────────
             # ALL stop-ratchet arithmetic is delegated to
@@ -508,25 +540,21 @@ class PositionMonitorEngine:
                             new_sl = mfe_locked_sl
                             actions.append(f"MFE_RETRACE_50%_LOCK@{new_sl:.4f}")
 
-            # ── 4. Regime invalidation exit ────────────────────────────────
-            new_sl, act = self._check_regime_invalidation(pos, ctx, regime, c_price, atr, new_sl)
-            if act:
-                actions.append(act)
+            # ── 4. Regime, VWAP & Momentum discretionary checks (Suppressed in Grace Period) ──
+            if not in_grace_period:
+                new_sl, act = self._check_regime_invalidation(pos, ctx, regime, c_price, atr, new_sl)
+                if act:
+                    actions.append(act)
 
-            # ── 5. VWAP cross awareness ────────────────────────────────────
-            new_sl, act = self._check_vwap_cross(pos, ctx, c_price, atr, new_sl)
-            if act:
-                actions.append(act)
+                new_sl, act = self._check_vwap_cross(pos, ctx, c_price, atr, new_sl)
+                if act:
+                    actions.append(act)
 
-            # ── 6. Momentum exhaustion exit ───────────────────────────────
-            new_sl, act = self._check_momentum_exhaustion(pos, ctx, c_price, atr, new_sl)
-            if act:
-                actions.append(act)
+                new_sl, act = self._check_momentum_exhaustion(pos, ctx, c_price, atr, new_sl)
+                if act:
+                    actions.append(act)
 
             # ── 7. Horizon-Adaptive Stagnation & Time-Decay Auto-Exit ────────
-            # `style` is derived here rather than in the stop-management block
-            # above, because holding-time limits are a separate concern from
-            # stop arithmetic (which exit_policy owns).
             style = self._determine_position_style(pos, ctx)
             open_dur_sec = self._get_position_duration_sec(pos)
             if open_dur_sec > 0:
@@ -534,20 +562,12 @@ class PositionMonitorEngine:
 
                 # Scalp: 45 min max hold without progress (R < 0.50R) -> Close position
                 if style == "SCALP" and open_dur_sec >= 2700.0 and current_r < 0.50:
-                    logger.info(
-                        f"⏳ SCALP STAGNATION EXIT: Closing position #{pos.ticket} ({symbol}) after "
-                        f"{open_dur_sec/60:.1f}m hold without progress (R={current_r:.2f} < 0.50R, PnL: ${pos.profit:.2f})."
-                    )
-                    self.mt5_client.close_position(pos.ticket)
+                    self._execute_exit(pos, reason="SCALP_STAGNATION")
                     return
 
                 # Day: 6 hours max hold without progress (R < 0.75R) -> Close position
                 elif style in ("DAY_TRADING", "DAY", "INTRADAY") and open_dur_sec >= 21600.0 and current_r < 0.75:
-                    logger.info(
-                        f"⏳ DAY TRADING STAGNATION EXIT: Closing position #{pos.ticket} ({symbol}) after "
-                        f"{open_dur_sec/3600:.1f}h hold without progress (R={current_r:.2f} < 0.75R, PnL: ${pos.profit:.2f})."
-                    )
-                    self.mt5_client.close_position(pos.ticket)
+                    self._execute_exit(pos, reason="DAY_STAGNATION")
                     return
 
                 # Swing: 36 hours max hold in compression -> Close position
@@ -560,11 +580,7 @@ class PositionMonitorEngine:
                         or getattr(ctx.momentum, "adx", 0.0) < 18.0
                     )
                     if is_comp:
-                        logger.info(
-                            f"⏳ SWING COMPRESSION STAGNATION EXIT: Closing position #{pos.ticket} ({symbol}) after "
-                            f"{open_dur_sec/3600:.1f}h hold in compression (PnL: ${pos.profit:.2f})."
-                        )
-                        self.mt5_client.close_position(pos.ticket)
+                        self._execute_exit(pos, reason="SWING_COMPRESSION_STAGNATION")
                         return
 
                 # Fallback Regime-Adaptive Time-Decay Stale Trade Exit
@@ -584,11 +600,7 @@ class PositionMonitorEngine:
                         trend_score = getattr(ctx.momentum, "trend_score", 0.0)
                         profit_ratio = abs(pos.profit / (balance + 1e-9))
                         if profit_ratio < 0.005 and abs(trend_score) < 20.0:
-                            logger.info(
-                                f"⏳ REGIME TIME-DECAY EXIT: Closing position #{pos.ticket} ({symbol}) after "
-                                f"{open_dur_sec/3600:.1f}h stall in {r_name} regime (PnL: ${pos.profit:.2f})."
-                            )
-                            self.mt5_client.close_position(pos.ticket)
+                            self._execute_exit(pos, reason=f"REGIME_TIME_DECAY_{r_name}")
                             return
                         elif profit_ratio >= 0.005:
                             # Protect a stale-but-profitable trade with a breakeven

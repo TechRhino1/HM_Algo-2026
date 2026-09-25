@@ -123,11 +123,19 @@ class ExitDecision:
     partial_price: float = 0.0
     be_locked: bool = False
     trail_active: bool = False
+    close_position: bool = False
+    close_reason: str = ""
+    close_volume: Optional[float] = None
     actions: List[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
-        return self.partial_close_pct > 0.0 or bool(self.actions)
+        return self.close_position or self.partial_close_pct > 0.0 or bool(self.actions)
+
+    @property
+    def should_close(self) -> bool:
+        """True when a full discretionary market exit is signalled."""
+        return self.close_position
 
     @property
     def partial_due(self) -> bool:
