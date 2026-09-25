@@ -773,6 +773,8 @@
           '<span>Entry <b>' + formatPrice(o.entry_price, sym) + '</b></span>' +
           '<span>SL <b>' + formatPrice(o.stop_loss, sym) + '</b></span>' +
           '<span>TP <b>' + formatPrice(o.take_profit, sym) + '</b></span>' +
+          (o.tp1_price ? '<span title="TP1 Scale-Out (50%)">TP1 <b>' + formatPrice(o.tp1_price, sym) + '</b></span>' : '') +
+          (o.tp3_price ? '<span title="TP3 Macro Runner">TP3 <b>' + formatPrice(o.tp3_price, sym) + '</b></span>' : '') +
           '<span>R:R <b>' + num(o.risk_reward_ratio, 2) + '</b></span>' +
           '<span>Win <b>' + (isFinite(win) ? num(win, 0) + '%' : '—') + '</b></span>' +
           '<span>EV <b class="' + signClass(ev) + '">' + (isFinite(ev) && ev > 0 ? '+' : '') + num(ev, 2) + 'R</b></span>' +
@@ -892,7 +894,10 @@
         '<td class="tt-num">' + formatPrice(p.open_price, p.symbol) + '</td>' +
         '<td class="tt-num">' + formatPrice(p.current_price, p.symbol) + '</td>' +
         '<td class="tt-num">' + (isFinite(sl) && sl > 0 ? formatPrice(sl, p.symbol) : '<span class="tt-muted">—</span>') + '</td>' +
-        '<td class="tt-num">' + (isFinite(tp) && tp > 0 ? formatPrice(tp, p.symbol) : '<span class="tt-muted">—</span>') + '</td>' +
+        '<td class="tt-num">' + (isFinite(tp) && tp > 0 ? formatPrice(tp, p.symbol) : '<span class="tt-muted">—</span>') +
+          (p.tp1 ? '<span class="tt-muted" style="font-size:10px; display:block;">TP1: ' + formatPrice(p.tp1, p.symbol) + '</span>' : '') +
+          (p.milestone_status && p.milestone_status !== 'OPEN' ? '<span class="tt-chip tt-chip--accent" style="font-size:9px; display:inline-block; padding:1px 3px; margin-top:2px;">' + esc(p.milestone_status.replace(/_/g, ' ')) + '</span>' : '') +
+        '</td>' +
         '<td class="tt-num tt-pos-pnl ' + signClass(profit) + '">' + (profit > 0 ? '+' : '') + num(profit, 2) + '</td>' +
         '<td class="tt-pos-actions">' +
           (ticket !== undefined && ticket !== null
@@ -3873,6 +3878,26 @@
         '<div class="tt-metric"><span class="tt-metric__label">Regime</span><span class="tt-metric__value">' + esc(regime) + '</span></div>' +
         '<div class="tt-metric"><span class="tt-metric__label">Expected Value</span><span class="tt-metric__value">' + esc(ev) + '</span></div>' +
         '<div class="tt-metric"><span class="tt-metric__label">R:R Ratio</span><span class="tt-metric__value">' + esc(rr) + '</span></div>' +
+      '</div>' +
+      '<div style="margin-top:12px;border-top:1px solid var(--hm-border);padding-top:10px;">' +
+        '<div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;color:#3b82f6;margin-bottom:6px;">🎯 3-Tier Smart TP/SL Milestones</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px;font-size:0.85rem;">' +
+          '<div style="background:rgba(59,130,246,0.08);padding:6px 8px;border-radius:4px;border:1px solid rgba(59,130,246,0.25);">' +
+            '<div style="font-size:0.75rem;color:#93c5fd;font-weight:600;">TP1 (Scale-Out)</div>' +
+            '<div style="font-size:0.95rem;font-weight:700;">' + (trade.tp1_price || trade.tp1 ? formatPrice(trade.tp1_price || trade.tp1, sym) : '—') + '</div>' +
+            '<div style="font-size:0.7rem;color:var(--hm-text-muted);">50% Close &rarr; BE Lock</div>' +
+          '</div>' +
+          '<div style="background:rgba(16,185,129,0.08);padding:6px 8px;border-radius:4px;border:1px solid rgba(16,185,129,0.25);">' +
+            '<div style="font-size:0.75rem;color:#6ee7b7;font-weight:600;">TP2 (Structure)</div>' +
+            '<div style="font-size:0.95rem;font-weight:700;">' + (trade.tp2_price || trade.tp2 || trade.take_profit ? formatPrice(trade.tp2_price || trade.tp2 || trade.take_profit, sym) : '—') + '</div>' +
+            '<div style="font-size:0.7rem;color:var(--hm-text-muted);">Primary Target (+2R)</div>' +
+          '</div>' +
+          '<div style="background:rgba(168,85,247,0.08);padding:6px 8px;border-radius:4px;border:1px solid rgba(168,85,247,0.25);">' +
+            '<div style="font-size:0.75rem;color:#d8b4fe;font-weight:600;">TP3 (Runner)</div>' +
+            '<div style="font-size:0.95rem;font-weight:700;">' + (trade.tp3_price || trade.tp3 ? formatPrice(trade.tp3_price || trade.tp3, sym) : '—') + '</div>' +
+            '<div style="font-size:0.7rem;color:var(--hm-text-muted);">ATR Ratchet Trailing</div>' +
+          '</div>' +
+        '</div>' +
       '</div>' +
       '<div style="margin-top:12px;border-top:1px solid var(--hm-border);padding-top:10px;">' +
         '<div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;color:var(--hm-text-muted);margin-bottom:6px;">Thesis &amp; Confluence Evidence</div>' +

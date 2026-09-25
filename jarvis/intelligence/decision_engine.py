@@ -53,6 +53,28 @@ def _is_forex(symbol: str) -> bool:
     except Exception:
         return False
 
+
+class LevelsResult(tuple):
+    """An 8-tuple result containing (bias, entry, sl, tp, risk_dist, rr, first_target, volume_pct)
+    preserving 100% backward compatibility with tuple unpacking, while exposing 3-tier milestone
+    attributes tp1_price, tp2_price, and tp3_price."""
+    def __new__(cls, tentative_bias, entry_price, sl_price, tp_price, risk_dist, rr_ratio, first_target_price, first_target_volume_pct, tp1_price=None, tp2_price=None, tp3_price=None):
+        return super().__new__(cls, (tentative_bias, entry_price, sl_price, tp_price, risk_dist, rr_ratio, first_target_price, first_target_volume_pct))
+
+    def __init__(self, tentative_bias, entry_price, sl_price, tp_price, risk_dist, rr_ratio, first_target_price, first_target_volume_pct, tp1_price=None, tp2_price=None, tp3_price=None):
+        self.tentative_bias = tentative_bias
+        self.entry_price = entry_price
+        self.sl_price = sl_price
+        self.tp_price = tp_price
+        self.risk_dist = risk_dist
+        self.rr_ratio = rr_ratio
+        self.first_target_price = first_target_price
+        self.first_target_volume_pct = first_target_volume_pct
+        self.tp1_price = tp1_price if tp1_price is not None else first_target_price
+        self.tp2_price = tp2_price if tp2_price is not None else tp_price
+        self.tp3_price = tp3_price
+
+
 class DecisionEngine:
     def __init__(
         self,
@@ -124,7 +146,7 @@ class DecisionEngine:
                     "and refusing to emit entry/SL/TP. Logged once per symbol per outage.",
                     context.symbol, c_price, context.bid, context.ask,
                 )
-            return ("HOLD", 0.0, 0.0, 0.0, 0.0, 0.0, None, 0.0)
+            return LevelsResult("HOLD", 0.0, 0.0, 0.0, 0.0, 0.0, None, 0.0, None, 0.0, 0.0)
 
         if self._no_price_warned:
             self._no_price_warned.clear()
@@ -166,7 +188,7 @@ class DecisionEngine:
             trade_style=style
         )
 
-        return (
+        return LevelsResult(
             tentative_bias,
             levels["entry_price"],
             levels["sl_price"],
@@ -174,7 +196,10 @@ class DecisionEngine:
             levels["risk_dist"],
             levels["rr_ratio"],
             levels["first_target_price"],
-            levels["first_target_volume_pct"]
+            levels["first_target_volume_pct"],
+            tp1_price=levels.get("tp1_price", levels["first_target_price"]),
+            tp2_price=levels.get("tp2_price", levels["tp_price"]),
+            tp3_price=levels.get("tp3_price")
         )
 
     def _compute_blended_probability(
@@ -729,11 +754,18 @@ class DecisionEngine:
         trade_style: str = "SWING"
     ) -> DecisionObject:
         style = trade_style or getattr(context, "trade_style", "SWING") or "SWING"
-        tentative_bias, entry_price, sl_price, tp_price, risk_dist, rr_ratio, first_target_price, first_target_volume_pct = self._compute_bias_and_levels(
+        levels_res = self._compute_bias_and_levels(
             context, regime, analyst_reports, trade_style=style,
             account_balance=account_balance,
             risk_per_trade_pct=risk_per_trade_pct,
         )
+        (
+            tentative_bias, entry_price, sl_price, tp_price,
+            risk_dist, rr_ratio, first_target_price, first_target_volume_pct
+        ) = levels_res
+        tp1_price = getattr(levels_res, "tp1_price", first_target_price)
+        tp2_price = getattr(levels_res, "tp2_price", tp_price)
+        tp3_price = getattr(levels_res, "tp3_price", None)
 
         # §B-5: Devil's Advocate Threat Feedback Adjustment
         threat_lvl = getattr(devil_report, "threat_price_level", None) if devil_report else None
@@ -745,6 +777,7 @@ class DecisionEngine:
                 if adjusted_tp >= entry_price + (risk_dist * 1.0):
                     logger.info(f"[{context.symbol}] Devil's Advocate threat level {threat_lvl} detected ahead of TP! Tucking TP: {tp_price} -> {adjusted_tp}")
                     tp_price = adjusted_tp
+                    tp2_price = adjusted_tp
                     tp_dist = tp_price - entry_price
                     rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
             elif tentative_bias == "SELL" and tp_price < threat_lvl < entry_price:
@@ -752,6 +785,7 @@ class DecisionEngine:
                 if adjusted_tp <= entry_price - (risk_dist * 1.0):
                     logger.info(f"[{context.symbol}] Devil's Advocate threat level {threat_lvl} detected ahead of TP! Tucking TP: {tp_price} -> {adjusted_tp}")
                     tp_price = adjusted_tp
+                    tp2_price = adjusted_tp
                     tp_dist = entry_price - tp_price
                     rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
 
@@ -1278,6 +1312,9 @@ class DecisionEngine:
             entry_price=entry_price,
             stop_loss=sl_price,
             take_profit=tp_price,
+            tp1_price=tp1_price,
+            tp2_price=tp2_price,
+            tp3_price=tp3_price,
             first_target_price=first_target_price,
             first_target_volume_pct=first_target_volume_pct,
             runner_trail_distance_atr=runner_trail_distance_atr,

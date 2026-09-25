@@ -86,10 +86,12 @@ class InstitutionalEntryEngine:
         if not sweep_detected:
             # Fallback to context structure / liquidity anchors
             if bias == "BUY":
-                cand_low = context.liquidity.sell_side_liquidity if 0 < context.liquidity.sell_side_liquidity < c_price else (context.structure.swing_low if 0 < context.structure.swing_low < c_price else c_price - (m5_atr * 1.5))
+                sw_low = getattr(context.structure, "swing_low", 0.0)
+                cand_low = context.liquidity.sell_side_liquidity if 0 < context.liquidity.sell_side_liquidity < c_price else (sw_low if 0 < sw_low < c_price else c_price - (m5_atr * 1.5))
                 sweep_extreme = cand_low
             else:
-                cand_high = context.liquidity.buy_side_liquidity if context.liquidity.buy_side_liquidity > c_price else (context.structure.swing_high if context.structure.swing_high > c_price else c_price + (m5_atr * 1.5))
+                sw_high = getattr(context.structure, "swing_high", 0.0)
+                cand_high = context.liquidity.buy_side_liquidity if context.liquidity.buy_side_liquidity > c_price else (sw_high if sw_high > c_price else c_price + (m5_atr * 1.5))
                 sweep_extreme = cand_high
             rejection_wick = True
 
@@ -148,15 +150,18 @@ class InstitutionalEntryEngine:
             sl_price = round(entry_price + sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
-        # 6. Targets: TP1 at 1.2R - 1.5R (50% scale-out), TP2 at 2.0R - 2.5R
+        # 6. Targets: TP1 at 1.2R - 1.5R (50% scale-out), TP2 at 2.0R - 2.5R, TP3 at 3.0R runner
         tp1_r = 1.35
         tp2_r = 2.20
+        tp3_r = 3.00
         if bias == "BUY":
             tp1_price = round(entry_price + (risk_dist * tp1_r), digits)
             tp2_price = round(entry_price + (risk_dist * tp2_r), digits)
+            tp3_price = round(entry_price + (risk_dist * tp3_r), digits)
         else:
             tp1_price = round(entry_price - (risk_dist * tp1_r), digits)
             tp2_price = round(entry_price - (risk_dist * tp2_r), digits)
+            tp3_price = round(entry_price - (risk_dist * tp3_r), digits)
 
         tp_price = tp2_price
         tp_dist = abs(tp_price - entry_price)
@@ -168,6 +173,7 @@ class InstitutionalEntryEngine:
             "tp_price": float(tp_price),
             "tp1_price": float(tp1_price),
             "tp2_price": float(tp2_price),
+            "tp3_price": float(tp3_price),
             "risk_dist": float(risk_dist),
             "tp_dist": float(tp_dist),
             "rr_ratio": float(rr_ratio),
@@ -264,15 +270,18 @@ class InstitutionalEntryEngine:
             sl_price = round(entry_price + sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
-        # 6. Targets: TP1 at 1.5R - 1.8R (50% scale-out), TP2 at 2.5R - 3.2R
+        # 6. Targets: TP1 at 1.5R - 1.8R (50% scale-out), TP2 at 2.5R - 3.2R, TP3 at 4.0R runner
         tp1_r = 1.65
         tp2_r = 2.85
+        tp3_r = 4.00
         if bias == "BUY":
             tp1_price = round(entry_price + (risk_dist * tp1_r), digits)
             tp2_price = round(entry_price + (risk_dist * tp2_r), digits)
+            tp3_price = round(entry_price + (risk_dist * tp3_r), digits)
         else:
             tp1_price = round(entry_price - (risk_dist * tp1_r), digits)
             tp2_price = round(entry_price - (risk_dist * tp2_r), digits)
+            tp3_price = round(entry_price - (risk_dist * tp3_r), digits)
 
         tp_price = tp2_price
         tp_dist = abs(tp_price - entry_price)
@@ -284,6 +293,7 @@ class InstitutionalEntryEngine:
             "tp_price": float(tp_price),
             "tp1_price": float(tp1_price),
             "tp2_price": float(tp2_price),
+            "tp3_price": float(tp3_price),
             "risk_dist": float(risk_dist),
             "tp_dist": float(tp_dist),
             "rr_ratio": float(rr_ratio),
@@ -398,15 +408,18 @@ class InstitutionalEntryEngine:
             else:
                 sl_price = round(entry_price + risk_dist, digits)
 
-        # 6. Targets: TP1 at 2.0R - 2.5R (50% scale-out), TP2 at 3.5R - 5.0R+
+        # 6. Targets: TP1 at 2.0R - 2.5R (50% scale-out), TP2 at 3.5R - 5.0R+, TP3 at 5.5R+ macro runner
         tp1_r = 2.20
         tp2_r = 4.00
+        tp3_r = 5.50
         if bias == "BUY":
             tp1_price = round(entry_price + (risk_dist * tp1_r), digits)
             tp2_price = round(entry_price + (risk_dist * tp2_r), digits)
+            tp3_price = round(entry_price + (risk_dist * tp3_r), digits)
         else:
             tp1_price = round(entry_price - (risk_dist * tp1_r), digits)
             tp2_price = round(entry_price - (risk_dist * tp2_r), digits)
+            tp3_price = round(entry_price - (risk_dist * tp3_r), digits)
 
         tp_price = tp2_price
         tp_dist = abs(tp_price - entry_price)
@@ -418,6 +431,7 @@ class InstitutionalEntryEngine:
             "tp_price": float(tp_price),
             "tp1_price": float(tp1_price),
             "tp2_price": float(tp2_price),
+            "tp3_price": float(tp3_price),
             "risk_dist": float(risk_dist),
             "tp_dist": float(tp_dist),
             "rr_ratio": float(rr_ratio),
@@ -471,10 +485,12 @@ class InstitutionalEntryEngine:
             sl_price = round(entry_price + risk_dist, digits)
             tp1_price = round(entry_price - (risk_dist * 1.5), digits)
             tp2_price = round(entry_price - (risk_dist * rr_ratio), digits)
+            tp3_price = round(entry_price - (risk_dist * (rr_ratio + 1.5)), digits)
         else:
             sl_price = round(entry_price - risk_dist, digits)
             tp1_price = round(entry_price + (risk_dist * 1.5), digits)
             tp2_price = round(entry_price + (risk_dist * rr_ratio), digits)
+            tp3_price = round(entry_price + (risk_dist * (rr_ratio + 1.5)), digits)
 
         tp_dist = abs(tp2_price - entry_price)
 
@@ -484,6 +500,7 @@ class InstitutionalEntryEngine:
             "tp_price": float(tp2_price),
             "tp1_price": float(tp1_price),
             "tp2_price": float(tp2_price),
+            "tp3_price": float(tp3_price),
             "risk_dist": float(risk_dist),
             "tp_dist": float(tp_dist),
             "rr_ratio": float(rr_ratio),
@@ -666,9 +683,11 @@ class InstitutionalEntryEngine:
 
         # Fallback to context structure
         if bias == "BUY":
-            return float(context.structure.swing_low if context.structure.swing_low > 0 else context.current_price * 0.99)
+            sw_low = getattr(context.structure, "swing_low", 0.0)
+            return float(sw_low if sw_low > 0 else context.current_price * 0.99)
         else:
-            return float(context.structure.swing_high if context.structure.swing_high > 0 else context.current_price * 1.01)
+            sw_high = getattr(context.structure, "swing_high", 0.0)
+            return float(sw_high if sw_high > 0 else context.current_price * 1.01)
 
     def _check_h1_alignment(self, df_h1: Optional[pd.DataFrame], context: MarketContext, bias: str) -> bool:
         if df_h1 is not None and len(df_h1) >= 20:
@@ -687,8 +706,10 @@ class InstitutionalEntryEngine:
                 return float(np.min(lows[-30:])), float(np.max(highs[-30:]))
 
         st = context.structure
-        r_low = st.swing_low if st.swing_low > 0 else context.current_price * 0.96
-        r_high = st.swing_high if st.swing_high > 0 else context.current_price * 1.04
+        sw_low = getattr(st, "swing_low", 0.0)
+        sw_high = getattr(st, "swing_high", 0.0)
+        r_low = sw_low if sw_low > 0 else context.current_price * 0.96
+        r_high = sw_high if sw_high > 0 else context.current_price * 1.04
         return float(r_low), float(r_high)
 
     def _detect_choch(self, df_h1: Optional[pd.DataFrame], context: MarketContext, bias: str) -> bool:

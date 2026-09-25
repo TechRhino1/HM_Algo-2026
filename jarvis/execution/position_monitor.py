@@ -131,6 +131,7 @@ class PositionMonitorEngine:
         self._entry_ml_prob: Dict[int, float] = {}
         self._exit_policy: Dict[int, ExitPolicy] = {}
         self._be_locked: Set[int] = set()
+        self._position_milestones: Dict[int, Dict[str, Any]] = {}
 
     # ─── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -246,6 +247,7 @@ class PositionMonitorEngine:
         self._exit_policy = {t: v for t, v in self._exit_policy.items() if t in active_tickets}
         self._be_locked = {t for t in self._be_locked if t in active_tickets}
         self._lowest_adverse_price = {t: v for t, v in self._lowest_adverse_price.items() if t in active_tickets}
+        self._position_milestones = {t: v for t, v in self._position_milestones.items() if t in active_tickets}
 
         # D19 — a closed ticket's excursions are the ONLY record of its path, so
         # they are retired into a bounded map instead of dropped here. Dropping
@@ -462,6 +464,18 @@ class PositionMonitorEngine:
                 self._exit_policy[pos.ticket] = ExitPolicy.for_symbol(symbol, spec)
             policy = self._exit_policy[pos.ticket]
 
+            if pos.ticket not in self._position_milestones:
+                # 3-Tier AI Milestone initialization (TP1: Scale-Out / Fast Cash, TP2: Structure / Take Profit, TP3: Macro Runner)
+                m_tp1 = (pos.open_price + (risk_dist * policy.fast_cash_r)) if pos.type == "BUY" else (pos.open_price - (risk_dist * policy.fast_cash_r))
+                m_tp2 = pos.tp if pos.tp > 0 else ((pos.open_price + (risk_dist * 2.0)) if pos.type == "BUY" else (pos.open_price - (risk_dist * 2.0)))
+                m_tp3 = (pos.open_price + (risk_dist * 3.5)) if pos.type == "BUY" else (pos.open_price - (risk_dist * 3.5))
+                self._position_milestones[pos.ticket] = {
+                    "tp1": round(m_tp1, digits),
+                    "tp2": round(m_tp2, digits),
+                    "tp3": round(m_tp3, digits),
+                    "status": "OPEN"
+                }
+
             # Track the running favourable excursion in price units.
             if pos.type == "BUY":
                 prev_high = self._highest_favorable_price.get(pos.ticket, pos.open_price)
@@ -670,6 +684,22 @@ class PositionMonitorEngine:
                         elif pos.type == "SELL" and (new_sl == 0 or tightened_sl < new_sl) and tightened_sl > c_price:
                             new_sl = tightened_sl
                             actions.append(f"ML_RISK_CAP_0.5R@{new_sl:.4f}(p={ml_prob:.2f})")
+
+            # ── 6. 3-Tier Milestone Progression Tracking ────────────────────
+            if pos.ticket in self._position_milestones:
+                if current_r >= 3.0:
+                    self._position_milestones[pos.ticket]["status"] = "TP3_RUNNER_TRAILING"
+                elif current_r >= 2.0:
+                    self._position_milestones[pos.ticket]["status"] = "TP2_HIT_PROFIT_LOCKED"
+                elif current_r >= policy.fast_cash_r or pos.ticket in self._be_locked or pos.ticket in self._partially_closed_tickets:
+                    self._position_milestones[pos.ticket]["status"] = "TP1_HIT_BE_LOCKED"
+                else:
+                    self._position_milestones[pos.ticket]["status"] = "OPEN"
+
+                pos.tp1 = self._position_milestones[pos.ticket]["tp1"]
+                pos.tp2 = self._position_milestones[pos.ticket]["tp2"]
+                pos.tp3 = self._position_milestones[pos.ticket]["tp3"]
+                pos.milestone_status = self._position_milestones[pos.ticket]["status"]
 
             # ── 7. Horizon-Adaptive Stagnation & Time-Decay Auto-Exit ────────
             open_dur_sec = self._get_position_duration_sec(pos)
@@ -1285,9 +1315,14 @@ class PositionMonitorEngine:
             logger.debug(f"_get_cached_regime({symbol}) fell back to None: {e}")
         return None
 
+    def get_position_milestones(self, ticket: int) -> Dict[str, Any]:
+        """Returns the 3-tier milestone prices and progression status for an active position."""
+        return self._position_milestones.get(ticket, {"status": "OPEN", "tp1": None, "tp2": None, "tp3": None})
+
     def get_status(self) -> Dict[str, Any]:
         return {
             "running": self._running,
             "monitored_symbols": list(self._ctx_cache.keys()),
             "last_actions": dict(self._last_action),
+            "milestones": dict(self._position_milestones),
         }

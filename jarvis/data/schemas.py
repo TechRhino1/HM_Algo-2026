@@ -311,6 +311,9 @@ class DecisionObject:
     # same as 0.0: a fit must skip those rows rather than read them as a forecast.
     raw_win_prob: Optional[float] = None
     ai_score: float = 0.0
+    tp1_price: Optional[float] = None
+    tp2_price: Optional[float] = None
+    tp3_price: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -328,6 +331,9 @@ class DecisionObject:
             "entry_price": self.entry_price,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,
+            "tp1_price": self.tp1_price if self.tp1_price is not None else self.first_target_price,
+            "tp2_price": self.tp2_price if self.tp2_price is not None else self.take_profit,
+            "tp3_price": self.tp3_price,
             "first_target_price": self.first_target_price,
             "first_target_volume_pct": self.first_target_volume_pct,
             "runner_trail_distance_atr": self.runner_trail_distance_atr,
@@ -416,6 +422,10 @@ class PositionSnapshot:
     open_time: str
     magic: int
     comment: str = ""
+    tp1: Optional[float] = None
+    tp2: Optional[float] = None
+    tp3: Optional[float] = None
+    milestone_status: str = "OPEN"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -427,6 +437,10 @@ class PositionSnapshot:
             "current_price": self.current_price,
             "sl": self.sl,
             "tp": self.tp,
+            "tp1": self.tp1,
+            "tp2": self.tp2,
+            "tp3": self.tp3,
+            "milestone_status": self.milestone_status,
             "profit": self.profit,
             "swap": self.swap,
             "commission": self.commission,

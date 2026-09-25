@@ -114,6 +114,7 @@ class DynamicRiskAndLevelsEngine:
                 "tp_price": 0.0,
                 "tp1_price": None,
                 "tp2_price": 0.0,
+                "tp3_price": 0.0,
                 "risk_dist": 0.0,
                 "tp_dist": 0.0,
                 "rr_ratio": 0.0,
@@ -323,12 +324,24 @@ class DynamicRiskAndLevelsEngine:
             tp_price = round(entry_price + tp_dist, digits)
             rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
 
-            # 4. Adaptive Scale-Out Plan
+            # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
+            # TP1: Initial scale-out milestone at +1.0R to +1.2R (or minor structural resistance)
             minor_resistance = [t for t in opposing_targets if entry_price + (risk_dist * 0.8) <= t < tp_price]
             if minor_resistance:
                 first_target_price = round(min(minor_resistance), digits)
             else:
                 first_target_price = round(entry_price + (risk_dist * (0.90 if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else 1.0)), digits)
+
+            tp1_price = first_target_price
+            tp2_price = tp_price
+
+            # TP3: Macro extension / runner target at +3.0R to +4.5R+ (higher liquidity pool or expansion)
+            extended_targets = [t for t in opposing_targets if t > tp_price]
+            if extended_targets:
+                tp3_price = round(min(extended_targets), digits)
+            else:
+                tp3_mult = max(3.0, asym_rr * (1.5 if is_strong_trend else 1.35))
+                tp3_price = round(entry_price + (risk_dist * tp3_mult), digits)
 
         elif tentative_bias == "SELL":
             entry_price = round(context.bid, digits)
@@ -453,12 +466,24 @@ class DynamicRiskAndLevelsEngine:
             tp_price = round(entry_price - tp_dist, digits)
             rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
 
-            # 4. Adaptive Scale-Out Plan
+            # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
+            # TP1: Initial scale-out milestone at +1.0R to +1.2R (or minor structural support)
             minor_support = [t for t in opposing_targets if tp_price < t <= entry_price - (risk_dist * 0.8)]
             if minor_support:
                 first_target_price = round(max(minor_support), digits)
             else:
                 first_target_price = round(entry_price - (risk_dist * (0.90 if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else 1.0)), digits)
+
+            tp1_price = first_target_price
+            tp2_price = tp_price
+
+            # TP3: Macro extension / runner target at +3.0R to +4.5R+ (higher liquidity pool or expansion)
+            extended_targets = [t for t in opposing_targets if 0 < t < tp_price]
+            if extended_targets:
+                tp3_price = round(max(extended_targets), digits)
+            else:
+                tp3_mult = max(3.0, (2.2 if is_ranging else asym_rr) * (1.5 if is_strong_trend else 1.35))
+                tp3_price = round(entry_price - (risk_dist * tp3_mult), digits)
 
         else:
             # Bias is HOLD / MONITOR — compute a structural reference bracket
@@ -479,6 +504,9 @@ class DynamicRiskAndLevelsEngine:
             sl_price = round(entry_price + sl_dist if is_bear_tilt else entry_price - sl_dist, digits)
             tp_price = round(entry_price - tp_dist if is_bear_tilt else entry_price + tp_dist, digits)
             risk_dist = abs(entry_price - sl_price)
+            tp1_price = round(entry_price - (risk_dist * 1.5) if is_bear_tilt else entry_price + (risk_dist * 1.5), digits)
+            tp2_price = tp_price
+            tp3_price = round(entry_price - (risk_dist * (rr_ratio + 1.5)) if is_bear_tilt else entry_price + (risk_dist * (rr_ratio + 1.5)), digits)
             first_target_price = None
 
         # 5. Adaptive Scale-Out Volume % Calculation
@@ -507,8 +535,9 @@ class DynamicRiskAndLevelsEngine:
             "entry_price": entry_price,
             "sl_price": sl_price,
             "tp_price": tp_price,
-            "tp1_price": first_target_price,
-            "tp2_price": tp_price,
+            "tp1_price": tp1_price,
+            "tp2_price": tp2_price,
+            "tp3_price": tp3_price,
             "risk_dist": risk_dist,
             "tp_dist": tp_dist,
             "rr_ratio": rr_ratio,
@@ -535,8 +564,9 @@ class DynamicRiskAndLevelsEngine:
                         "entry_price": inst_res.get("entry_price", entry_price),
                         "sl_price": inst_res.get("sl_price", sl_price),
                         "tp_price": inst_res.get("tp_price", tp_price),
-                        "tp1_price": inst_res.get("tp1_price", first_target_price),
-                        "tp2_price": inst_res.get("tp2_price", tp_price),
+                        "tp1_price": inst_res.get("tp1_price", tp1_price),
+                        "tp2_price": inst_res.get("tp2_price", tp2_price),
+                        "tp3_price": inst_res.get("tp3_price", tp3_price),
                         "risk_dist": inst_res.get("risk_dist", risk_dist),
                         "tp_dist": inst_res.get("tp_dist", tp_dist),
                         "rr_ratio": inst_res.get("rr_ratio", rr_ratio),
