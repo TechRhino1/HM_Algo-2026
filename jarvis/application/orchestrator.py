@@ -1269,3 +1269,37 @@ class JarvisOrchestrator:
             except Exception:
                 sleep_interval = 5.0
             time.sleep(sleep_interval)
+
+    def emergency_stop(self, reason: str = "OPERATOR_EMERGENCY_STOP: Trading manually halted by user", close_positions: bool = False) -> Dict[str, Any]:
+        """Emergency stop: trips circuit breaker, cancels pending orders, optionally closes positions."""
+        self.circuit_breaker.trip(reason)
+        if hasattr(self, "risk_engine") and hasattr(self.risk_engine, "circuit_breaker"):
+            self.risk_engine.circuit_breaker.trip(reason)
+
+        cancelled_orders = []
+        if hasattr(self, "mt5_client") and self.mt5_client:
+            cancelled_orders = self.mt5_client.cancel_all_pending_orders()
+
+        closed_positions = []
+        if close_positions and hasattr(self, "mt5_client") and self.mt5_client:
+            closed_positions = self.mt5_client.close_all_positions()
+
+        logger.warning(f"🚨 EMERGENCY STOP ACTIVATED: {reason} | Cancelled {len(cancelled_orders)} orders | Closed {len(closed_positions)} positions")
+        return {
+            "status": "SUCCESS",
+            "circuit_breaker": "TRIPPED",
+            "reason": reason,
+            "orders_cancelled": len(cancelled_orders),
+            "positions_closed": len(closed_positions)
+        }
+
+    def resume_trading(self) -> Dict[str, Any]:
+        """Resets circuit breaker and restores trading authorization."""
+        self.circuit_breaker.reset()
+        if hasattr(self, "risk_engine") and hasattr(self.risk_engine, "circuit_breaker"):
+            self.risk_engine.circuit_breaker.reset()
+        logger.info("✅ TRADING RESUMED: Circuit breaker manually reset by operator.")
+        return {
+            "status": "SUCCESS",
+            "circuit_breaker": "RESET"
+        }

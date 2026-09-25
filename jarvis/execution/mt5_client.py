@@ -901,6 +901,16 @@ class MT5Client:
         err_msg = result.comment if result else str(mt5.last_error())
         return {"status": "FAILED", "reason": err_msg}
 
+    def cancel_all_pending_orders(self) -> List[Dict[str, Any]]:
+        """Cancels all currently active pending orders."""
+        orders = self.get_pending_orders()
+        results = []
+        for o in orders:
+            t = o.get("ticket")
+            if t:
+                results.append(self.cancel_pending_order(int(t)))
+        return results
+
     def modify_pending_order(
         self,
         ticket: int,

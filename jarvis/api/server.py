@@ -423,7 +423,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 "/positions", "/positions.html",
                 "/api/telemetry_state", "/api/telemetry", "/api/candles", "/api/rates",
                 "/api/radar", "/api/market-status", "/api/news", "/api/history",
-                "/api/tunnel_info", "/api/pending_orders",
+                "/api/tunnel_info", "/api/pending_orders", "/api/risk_status",
                 "/api/stream/telemetry", "/api/auth/me", "/api/auth/verify",
                 # Probes: no session, and no reliance on the loopback bypass.
                 "/health", "/ready"
@@ -828,6 +828,21 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     "account": snap["account"],
                     "timestamp": snap["timestamp"]
                 })
+            elif path == "/api/risk_status":
+                try:
+                    acc = self.mt5_client.get_account_snapshot() if (hasattr(self, "mt5_client") and self.mt5_client) else None
+                    equity = getattr(acc, "equity", 10000.0) or 10000.0
+                    balance = getattr(acc, "balance", 10000.0) or 10000.0
+                    if hasattr(self, "orchestrator") and self.orchestrator and hasattr(self.orchestrator, "risk_engine"):
+                        r_status = self.orchestrator.risk_engine.get_risk_status(equity, balance)
+                    else:
+                        from jarvis.risk.risk_engine import RiskEngine
+                        re = RiskEngine()
+                        r_status = re.get_risk_status(equity, balance)
+                    self._send_json(r_status)
+                except Exception as e:
+                    logger.error(f"Error fetching risk status: {e}")
+                    self._send_json({"error": str(e)}, status_code=500)
             elif path == "/api/metrics":
                 self._send_metrics(query)
             else:
@@ -1047,6 +1062,32 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 fresh_acc = self.mt5_client.get_account_snapshot()
                 self.state_manager.sync_broker_state(fresh_acc, fresh_pos)
                 self._send_json({"status": "SUCCESS", "closed_count": len(results), "details": results})
+            elif path == "/api/action/emergency_stop":
+                reason = str(data.get("reason") or "OPERATOR_EMERGENCY_STOP: Trading manually halted by user")
+                close_pos = bool(data.get("close_positions", False))
+                if hasattr(self, "orchestrator") and self.orchestrator:
+                    res = self.orchestrator.emergency_stop(reason=reason, close_positions=close_pos)
+                else:
+                    from jarvis.risk.circuit_breaker import CircuitBreaker
+                    cb = CircuitBreaker()
+                    cb.trip(reason)
+                    cancelled = self.mt5_client.cancel_all_pending_orders() if (hasattr(self, "mt5_client") and self.mt5_client) else []
+                    closed = self.mt5_client.close_all_positions() if (close_pos and hasattr(self, "mt5_client") and self.mt5_client) else []
+                    res = {"status": "SUCCESS", "circuit_breaker": "TRIPPED", "reason": reason, "orders_cancelled": len(cancelled), "positions_closed": len(closed)}
+                if close_pos and hasattr(self, "mt5_client") and self.mt5_client:
+                    fresh_pos = self.mt5_client.get_open_positions()
+                    fresh_acc = self.mt5_client.get_account_snapshot()
+                    self.state_manager.sync_broker_state(fresh_acc, fresh_pos)
+                self._send_json(res)
+            elif path == "/api/action/resume_trading":
+                if hasattr(self, "orchestrator") and self.orchestrator:
+                    res = self.orchestrator.resume_trading()
+                else:
+                    from jarvis.risk.circuit_breaker import CircuitBreaker
+                    cb = CircuitBreaker()
+                    cb.reset()
+                    res = {"status": "SUCCESS", "circuit_breaker": "RESET"}
+                self._send_json(res)
             elif path == "/api/action/cancel_pending_order":
                 ticket = int(data.get("ticket", 0))
                 if ticket <= 0:

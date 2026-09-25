@@ -1288,6 +1288,7 @@ class DecisionEngine:
             expected_value=ev,
             model_confidence=calibrated_win_p,
             raw_win_prob=round(float(raw_prob), 4),
+            ai_score=round(float(ai_score), 1),
             adversarial_penalty=devil_report.penalty_score,
             invalidation_levels=hypotheses.invalidation_criteria,
             bull_case=bull_case[:4],

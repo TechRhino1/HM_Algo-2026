@@ -3714,6 +3714,194 @@
     });
   }
 
+  function renderPnlBreakdown(rows) {
+    var hostSym = $('pnl-by-symbol');
+    var hostSide = $('pnl-by-side');
+    var hostExec = $('pnl-by-executor');
+    if (!hostSym || !hostSide || !hostExec) return;
+
+    if (!rows || !rows.length) {
+      hostSym.innerHTML = '<span class="tt-muted">No closed trade data</span>';
+      hostSide.innerHTML = '<span class="tt-muted">No closed trade data</span>';
+      hostExec.innerHTML = '<span class="tt-muted">No closed trade data</span>';
+      return;
+    }
+
+    var bySym = {}, bySide = {}, byExec = {};
+
+    rows.forEach(function (t) {
+      var sym = t.symbol || 'OTHER';
+      var side = String(t.action || t.type || t.side || '').toUpperCase();
+      if (!/BUY|SELL/.test(side)) side = 'OTHER';
+      var exec = String(t.executor || 'OTHER');
+      if (exec.indexOf('BOT') !== -1) exec = 'BOT (AI)';
+      else if (exec.indexOf('MANUAL') !== -1) exec = 'MANUAL';
+      else if (exec.indexOf('SL') !== -1 || exec.indexOf('TP') !== -1) exec = 'STOP / TP';
+
+      var pnl = historyPnl(t);
+      var validPnl = pnl !== null;
+      var profit = validPnl ? pnl : 0;
+      var isWin = profit > 0 ? 1 : 0;
+      var isLoss = profit < 0 ? 1 : 0;
+
+      // Symbol
+      if (!bySym[sym]) bySym[sym] = { pnl: 0, count: 0, wins: 0, losses: 0, vol: 0 };
+      bySym[sym].count++;
+      bySym[sym].vol += Number(t.volume || 0);
+      if (validPnl) {
+        bySym[sym].pnl += profit;
+        bySym[sym].wins += isWin;
+        bySym[sym].losses += isLoss;
+      }
+
+      // Side
+      if (!bySide[side]) bySide[side] = { pnl: 0, count: 0, wins: 0, losses: 0 };
+      bySide[side].count++;
+      if (validPnl) {
+        bySide[side].pnl += profit;
+        bySide[side].wins += isWin;
+        bySide[side].losses += isLoss;
+      }
+
+      // Executor
+      if (!byExec[exec]) byExec[exec] = { pnl: 0, count: 0, wins: 0, losses: 0 };
+      byExec[exec].count++;
+      if (validPnl) {
+        byExec[exec].pnl += profit;
+        byExec[exec].wins += isWin;
+        byExec[exec].losses += isLoss;
+      }
+    });
+
+    // Render Symbol Breakdown Table
+    var symKeys = Object.keys(bySym).sort(function (a, b) { return bySym[b].pnl - bySym[a].pnl; });
+    hostSym.innerHTML = '<table class="tt-table" style="font-size:0.75rem;">' +
+      '<thead><tr><th>Symbol</th><th class="tt-num">Trades</th><th class="tt-num">Win%</th><th class="tt-num">Net P&amp;L</th></tr></thead><tbody>' +
+      symKeys.map(function (s) {
+        var d = bySym[s];
+        var counted = d.wins + d.losses;
+        var wr = counted ? Math.round((d.wins / counted) * 100) : 0;
+        return '<tr><td><b>' + esc(s) + '</b></td>' +
+          '<td class="tt-num">' + d.count + '</td>' +
+          '<td class="tt-num">' + wr + '%</td>' +
+          '<td class="tt-num ' + signClass(d.pnl) + '">' + (d.pnl > 0 ? '+' : '') + num(d.pnl, 2) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+
+    // Render Side Breakdown Table
+    var sideKeys = Object.keys(bySide);
+    hostSide.innerHTML = '<table class="tt-table" style="font-size:0.75rem;">' +
+      '<thead><tr><th>Side</th><th class="tt-num">Trades</th><th class="tt-num">Win%</th><th class="tt-num">Net P&amp;L</th></tr></thead><tbody>' +
+      sideKeys.map(function (s) {
+        var d = bySide[s];
+        var counted = d.wins + d.losses;
+        var wr = counted ? Math.round((d.wins / counted) * 100) : 0;
+        var cls = s === 'BUY' ? 'tt-dir--buy' : (s === 'SELL' ? 'tt-dir--sell' : '');
+        return '<tr><td><span class="tt-dir ' + cls + '">' + esc(s) + '</span></td>' +
+          '<td class="tt-num">' + d.count + '</td>' +
+          '<td class="tt-num">' + wr + '%</td>' +
+          '<td class="tt-num ' + signClass(d.pnl) + '">' + (d.pnl > 0 ? '+' : '') + num(d.pnl, 2) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+
+    // Render Executor Breakdown Table
+    var execKeys = Object.keys(byExec);
+    hostExec.innerHTML = '<table class="tt-table" style="font-size:0.75rem;">' +
+      '<thead><tr><th>Executor</th><th class="tt-num">Trades</th><th class="tt-num">Win%</th><th class="tt-num">Net P&amp;L</th></tr></thead><tbody>' +
+      execKeys.map(function (e) {
+        var d = byExec[e];
+        var counted = d.wins + d.losses;
+        var wr = counted ? Math.round((d.wins / counted) * 100) : 0;
+        return '<tr><td>' + esc(e) + '</td>' +
+          '<td class="tt-num">' + d.count + '</td>' +
+          '<td class="tt-num">' + wr + '%</td>' +
+          '<td class="tt-num ' + signClass(d.pnl) + '">' + (d.pnl > 0 ? '+' : '') + num(d.pnl, 2) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+
+  function showAiExplanationModal(ticket) {
+    var modal = $('ai-explanation-modal');
+    var content = $('ai-modal-content');
+    var title = $('ai-modal-title');
+    if (!modal || !content) return;
+
+    var trades = state.history || [];
+    var trade = null;
+    for (var i = 0; i < trades.length; i++) {
+      if (String(trades[i].ticket || trades[i].id) === String(ticket)) {
+        trade = trades[i];
+        break;
+      }
+    }
+
+    if (!trade) {
+      var dec = state.symbol ? state.decisions[state.symbol] : null;
+      if (dec) trade = dec;
+    }
+
+    if (!trade) {
+      content.innerHTML = '<p class="tt-muted">No details found for ticket #' + esc(ticket) + '</p>';
+      modal.hidden = false;
+      modal.style.display = 'flex';
+      return;
+    }
+
+    var sym = trade.symbol || '';
+    var side = String(trade.action || trade.type || trade.bias || 'BUY').toUpperCase();
+    if (title) setText(title, 'AI Intel: ' + sym + ' ' + side + ' #' + (trade.ticket || ticket));
+
+    var feat = {};
+    if (trade.features_json) {
+      try { feat = typeof trade.features_json === 'string' ? JSON.parse(trade.features_json) : trade.features_json; } catch(e){}
+    }
+
+    var aiScore = trade.ai_score || feat.ai_score || (trade.model_confidence ? Math.round(trade.model_confidence * 100) : '—');
+    var strat = trade.strategy || feat.strategy || 'Adaptive Dissection';
+    var ev = trade.expected_value !== undefined ? num(trade.expected_value, 2) : (feat.expected_value ? num(feat.expected_value, 2) : '—');
+    var rr = trade.risk_reward_ratio !== undefined ? num(trade.risk_reward_ratio, 2) : (feat.rr_ratio ? num(feat.rr_ratio, 2) : '—');
+    var regime = trade.regime || '—';
+
+    var threats = [];
+    if (trade.threats_json) {
+      try { threats = typeof trade.threats_json === 'string' ? JSON.parse(trade.threats_json) : trade.threats_json; } catch(e){}
+    } else if (trade.risk_factors) {
+      threats = trade.risk_factors;
+    }
+
+    content.innerHTML =
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:8px;margin-bottom:14px;">' +
+        '<div class="tt-metric"><span class="tt-metric__label">AI Score</span><span class="tt-metric__value" style="color:#f59e0b;font-weight:700;">' + esc(aiScore) + '</span></div>' +
+        '<div class="tt-metric"><span class="tt-metric__label">Strategy</span><span class="tt-metric__value">' + esc(strat) + '</span></div>' +
+        '<div class="tt-metric"><span class="tt-metric__label">Regime</span><span class="tt-metric__value">' + esc(regime) + '</span></div>' +
+        '<div class="tt-metric"><span class="tt-metric__label">Expected Value</span><span class="tt-metric__value">' + esc(ev) + '</span></div>' +
+        '<div class="tt-metric"><span class="tt-metric__label">R:R Ratio</span><span class="tt-metric__value">' + esc(rr) + '</span></div>' +
+      '</div>' +
+      '<div style="margin-top:12px;border-top:1px solid var(--hm-border);padding-top:10px;">' +
+        '<div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;color:var(--hm-text-muted);margin-bottom:6px;">Thesis &amp; Confluence Evidence</div>' +
+        '<ul style="margin:0 0 10px 18px;padding:0;font-size:0.85rem;line-height:1.4;">' +
+          '<li>Setup generated by <b>' + esc(strat) + '</b> under <b>' + esc(regime) + '</b> regime.</li>' +
+          '<li>Multi-agent consensus AI Score: <b>' + esc(aiScore) + ' / 100</b>.</li>' +
+          (trade.session_name ? '<li>Session context: <b>' + esc(trade.session_name) + '</b>.</li>' : '') +
+        '</ul>' +
+      '</div>' +
+      (threats && threats.length ?
+        '<div style="margin-top:12px;border-top:1px solid var(--hm-border);padding-top:10px;">' +
+          '<div style="font-weight:600;font-size:0.8rem;text-transform:uppercase;color:#ef4444;margin-bottom:6px;">Risk &amp; Invalidation Vectors</div>' +
+          '<ul style="margin:0 0 0 18px;padding:0;font-size:0.85rem;color:#fca5a5;line-height:1.4;">' +
+            threats.map(function(th){ return '<li>' + esc(th) + '</li>'; }).join('') +
+          '</ul>' +
+        '</div>' : '');
+
+    modal.hidden = false;
+    modal.style.display = 'flex';
+  }
+
+  function closeAiExplanationModal() {
+    var modal = $('ai-explanation-modal');
+    if (modal) {
+      modal.hidden = true;
+      modal.style.display = 'none';
+    }
+  }
+
   function renderHistory() {
     var body = $('hist-body');
     if (!body) return;
@@ -3743,6 +3931,8 @@
       setText(summary, text);
     }
 
+    renderPnlBreakdown(rows);
+
     if (!rows.length) {
       setState(body, 'empty', all.length ? 'No trades match these filters' : 'No closed trades',
         all.length ? 'Widen the filters above.' : 'Nothing has been closed in this window yet.');
@@ -3757,19 +3947,15 @@
       var pnl = historyPnl(t);
       var exec = String(t.executor || '—');
       var manual = /MANUAL|SL EXIT|TP EXIT|BROKER/.test(exec.toUpperCase());
-      /* `timestamp` is ambiguous: for a row the engine logged it is the entry
-         time, for one synced from a closed MT5 deal it is the exit. The original
-         history table was a *closed* list and named this column "Closed", so
-         show the real close time wherever one exists and mark the rows that have
-         none, rather than passing an entry time off as a close. */
       var closedAt = t.closed_at || null;
       var stamp = closedAt || t.timestamp;
       var when = stamp ? String(stamp).replace('T', ' ').replace(/\.\d+.*$/, '').slice(0, 19) : '—';
       var whenCell = closedAt
         ? esc(when)
         : (stamp ? esc(when) + ' <span class="tt-muted">(open)</span>' : '—');
+      var ticketId = esc(t.ticket || t.id || '—');
       return '<tr>' +
-        '<td class="tt-muted">' + esc(t.ticket || t.id || '—') + '</td>' +
+        '<td class="tt-muted">' + ticketId + '</td>' +
         '<td><span class="tt-symbol">' + esc(sym) + '</span></td>' +
         '<td><span class="tt-dir ' + dirCls + '">' + esc(side || '—') + '</span></td>' +
         '<td class="' + (manual ? 'tt-muted' : '') + '">' + esc(exec) + '</td>' +
@@ -3781,12 +3967,14 @@
           (pnl === null ? '—' : (pnl > 0 ? '+' : '') + num(pnl, 2)) + '</td>' +
         '<td class="tt-muted" title="' + (closedAt ? 'Closed' : 'Opened; not yet closed') + '">' +
           whenCell + '</td>' +
+        '<td style="text-align:center;"><button type="button" class="tt-btn tt-btn--ghost tt-btn--xs" data-ai-ticket="' + ticketId + '" style="font-size:0.75rem;padding:2px 8px;border:1px solid var(--hm-border);border-radius:4px;cursor:pointer;">🧠 AI Intel</button></td>' +
         '</tr>';
     }).join('');
   }
 
   function renderRisk() {
     var host = $('risk-metrics');
+    var guardHost = $('risk-guard-metrics');
     var exp = $('exposure-body');
     var positions = state.positions || [];
     var acc = state.account;
@@ -3819,6 +4007,36 @@
         '<span class="tt-metric__label">' + esc(t[0]) + '</span>' +
         '<span class="tt-metric__value">' + esc(t[1]) + '</span></div>';
     }).join('');
+
+    // Phase B / Phase D: Fetch & Render Real-Time Risk Guard Diagnostics
+    if (guardHost) {
+      apiGet('/api/risk_status', TIMEOUT.quick).then(function (res) {
+        if (!res.ok || !res.data) return;
+        var r = res.data;
+        var cbActive = r.circuit_breaker_active;
+        var btnStop = $('btn-emergency-stop');
+        var btnResume = $('btn-resume-trading');
+        if (btnStop && btnResume) {
+          if (cbActive) {
+            btnStop.style.display = 'none';
+            btnResume.style.display = 'inline-block';
+          } else {
+            btnStop.style.display = 'inline-block';
+            btnResume.style.display = 'none';
+          }
+        }
+        guardHost.innerHTML = [
+          ['Daily loss', num(r.daily_loss_pct, 2) + '% / ' + num(r.max_daily_loss_pct, 1) + '% max'],
+          ['Total DD', num(r.total_dd_pct, 2) + '% / ' + num(r.max_drawdown_pct, 1) + '% max'],
+          ['DD multiplier', num(r.drawdown_multiplier, 2) + 'x'],
+          ['Circuit breaker', cbActive ? '🚨 TRIPPED (' + (r.circuit_breaker_cooldown_sec || 0) + 's)' : '✅ ARMED']
+        ].map(function (t) {
+          return '<div class="tt-metric">' +
+            '<span class="tt-metric__label">' + esc(t[0]) + '</span>' +
+            '<span class="tt-metric__value" style="font-weight:600;">' + esc(t[1]) + '</span></div>';
+        }).join('');
+      });
+    }
 
     var syms = Object.keys(bySymbol);
     if (!syms.length) {
@@ -4892,6 +5110,38 @@
       + "engine's own decision record. Try <b>“what positions do I have open?”</b> "
       + 'or <b>“how is my ' + esc(state.symbol || 'symbol') + ' doing?”</b>');
     schedule();
+
+    // Phase D: Wire up AI Explanation Modal & Emergency Controls
+    document.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('[data-ai-ticket]');
+      if (btn) {
+        var ticket = btn.getAttribute('data-ai-ticket');
+        if (ticket) showAiExplanationModal(ticket);
+        return;
+      }
+      if (ev.target.id === 'ai-modal-close' || ev.target.id === 'ai-explanation-modal') {
+        closeAiExplanationModal();
+        return;
+      }
+      if (ev.target.id === 'btn-emergency-stop') {
+        if (confirm('🚨 ACTIVATE EMERGENCY STOP?\nThis will trip the circuit breaker and halt all automated trading immediately.')) {
+          apiPost('/api/action/emergency_stop', { reason: 'Operator Emergency Stop Button', close_positions: false }).then(function (res) {
+            alert('Emergency stop activated! Circuit breaker is TRIPPED.');
+            renderRisk();
+          });
+        }
+        return;
+      }
+      if (ev.target.id === 'btn-resume-trading') {
+        if (confirm('Resume automated trading? This will reset the circuit breaker.')) {
+          apiPost('/api/action/resume_trading', {}).then(function (res) {
+            alert('Trading resumed. Circuit breaker is RESET.');
+            renderRisk();
+          });
+        }
+        return;
+      }
+    });
 
     if (window.HMUI && typeof window.HMUI.announce === 'function') {
       window.HMUI.announce('Trading terminal ready');

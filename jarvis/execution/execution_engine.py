@@ -331,12 +331,16 @@ class ExecutionEngine:
                 )
                 mtf_str = json.dumps(ctx.mtf_alignment) if ctx and ctx.mtf_alignment else ""
                 threats_json = json.dumps(decision.risk_factors or [])
+                real_ai_score = getattr(decision, "ai_score", 0.0) or 0.0
+                if real_ai_score <= 0.0:
+                    real_ai_score = decision.model_confidence * 100.0
                 features_json = json.dumps({
                     "strategy": decision.strategy,
                     "adversarial_penalty": decision.adversarial_penalty,
                     "expected_value": decision.expected_value,
                     "rr_ratio": decision.risk_reward_ratio,
                     "model_confidence": decision.model_confidence,
+                    "ai_score": round(real_ai_score, 1),
                     "setup_id": setup_id
                 })
 
@@ -348,7 +352,7 @@ class ExecutionEngine:
                     sl=res.get("sl", decision.stop_loss),
                     tp=res.get("tp", decision.take_profit),
                     volume=lots,
-                    score=decision.model_confidence * 100.0,
+                    score=round(real_ai_score, 1),
                     regime=decision.regime.primary_regime.value if decision.regime else "UNKNOWN",
                     ev=decision.expected_value,
                     executor="BOT (AI)",

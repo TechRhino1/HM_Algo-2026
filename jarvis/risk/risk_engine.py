@@ -399,8 +399,21 @@ class RiskEngine:
                 except Exception:
                     atr_ratio = 1.0
 
-            # 9. Dynamic Position Sizing with Heat & 2nd Position Scaling
+            # 8b. Drawdown Tier Multiplier (1.0 -> 0.75 -> 0.50 -> 0.0)
+            dd_risk_mult = self.drawdown_guard.get_risk_multiplier(account.equity)
+            if dd_risk_mult <= 0.0:
+                rejection_reasons.append("DRAWDOWN_TIER_HALT: Drawdown tier multiplier is 0.0 (drawdown >= 8%). Trading halted.")
+                return {
+                    "authorized": False,
+                    "lots": 0.0,
+                    "reasons": rejection_reasons,
+                    "heat_score": heat_res.score,
+                    "heat_zone": heat_res.zone
+                }
+
+            # 9. Dynamic Position Sizing with Heat, Drawdown Tier, & 2nd Position Scaling
             sample_size = getattr(decision, "pattern_sample_size", 0)
+            combined_multiplier = heat_res.risk_multiplier * dd_risk_mult
             lots = self.position_sizer.calculate_lot_size(
                 account_balance=account.equity,
                 entry_price=decision.entry_price,
@@ -410,7 +423,7 @@ class RiskEngine:
                 invalidation_risk_coefficient=1.0 - (decision.adversarial_penalty / 60.0),
                 model_confidence=decision.model_confidence,
                 pattern_sample_size=sample_size,
-                portfolio_heat_multiplier=heat_res.risk_multiplier,
+                portfolio_heat_multiplier=combined_multiplier,
                 is_second_trade=is_second_trade,
                 target_rr=decision.risk_reward_ratio,
                 atr_ratio=atr_ratio
@@ -450,4 +463,26 @@ class RiskEngine:
                 "heat_score": heat_res.score,
                 "heat_zone": heat_res.zone
             }
+
+    def get_risk_status(self, account_equity: float, account_balance: float) -> Dict[str, Any]:
+        """Returns comprehensive risk status including DD%, CB state, multiplier, and heat."""
+        dd = self.drawdown_guard.check_limits(account_equity, account_balance)
+        dd_mult = self.drawdown_guard.get_risk_multiplier(account_equity)
+        cb = self.circuit_breaker.check_status()
+        now = self._now()
+        paused = [s for s, t in self.circuit_breaker.symbol_paused_until.items() if now < t]
+        return {
+            "daily_loss_pct": dd.get("daily_loss_pct", 0.0),
+            "max_daily_loss_pct": self.max_daily_loss_pct,
+            "total_dd_pct": dd.get("total_dd_pct", 0.0),
+            "max_drawdown_pct": self.max_drawdown_pct,
+            "daily_start_equity": round(self.drawdown_guard.daily_start_equity, 2),
+            "peak_equity": round(self.drawdown_guard.peak_equity, 2),
+            "drawdown_multiplier": dd_mult,
+            "circuit_breaker_active": cb.get("active", False),
+            "circuit_breaker_reason": cb.get("reason", ""),
+            "circuit_breaker_cooldown_sec": cb.get("remaining_cooldown_sec", 0),
+            "consecutive_losses": self.circuit_breaker.consecutive_losses,
+            "paused_symbols": paused,
+        }
 

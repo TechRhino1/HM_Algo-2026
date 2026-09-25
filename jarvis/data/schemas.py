@@ -310,6 +310,7 @@ class DecisionObject:
     # calibrator actually saw. `None` when it was not recorded, which is NOT the
     # same as 0.0: a fit must skip those rows rather than read them as a forecast.
     raw_win_prob: Optional[float] = None
+    ai_score: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -323,6 +324,7 @@ class DecisionObject:
             "bias": self.bias,
             "probabilities": self.probabilities,
             "strategy": self.strategy,
+            "ai_score": self.ai_score,
             "entry_price": self.entry_price,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,

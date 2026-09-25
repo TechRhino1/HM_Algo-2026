@@ -761,6 +761,22 @@
             </div>
           </div>
           <span class="tt-hint" id="hist-summary">—</span>
+
+          <!-- Phase D: P&L Performance Breakdown by Symbol / Side / Executor -->
+          <div class="tt-pnl-breakdown" id="hist-pnl-breakdown" style="margin-top:var(--hm-space-3);display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:var(--hm-space-3);">
+            <div class="tt-card tt-pad" style="background:rgba(255,255,255,0.03);border:1px solid var(--hm-border);border-radius:var(--hm-radius-sm);">
+              <div style="font-weight:600;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--hm-text-muted);margin-bottom:var(--hm-space-2);">P&amp;L by Symbol</div>
+              <div id="pnl-by-symbol" style="max-height:160px;overflow-y:auto;font-size:0.8rem;">—</div>
+            </div>
+            <div class="tt-card tt-pad" style="background:rgba(255,255,255,0.03);border:1px solid var(--hm-border);border-radius:var(--hm-radius-sm);">
+              <div style="font-weight:600;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--hm-text-muted);margin-bottom:var(--hm-space-2);">P&amp;L by Direction (Side)</div>
+              <div id="pnl-by-side" style="font-size:0.8rem;">—</div>
+            </div>
+            <div class="tt-card tt-pad" style="background:rgba(255,255,255,0.03);border:1px solid var(--hm-border);border-radius:var(--hm-radius-sm);">
+              <div style="font-weight:600;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--hm-text-muted);margin-bottom:var(--hm-space-2);">P&amp;L by Executor</div>
+              <div id="pnl-by-executor" style="font-size:0.8rem;">—</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -778,6 +794,7 @@
               <th scope="col" class="tt-num">TP</th>
               <th scope="col" class="tt-num">Realized PnL</th>
               <th scope="col">Closed</th>
+              <th scope="col" style="text-align:center;">AI Intel</th>
             </tr>
           </thead>
           <tbody id="hist-body" data-state="loading"></tbody>
@@ -788,9 +805,13 @@
     <div class="tt-panel tt-slot tt-slot--risk">
       <div class="tt-panel__head">
         <h2 class="tt-panel__title">Risk &amp; exposure</h2>
+        <span class="tt-panel__spacer"></span>
+        <button type="button" class="tt-btn tt-btn--sm" id="btn-emergency-stop" style="background:#ef4444;color:#fff;border:none;font-size:0.75rem;padding:4px 8px;border-radius:4px;cursor:pointer;">🚨 Emergency Stop</button>
+        <button type="button" class="tt-btn tt-btn--sm" id="btn-resume-trading" style="background:#10b981;color:#fff;border:none;font-size:0.75rem;padding:4px 8px;border-radius:4px;cursor:pointer;display:none;margin-left:4px;">▶ Resume</button>
       </div>
       <div class="tt-panel__body">
         <div class="tt-metrics" id="risk-metrics" data-state="loading"></div>
+        <div class="tt-metrics" id="risk-guard-metrics" style="margin-top:var(--hm-space-2);border-top:1px solid var(--hm-border);padding-top:var(--hm-space-2);"></div>
         <div class="tt-pad" id="exposure-body" data-state="loading"></div>
       </div>
     </div>
@@ -1051,6 +1072,21 @@
     <div class="tt-drawer__auth" data-auth-mount></div>
   </nav>
 </aside>
+
+<!-- ═══ AI Explanation Modal (Phase D) ════════════════════════════════ -->
+<div class="tt-modal-backdrop" id="ai-explanation-modal" hidden style="position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:none;align-items:center;justify-content:center;padding:16px;">
+  <div class="tt-modal" style="background:var(--hm-surface-1);border:1px solid var(--hm-border);border-radius:var(--hm-radius-lg);max-width:580px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 20px 40px rgba(0,0,0,0.6);padding:20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--hm-border);padding-bottom:12px;margin-bottom:16px;">
+      <h3 style="margin:0;font-size:1.1rem;display:flex;align-items:center;gap:8px;">
+        <span>🧠</span> <span id="ai-modal-title">AI Trade Explanation</span>
+      </h3>
+      <button type="button" class="tt-btn tt-btn--ghost tt-btn--sm" id="ai-modal-close" style="font-size:1.2rem;line-height:1;cursor:pointer;border:none;background:transparent;color:var(--hm-text-muted);">✕</button>
+    </div>
+    <div id="ai-modal-content">
+      <!-- Injected by dashboard.js -->
+    </div>
+  </div>
+</div>
 
 <div class="tt-drawer-scrim" id="nav-drawer-scrim" aria-hidden="true"></div>
 
