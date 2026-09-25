@@ -2,6 +2,7 @@
 HM Algo 2.0 — Master System Orchestrator.
 Coordinates data feeds, multi-symbol radar scans, parallel analyst clusters, risk authorization, MT5 state synchronization, and execution.
 """
+import os
 import time
 import json
 import logging
