@@ -76,12 +76,14 @@ class PositionMonitorEngine:
         context_engine: MarketContextEngine,
         state_manager: StateManager = GLOBAL_STATE,
         event_bus: EventBus = GLOBAL_EVENT_BUS,
+        ml_predictor: Optional[Any] = None,
     ):
         self.mt5_client     = mt5_client
         self.data_feed      = data_feed
         self.context_engine = context_engine
         self.state_manager  = state_manager
         self.event_bus      = event_bus
+        self.ml_predictor   = ml_predictor
 
         self._running       = False
         self._thread: Optional[threading.Thread] = None
@@ -121,6 +123,9 @@ class PositionMonitorEngine:
         # 1R must be frozen at position open, otherwise every stop-ratchet would
         # rescale R against the *current* stop and thresholds would silently drift.
         self._initial_sl: Dict[int, float] = {}
+        self._initial_tp: Dict[int, float] = {}
+        self._initial_risk_usd: Dict[int, float] = {}
+        self._entry_ml_prob: Dict[int, float] = {}
         self._exit_policy: Dict[int, ExitPolicy] = {}
         self._be_locked: Set[int] = set()
 
@@ -430,6 +435,15 @@ class PositionMonitorEngine:
                           else pos.open_price + risk_dist)
                 )
 
+            # Freeze initial Take Profit and initial monetary risk ceiling
+            if pos.ticket not in self._initial_tp:
+                self._initial_tp[pos.ticket] = pos.tp
+            if pos.ticket not in self._initial_risk_usd:
+                _pip_val = float(getattr(spec, "pip_value_per_lot", 10.0) or 10.0) if spec else 10.0
+                _p_sz = float(getattr(spec, "pip_size", pip_size) or pip_size)
+                _d_unit = (_pip_val / max(_p_sz, 1e-9)) if _p_sz > 0 else 100_000.0
+                self._initial_risk_usd[pos.ticket] = risk_dist * _d_unit * pos.volume
+
             if pos.ticket not in self._exit_policy:
                 self._exit_policy[pos.ticket] = ExitPolicy.for_symbol(symbol, spec)
             policy = self._exit_policy[pos.ticket]
@@ -554,12 +568,98 @@ class PositionMonitorEngine:
                 if act:
                     actions.append(act)
 
-            # ── 7. Horizon-Adaptive Stagnation & Time-Decay Auto-Exit ────────
+            # ── 5. Live ML Prediction & Dynamic SL/TP Adaptation ────────────
+            ml_prob: Optional[float] = None
             style = self._determine_position_style(pos, ctx)
+            if self.ml_predictor is not None and ctx is not None:
+                try:
+                    ml_feats = self.ml_predictor.extract_features(
+                        context=ctx,
+                        regime=regime,
+                        trade_style=style,
+                        tentative_bias=pos.type,
+                    )
+                    ml_prob = float(self.ml_predictor.predict_probability(ml_feats))
+                    if pos.ticket not in self._entry_ml_prob:
+                        self._entry_ml_prob[pos.ticket] = ml_prob
+                except Exception as e:
+                    logger.debug(f"Live ML prediction failed for #{pos.ticket} ({symbol}): {e}")
+                    ml_prob = None
+
+            # ── 5.1 Dynamic Take Profit (TP) Adaptation ─────────────────────
+            current_r = ((c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)) / max(risk_dist, 1e-6)
+            if not in_grace_period and ml_prob is not None:
+                init_tp = self._initial_tp.get(pos.ticket, pos.tp)
+                init_tp_r = abs(init_tp - pos.open_price) / max(risk_dist, 1e-6) if init_tp > 0 else 2.5
+                adx_val = float(getattr(ctx.momentum, "adx", 20.0) or 20.0)
+                trend_score = float(getattr(ctx.momentum, "trend_score", 0.0) or 0.0)
+                trend_aligned = (pos.type == "BUY" and trend_score > 25.0) or (pos.type == "SELL" and trend_score < -25.0)
+
+                # High ML Confidence (>=0.68) + Strong Trend: Extend TP to let winners run
+                if ml_prob >= 0.68 and adx_val >= 25.0 and trend_aligned and current_r >= 1.0:
+                    extension_r = max(init_tp_r, min(4.5, current_r + 2.0))
+                    extended_tp = round(
+                        pos.open_price + (risk_dist * extension_r) if pos.type == "BUY"
+                        else pos.open_price - (risk_dist * extension_r),
+                        digits,
+                    )
+                    if pos.type == "BUY" and (new_tp == 0 or extended_tp > new_tp):
+                        new_tp = extended_tp
+                        actions.append(f"ML_TP_EXTEND_{extension_r:.1f}R(p={ml_prob:.2f})")
+                    elif pos.type == "SELL" and (new_tp == 0 or extended_tp < new_tp):
+                        new_tp = extended_tp
+                        actions.append(f"ML_TP_EXTEND_{extension_r:.1f}R(p={ml_prob:.2f})")
+
+                # Low ML Confidence (<=0.45) or Divergence Detected: Contract TP to bank profit early
+                elif (ml_prob <= 0.45 or getattr(ctx.momentum, "divergence", "NONE") not in ("NONE", None, "")) and current_r >= 0.75:
+                    contracted_r = max(current_r + 0.35, 1.0)
+                    if contracted_r < init_tp_r:
+                        contracted_tp = round(
+                            pos.open_price + (risk_dist * contracted_r) if pos.type == "BUY"
+                            else pos.open_price - (risk_dist * contracted_r),
+                            digits,
+                        )
+                        if pos.type == "BUY" and (new_tp == 0 or (contracted_tp < new_tp and contracted_tp > c_price)):
+                            new_tp = contracted_tp
+                            actions.append(f"ML_TP_CONTRACT_{contracted_r:.1f}R(p={ml_prob:.2f})")
+                        elif pos.type == "SELL" and (new_tp == 0 or (contracted_tp > new_tp and contracted_tp < c_price)):
+                            new_tp = contracted_tp
+                            actions.append(f"ML_TP_CONTRACT_{contracted_r:.1f}R(p={ml_prob:.2f})")
+
+            # ── 5.2 Dynamic ML Stop Loss (SL) Tightening ───────────────────
+            if not in_grace_period and ml_prob is not None:
+                entry_prob = self._entry_ml_prob.get(pos.ticket, ml_prob)
+                prob_deteriorated = (ml_prob < 0.40) or (entry_prob - ml_prob >= 0.18)
+
+                if prob_deteriorated:
+                    if current_r > 0:
+                        be_buf = policy.buffer_distance(risk_dist)
+                        be_level = round(
+                            pos.open_price + be_buf if pos.type == "BUY" else pos.open_price - be_buf,
+                            digits,
+                        )
+                        if pos.type == "BUY" and be_level > new_sl and be_level < c_price:
+                            new_sl = be_level
+                            actions.append(f"ML_DETERIORATION_BE@{new_sl:.4f}(p={ml_prob:.2f})")
+                        elif pos.type == "SELL" and (new_sl == 0 or be_level < new_sl) and be_level > c_price:
+                            new_sl = be_level
+                            actions.append(f"ML_DETERIORATION_BE@{new_sl:.4f}(p={ml_prob:.2f})")
+                    elif -0.70 <= current_r <= 0.0 and atr > 0:
+                        reduced_sl_dist = risk_dist * 0.50
+                        tightened_sl = round(
+                            pos.open_price - reduced_sl_dist if pos.type == "BUY" else pos.open_price + reduced_sl_dist,
+                            digits,
+                        )
+                        if pos.type == "BUY" and tightened_sl > new_sl and tightened_sl < c_price:
+                            new_sl = tightened_sl
+                            actions.append(f"ML_RISK_CAP_0.5R@{new_sl:.4f}(p={ml_prob:.2f})")
+                        elif pos.type == "SELL" and (new_sl == 0 or tightened_sl < new_sl) and tightened_sl > c_price:
+                            new_sl = tightened_sl
+                            actions.append(f"ML_RISK_CAP_0.5R@{new_sl:.4f}(p={ml_prob:.2f})")
+
+            # ── 7. Horizon-Adaptive Stagnation & Time-Decay Auto-Exit ────────
             open_dur_sec = self._get_position_duration_sec(pos)
             if open_dur_sec > 0:
-                current_r = ((c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)) / max(risk_dist, 1e-6)
-
                 # Scalp: 45 min max hold without progress (R < 0.50R) -> Close position
                 if style == "SCALP" and open_dur_sec >= 2700.0 and current_r < 0.50:
                     self._execute_exit(pos, reason="SCALP_STAGNATION")
@@ -603,9 +703,7 @@ class PositionMonitorEngine:
                             self._execute_exit(pos, reason=f"REGIME_TIME_DECAY_{r_name}")
                             return
                         elif profit_ratio >= 0.005:
-                            # Protect a stale-but-profitable trade with a breakeven
-                            # floor derived from the canonical policy buffer, so the
-                            # offset matches what evaluate_exit would use.
+                            # Protect a stale-but-profitable trade with a breakeven floor
                             be_buffer = policy.buffer_distance(risk_dist)
                             be_cand = round(
                                 pos.open_price + be_buffer if pos.type == "BUY"
@@ -621,7 +719,7 @@ class PositionMonitorEngine:
                 except Exception as e:
                     logger.debug(f"Regime time-decay evaluation failed for #{pos.ticket} ({symbol}): {e}")
 
-        # Monotonic ratchet enforcement (SL only moves closer to price, never backward)
+        # Monotonic ratchet enforcement (SL can only move closer to price, NEVER loosen or move backward)
         if pos.type == "BUY":
             if pos.sl > 0 and new_sl < pos.sl:
                 new_sl = pos.sl
@@ -629,25 +727,95 @@ class PositionMonitorEngine:
             if pos.sl > 0 and new_sl > pos.sl:
                 new_sl = pos.sl
 
-        # ── Apply modifications if SL changes by > 1.0 pip or TP changes ─────────────────────────
+        # ── 8. Broker Constraints, Clamping & Pre-Dispatch Risk Verification ─
+        spec_info = {}
+        if hasattr(self.mt5_client, "get_symbol_trading_spec"):
+            try:
+                res_spec = self.mt5_client.get_symbol_trading_spec(symbol)
+                if isinstance(res_spec, dict):
+                    spec_info = res_spec
+            except Exception:
+                spec_info = {}
+
+        def _val_float(val, fallback: float) -> float:
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                return float(val)
+            return fallback
+
+        def _val_int(val, fallback: int) -> int:
+            if isinstance(val, int) and not isinstance(val, bool):
+                return int(val)
+            return fallback
+
+        point = _val_float(spec_info.get("point"), pip_size * 0.1 if pip_size > 0 else 0.00001)
+        stops_level = _val_int(spec_info.get("trade_stops_level"), 0)
+        freeze_level = _val_int(spec_info.get("trade_freeze_level"), 0)
+        spread_pts = _val_int(spec_info.get("spread"), int(spread * 10) if spread > 0 else 0)
+        min_stop_pts = max(stops_level, freeze_level, spread_pts * 2, 10)
+        min_stop_dist = min_stop_pts * point
+
+        # Ensure new_sl does not encroach inside broker stop distance
+        if pos.type == "BUY":
+            if new_sl >= c_price - min_stop_dist:
+                new_sl = round(c_price - min_stop_dist, digits)
+            if pos.sl > 0 and new_sl < pos.sl:
+                new_sl = pos.sl
+        else:
+            if new_sl <= c_price + min_stop_dist and new_sl > 0:
+                new_sl = round(c_price + min_stop_dist, digits)
+            if pos.sl > 0 and new_sl > pos.sl:
+                new_sl = pos.sl
+
+        # Ensure new_tp does not encroach inside broker stop distance
+        if new_tp > 0:
+            if pos.type == "BUY" and new_tp <= c_price + min_stop_dist:
+                new_tp = round(c_price + min_stop_dist, digits)
+            elif pos.type == "SELL" and new_tp >= c_price - min_stop_dist:
+                new_tp = round(c_price - min_stop_dist, digits)
+
+        # Pre-dispatch monetary risk check: modification must never increase monetary risk!
+        init_risk = self._initial_risk_usd.get(pos.ticket)
+        if init_risk and init_risk > 0 and new_sl > 0:
+            _pip_val = float(getattr(spec, "pip_value_per_lot", 10.0) or 10.0) if spec else 10.0
+            _p_sz = float(getattr(spec, "pip_size", pip_size) or pip_size)
+            dollar_per_unit = (_pip_val / max(_p_sz, 1e-9)) if _p_sz > 0 else 100_000.0
+            if "trade_tick_value" in spec_info and "trade_tick_size" in spec_info:
+                tv = _val_float(spec_info.get("trade_tick_value"), 0.0)
+                ts = _val_float(spec_info.get("trade_tick_size"), 0.0)
+                if tv > 0 and ts > 0:
+                    dollar_per_unit = tv / ts
+            current_projected_risk = abs(pos.open_price - new_sl) * dollar_per_unit * pos.volume
+            if current_projected_risk > init_risk * 1.01:
+                logger.warning(
+                    f"🛡️ RISK GATE BLOCKED MODIFICATION on #{pos.ticket}: "
+                    f"Projected risk ${current_projected_risk:.2f} > initial risk ${init_risk:.2f}."
+                )
+                new_sl = pos.sl
+
+        # ── Apply modifications if SL changes by >= 1.0 pip or TP changes by >= 2.0 pips ────
         sl_pip_diff = abs(new_sl - pos.sl) / (pip_size if pip_size > 0 else 1.0)
         sl_changed = (sl_pip_diff >= 1.0) or (pos.sl == 0 and new_sl > 0)
-        tp_changed = abs(new_tp - pos.tp) > 0.0001
+        tp_pip_diff = abs(new_tp - pos.tp) / (pip_size if pip_size > 0 else 1.0) if new_tp > 0 and pos.tp > 0 else 0.0
+        tp_changed = tp_pip_diff >= 2.0 or (pos.tp == 0 and new_tp > 0)
 
         if sl_changed or tp_changed:
             new_sl = round(new_sl, digits)
             new_tp = round(new_tp, digits)
-            action_key = f"{new_sl:.{digits}f}"
+            action_key = f"{new_sl:.{digits}f}_{new_tp:.{digits}f}"
             if self._last_action.get(pos.ticket) != action_key:
                 res = self.mt5_client.modify_position(pos.ticket, sl=new_sl, tp=new_tp)
                 status = res.get("status") if res else "FAILED"
                 if status == "MODIFIED" or (status == "FAILED" and "No changes" in str(res.get("reason", ""))):
                     self._last_action[pos.ticket] = action_key
-                    log_tag = "[MANUAL]" if is_manual else "[AI]"
+                    log_tag = "[MANUAL]" if is_manual else "[AI-ML]"
+                    ml_str = f"ML_p={ml_prob:.2f}" if ml_prob is not None else "ML_p=N/A"
+                    r_now = ((c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)) / max(risk_dist, 1e-6)
+                    r_str = f"R={r_now:.2f}"
                     logger.info(
                         f"✅ {log_tag} #{pos.ticket} {pos.symbol} {pos.type} | "
-                        f"SL: {pos.sl:.4f}→{new_sl:.4f} | "
-                        f"Actions: {', '.join(actions)}"
+                        f"SL: {pos.sl:.{digits}f}→{new_sl:.{digits}f} | "
+                        f"TP: {pos.tp:.{digits}f}→{new_tp:.{digits}f} | "
+                        f"{ml_str} | {r_str} | Actions: {', '.join(actions)}"
                     )
                     self.event_bus.publish_sync("position_managed", {
                         "ticket": pos.ticket,
@@ -657,6 +825,8 @@ class PositionMonitorEngine:
                         "new_sl": new_sl,
                         "old_tp": pos.tp,
                         "new_tp": new_tp,
+                        "ml_prob": ml_prob,
+                        "current_r": round(r_now, 2),
                         "actions": actions,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     })

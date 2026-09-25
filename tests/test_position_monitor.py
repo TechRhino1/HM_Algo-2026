@@ -245,6 +245,143 @@ class TestPositionMonitorManualClassification(unittest.TestCase):
                 "ratchet must be one-way for SELL too",
             )
 
+    def test_dynamic_ml_tp_extension_on_high_confidence(self):
+        """Verify TP is dynamically extended when ML confidence is high (>=0.68) and trend is strong."""
+        from jarvis.data.schemas import (
+            MarketContext, StructureContext, LiquidityContext,
+            VolatilityContext, MomentumContext, SessionContext
+        )
+        from datetime import timezone
+        import time
+
+        ctx = MarketContext(
+            symbol="EURUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=1.1070,  # in profit (+1.4R)
+            bid=1.1069,
+            ask=1.1071,
+            structure=StructureContext(bias="BULLISH"),
+            liquidity=LiquidityContext(),
+            volatility=VolatilityContext(atr=0.0050, current_spread_pips=1.0),
+            momentum=MomentumContext(trend_score=60.0, adx=30.0),
+            session=SessionContext(is_prime_session=True)
+        )
+        self.monitor._ctx_cache["EURUSD"] = (ctx, time.monotonic())
+        self.monitor._get_position_duration_sec = MagicMock(return_value=300.0)  # outside grace period
+
+        # Mock ML predictor returning high confidence 0.75
+        mock_ml = MagicMock()
+        mock_ml.extract_features.return_value = [0.0] * 24
+        mock_ml.predict_probability.return_value = 0.75
+        self.monitor.ml_predictor = mock_ml
+
+        # Entry 1.1000, SL 1.0950 (1R = 0.0050), initial TP 1.1100 (2R)
+        pos = PositionSnapshot(
+            ticket=401, symbol="EURUSD", type="BUY", volume=1.00,
+            open_price=1.1000, current_price=1.1070, sl=1.0950, tp=1.1100,
+            profit=70.0, swap=0.0, commission=0.0,
+            open_time=datetime.now(timezone.utc).isoformat(), magic=JARVIS_MAGIC_NUMBER
+        )
+        self.mt5_client.modify_position.return_value = {"status": "MODIFIED"}
+        self.monitor._manage_single_position(pos)
+
+        applied_tp = [
+            c.kwargs.get("tp") for c in self.mt5_client.modify_position.call_args_list
+            if c.kwargs.get("tp") is not None
+        ]
+        self.assertTrue(applied_tp, "TP modification must occur on high ML confidence")
+        # Extended TP should be > 1.1100 (initial TP was 1.1100)
+        self.assertGreater(max(applied_tp), 1.1100)
+
+    def test_dynamic_ml_tp_contraction_on_low_confidence(self):
+        """Verify TP is dynamically contracted closer to price when ML confidence drops (<=0.45)."""
+        from jarvis.data.schemas import (
+            MarketContext, StructureContext, LiquidityContext,
+            VolatilityContext, MomentumContext, SessionContext
+        )
+        from datetime import timezone
+        import time
+
+        ctx = MarketContext(
+            symbol="EURUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=1.1055,  # in profit (+1.1R)
+            bid=1.1054,
+            ask=1.1056,
+            structure=StructureContext(bias="BULLISH"),
+            liquidity=LiquidityContext(),
+            volatility=VolatilityContext(atr=0.0050, current_spread_pips=1.0),
+            momentum=MomentumContext(trend_score=10.0, adx=15.0, divergence="BEARISH_DIVERGENCE"),
+            session=SessionContext(is_prime_session=True)
+        )
+        self.monitor._ctx_cache["EURUSD"] = (ctx, time.monotonic())
+        self.monitor._get_position_duration_sec = MagicMock(return_value=300.0)
+
+        # Mock ML predictor returning low confidence 0.38
+        mock_ml = MagicMock()
+        mock_ml.extract_features.return_value = [0.0] * 24
+        mock_ml.predict_probability.return_value = 0.38
+        self.monitor.ml_predictor = mock_ml
+
+        # Entry 1.1000, initial SL 1.0950, initial TP 1.1150 (3R)
+        pos = PositionSnapshot(
+            ticket=402, symbol="EURUSD", type="BUY", volume=1.00,
+            open_price=1.1000, current_price=1.1055, sl=1.0950, tp=1.1150,
+            profit=55.0, swap=0.0, commission=0.0,
+            open_time=datetime.now(timezone.utc).isoformat(), magic=JARVIS_MAGIC_NUMBER
+        )
+        self.mt5_client.modify_position.return_value = {"status": "MODIFIED"}
+        self.monitor._manage_single_position(pos)
+
+        applied_tp = [
+            c.kwargs.get("tp") for c in self.mt5_client.modify_position.call_args_list
+            if c.kwargs.get("tp") is not None
+        ]
+        self.assertTrue(applied_tp, "TP modification must occur on deteriorating ML confidence")
+        # Contracted TP should be < initial TP (1.1150) and > current price (1.1055)
+        self.assertLess(min(applied_tp), 1.1150)
+        self.assertGreater(min(applied_tp), 1.1055)
+
+    def test_sl_never_widens_to_save_losing_trade(self):
+        """Invariant: SL must NEVER widen or move backwards to prevent a loss."""
+        from jarvis.data.schemas import (
+            MarketContext, StructureContext, LiquidityContext,
+            VolatilityContext, MomentumContext, SessionContext
+        )
+        from datetime import timezone
+        import time
+
+        ctx = MarketContext(
+            symbol="EURUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=1.0970,  # underwater (-0.6R)
+            bid=1.0969,
+            ask=1.0971,
+            structure=StructureContext(bias="BULLISH"),
+            liquidity=LiquidityContext(),
+            volatility=VolatilityContext(atr=0.0050, current_spread_pips=1.0),
+            momentum=MomentumContext(trend_score=-10.0, adx=15.0),
+            session=SessionContext(is_prime_session=True)
+        )
+        self.monitor._ctx_cache["EURUSD"] = (ctx, time.monotonic())
+        self.monitor._get_position_duration_sec = MagicMock(return_value=300.0)
+
+        # Existing SL is 1.0950
+        pos = PositionSnapshot(
+            ticket=403, symbol="EURUSD", type="BUY", volume=1.00,
+            open_price=1.1000, current_price=1.0970, sl=1.0950, tp=1.1100,
+            profit=-30.0, swap=0.0, commission=0.0,
+            open_time=datetime.now(timezone.utc).isoformat(), magic=JARVIS_MAGIC_NUMBER
+        )
+        self.mt5_client.modify_position.reset_mock()
+        self.monitor._manage_single_position(pos)
+
+        for c in self.mt5_client.modify_position.call_args_list:
+            sl = c.kwargs.get("sl")
+            if sl is not None:
+                self.assertGreaterEqual(sl, 1.0950 - 1e-9, "SL must NEVER be widened below current SL!")
+
 
 if __name__ == "__main__":
     unittest.main()
+

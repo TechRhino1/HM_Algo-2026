@@ -173,7 +173,8 @@ class JarvisOrchestrator:
 
         self.state_synchronizer = MT5StateSynchronizer(self.mt5_client, self.state_manager, self.event_bus)
         self.position_monitor = PositionMonitorEngine(
-            self.mt5_client, self.data_feed, self.context_engine, self.state_manager, self.event_bus
+            self.mt5_client, self.data_feed, self.context_engine, self.state_manager, self.event_bus,
+            ml_predictor=self.ml_predictor
         )
         self._running = False
         self._main_thread: Optional[threading.Thread] = None
