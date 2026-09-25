@@ -2,6 +2,7 @@
 HM Algo 2.0 — Central State Manager.
 Thread-safe, atomic centralized state repository for live telemetry, account records, decisions, and system health.
 """
+import os
 import threading
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
@@ -68,7 +69,18 @@ class StateManager:
 
     def _init_state(self):
         self._rw_lock = threading.RLock()
-        self.execution_mode: ExecutionMode = ExecutionMode.LIVE
+        mode_env = os.environ.get("JARVIS_MODE")
+        if mode_env:
+            try:
+                self.execution_mode = ExecutionMode(mode_env.lower())
+            except Exception:
+                self.execution_mode = ExecutionMode.DEMO
+        else:
+            try:
+                from jarvis.config.settings import SETTINGS
+                self.execution_mode = ExecutionMode(SETTINGS.trading.default_mode)
+            except Exception:
+                self.execution_mode = ExecutionMode.DEMO
         self.trade_style: str = "SWING"
         self.is_safe_mode: bool = False
 

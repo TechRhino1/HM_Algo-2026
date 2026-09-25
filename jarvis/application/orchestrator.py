@@ -64,7 +64,7 @@ class JarvisOrchestrator:
     def __init__(
         self,
         symbols: Optional[List[str]] = None,
-        mode: str = "live",
+        mode: Optional[str] = None,
         magic_number: int = 888999,
         trade_style: str = "ALL"
     ):
