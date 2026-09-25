@@ -174,7 +174,8 @@ class JarvisOrchestrator:
         self.state_synchronizer = MT5StateSynchronizer(self.mt5_client, self.state_manager, self.event_bus)
         self.position_monitor = PositionMonitorEngine(
             self.mt5_client, self.data_feed, self.context_engine, self.state_manager, self.event_bus,
-            ml_predictor=self.ml_predictor
+            ml_predictor=self.ml_predictor,
+            manual_mode=os.environ.get("JARVIS_MANUAL_MANAGEMENT_MODE", "TRAIL")
         )
         self._running = False
         self._main_thread: Optional[threading.Thread] = None
@@ -1122,6 +1123,11 @@ class JarvisOrchestrator:
 
     def _orchestration_loop_single_pass(self, dry_run: bool = False) -> List[Dict[str, Any]]:
         """Executes a single multi-style radar sweep across SWING, DAY_TRADING, and SCALP with Universal Opportunity Arbitration."""
+        try:
+            self.order_manager.cleanup_stale_pending_orders(max_age_sec=1800)
+        except Exception as e:
+            logger.debug(f"Stale pending order cleanup pass error: {e}")
+
         best_opportunity, ranked_candidates, raw_results = self.scan_all_modes(dry_run=dry_run)
 
         if best_opportunity:

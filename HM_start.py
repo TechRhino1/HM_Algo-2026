@@ -356,13 +356,32 @@ def hm_start(mode: str = "live", port: int = 8501, host: str = "127.0.0.1", trad
             time.sleep(3)
 
 def main():
-    # Default to LIVE execution mode; 'paper' mode can be passed as argument for testing
+    # Execution mode resolution with broker account auto-detection
     mode = "live"
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
         raw = sys.argv[1].lower()
-        if raw in {"paper", "test", "sim", "backtest", "demo"}:
+        if raw in {"paper", "test", "sim", "backtest"}:
             mode = "paper"
+        elif raw in {"demo", "broker_demo"}:
+            mode = "demo"
         else:
+            mode = "live"
+    else:
+        # Auto-detect connected MT5 terminal trade_mode to prevent safety lockout
+        try:
+            import MetaTrader5 as mt5
+            if mt5.initialize():
+                acc = mt5.account_info()
+                if acc:
+                    # trade_mode: 0 = DEMO, 1 = CONTEST, 2 = REAL
+                    if getattr(acc, "trade_mode", 0) in (0, 1):
+                        mode = "demo"
+                        logger.info(f"Auto-detected DEMO MT5 account #{acc.login} ({acc.server}). Setting mode='demo'.")
+                    else:
+                        mode = "live"
+                        logger.info(f"Auto-detected REAL MT5 account #{acc.login} ({acc.server}). Setting mode='live'.")
+        except Exception as ex:
+            logger.debug(f"Account auto-detect exception: {ex}")
             mode = "live"
     hm_start(mode=mode)
 

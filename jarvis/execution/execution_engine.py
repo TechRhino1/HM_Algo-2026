@@ -179,16 +179,16 @@ class ExecutionEngine:
             ask_price = getattr(ctx, "ask", cur_price) if ctx else cur_price
 
             is_sane_limit = True
-            if decision.bias == "BUY" and decision.entry_price >= bid_price:
-                logger.warning(
-                    f"⚠️ BUY_LIMIT price ({decision.entry_price}) is NOT below current bid ({bid_price}) for {decision.symbol}. "
-                    f"Falling back safely to MARKET order dispatch."
+            if decision.bias == "BUY" and decision.entry_price >= (bid_price - min_broker_stop_dist):
+                logger.info(
+                    f"⚡ BUY_LIMIT price ({decision.entry_price}) is within broker minimum distance of current bid ({bid_price}, min_stop={min_broker_stop_dist:.5f}). "
+                    f"Routing seamlessly to instant MARKET order."
                 )
                 is_sane_limit = False
-            elif decision.bias == "SELL" and decision.entry_price <= ask_price:
-                logger.warning(
-                    f"⚠️ SELL_LIMIT price ({decision.entry_price}) is NOT above current ask ({ask_price}) for {decision.symbol}. "
-                    f"Falling back safely to MARKET order dispatch."
+            elif decision.bias == "SELL" and decision.entry_price <= (ask_price + min_broker_stop_dist):
+                logger.info(
+                    f"⚡ SELL_LIMIT price ({decision.entry_price}) is within broker minimum distance of current ask ({ask_price}, min_stop={min_broker_stop_dist:.5f}). "
+                    f"Routing seamlessly to instant MARKET order."
                 )
                 is_sane_limit = False
 

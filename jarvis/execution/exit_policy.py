@@ -69,7 +69,7 @@ class ExitPolicy:
     trail_activation_r: float = DEFAULT_TRAIL_ACTIVATION_R
     # Milestone ratchets: (favorable R threshold, R level to lock in)
     milestones: List[tuple] = field(
-        default_factory=lambda: [(2.0, 1.0), (3.0, 2.0), (5.0, 3.5)]
+        default_factory=lambda: [(1.5, 0.5), (2.0, 1.0), (3.0, 2.0), (5.0, 3.5)]
     )
     digits: int = 5
     pip_size: float = 0.0001
@@ -238,7 +238,9 @@ def evaluate_exit(
     # than the initial stop or the trail sits behind the stop and never ratchets.
     if r_multiple >= policy.trail_activation_r and atr > 0:
         dec.trail_active = True
-        trail_dist = atr * policy.runner_trail_atr
+        raw_trail_dist = atr * policy.runner_trail_atr
+        # Cap trail distance so it cannot lag behind entry on high-ATR instruments (e.g. Gold where runner_trail_atr=2.6)
+        trail_dist = min(raw_trail_dist, max(risk_dist * 1.5, atr * 0.8))
         trail_sl = round(price - trail_dist, digits) if is_buy else round(price + trail_dist, digits)
 
         if is_buy:

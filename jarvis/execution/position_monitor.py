@@ -77,6 +77,7 @@ class PositionMonitorEngine:
         state_manager: StateManager = GLOBAL_STATE,
         event_bus: EventBus = GLOBAL_EVENT_BUS,
         ml_predictor: Optional[Any] = None,
+        manual_mode: Optional[str] = None,
     ):
         self.mt5_client     = mt5_client
         self.data_feed      = data_feed
@@ -84,6 +85,8 @@ class PositionMonitorEngine:
         self.state_manager  = state_manager
         self.event_bus      = event_bus
         self.ml_predictor   = ml_predictor
+        import os
+        self.manual_mode    = (manual_mode or os.environ.get("JARVIS_MANUAL_MANAGEMENT_MODE", MANUAL_MANAGEMENT_MODE)).upper()
 
         self._running       = False
         self._thread: Optional[threading.Thread] = None
@@ -263,6 +266,10 @@ class PositionMonitorEngine:
 
     def _execute_exit(self, pos: PositionSnapshot, reason: str) -> bool:
         """Central canonical exit dispatcher with grace period enforcement and audit logging."""
+        if self._is_manual_trade(pos) and getattr(self, "manual_mode", MANUAL_MANAGEMENT_MODE) != "FULL":
+            logger.debug(f"🛡️ Discretionary exit '{reason}' suppressed for manual trade #{pos.ticket}")
+            return False
+
         open_dur_sec = self._get_position_duration_sec(pos)
         if open_dur_sec < DISCRETIONARY_GRACE_PERIOD_SEC:
             logger.info(
@@ -324,17 +331,24 @@ class PositionMonitorEngine:
         new_tp  = pos.tp
         actions = []
 
-        # ── Manual Trade Isolation (Spec v2.1 Refinement 4) ─────────────────
+        # ── Manual Trade Isolation & Trailing (Spec v2.1 Refinement 4) ──────
+        effective_manual_mode = getattr(self, "manual_mode", MANUAL_MANAGEMENT_MODE)
         if is_manual:
-            if MANUAL_MANAGEMENT_MODE == "PROTECT_ONLY":
+            if effective_manual_mode == "PROTECT_ONLY":
                 # Emergency SL only if missing
                 if pos.sl <= 0:
                     new_sl, act = self._handle_manual_sl(pos, c_price, atr, new_sl)
                     if new_sl != pos.sl and new_sl > 0:
                         logger.info(f"🛡️ MANUAL PROTECT_ONLY: Emergency SL set on #{pos.ticket}: {new_sl:.4f}")
                         self.mt5_client.modify_position(ticket=pos.ticket, sl=new_sl, tp=pos.tp)
-                # NEVER trail, partial close, or discretionary close manual trades!
+                # NEVER trail, partial close, or discretionary close manual trades in PROTECT_ONLY mode!
                 return
+            elif pos.sl <= 0:
+                # In TRAIL/FULL modes, place emergency SL if missing before trailing
+                new_sl, act = self._handle_manual_sl(pos, c_price, atr, new_sl)
+                if new_sl != pos.sl and new_sl > 0:
+                    logger.info(f"🛡️ MANUAL {effective_manual_mode}: Emergency SL set on #{pos.ticket}: {new_sl:.4f}")
+                    self.mt5_client.modify_position(ticket=pos.ticket, sl=new_sl, tp=pos.tp)
 
         # ── 180s Post-Entry Discretionary Grace Period (Spec v2.1 Refinement 3) ──
         open_dur_sec = self._get_position_duration_sec(pos)
@@ -350,7 +364,7 @@ class PositionMonitorEngine:
 
         else:
             # ── 0. Partial Profit-Taking (§B-2 / §B-3, Suppressed in Grace Period) ──
-            if not in_grace_period and pos.ticket not in self._partially_closed_tickets and pos.volume >= 0.02:
+            if not in_grace_period and (not is_manual or effective_manual_mode == "FULL") and pos.ticket not in self._partially_closed_tickets and pos.volume >= 0.02:
                 decision_obj = self.state_manager.latest_decisions.get(symbol)
                 first_target = self._coerce_positive_float(
                     getattr(decision_obj, "first_target_price", None)
@@ -784,7 +798,8 @@ class PositionMonitorEngine:
                 ts = _val_float(spec_info.get("trade_tick_size"), 0.0)
                 if tv > 0 and ts > 0:
                     dollar_per_unit = tv / ts
-            current_projected_risk = abs(pos.open_price - new_sl) * dollar_per_unit * pos.volume
+            downside_dist = (pos.open_price - new_sl) if pos.type == "BUY" else (new_sl - pos.open_price)
+            current_projected_risk = max(0.0, downside_dist) * dollar_per_unit * pos.volume
             if current_projected_risk > init_risk * 1.01:
                 logger.warning(
                     f"🛡️ RISK GATE BLOCKED MODIFICATION on #{pos.ticket}: "
@@ -1017,7 +1032,7 @@ class PositionMonitorEngine:
     ):
         """If price crosses VWAP against the trade direction, warn and optionally tighten."""
         vwap = getattr(ctx, "vwap", 0.0)
-        if vwap <= 0:
+        if not isinstance(vwap, (int, float)) or isinstance(vwap, bool) or vwap <= 0:
             return current_sl, None
 
         if pos.type == "BUY" and c_price < vwap:
@@ -1052,7 +1067,8 @@ class PositionMonitorEngine:
         current_sl: float,
     ):
         """If trend_score flips sign against trade, apply 80% profit lock."""
-        trend_score = getattr(ctx.momentum, "trend_score", 0) if hasattr(ctx, "momentum") else 0
+        raw_score = getattr(ctx.momentum, "trend_score", 0.0) if hasattr(ctx, "momentum") else 0.0
+        trend_score = float(raw_score) if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool) else 0.0
         profit_pips = (
             (c_price - pos.open_price) if pos.type == "BUY"
             else (pos.open_price - c_price)
