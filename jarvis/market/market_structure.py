@@ -2,12 +2,14 @@
 HM Algo 2.0 — Advanced Institutional Market Structure Engine.
 Detects Swing Pivots (HH, HL, LH, LL), BOS, CHoCH, Order Blocks, Fair Value Gaps (FVG), and Premium/Discount Zones.
 """
+import numpy as np
 import pandas as pd
 from jarvis.data.schemas import StructureContext
 
 class MarketStructureEngine:
-    def __init__(self, pivot_window: int = 5):
+    def __init__(self, pivot_window: int = 5, adaptive_window: bool = True):
         self.pivot_window = pivot_window
+        self.adaptive_window = adaptive_window
 
     def analyze_structure(self, df: pd.DataFrame) -> StructureContext:
         if len(df) < self.pivot_window * 2 + 3:
@@ -19,9 +21,27 @@ class MarketStructureEngine:
         opens = df["open"].values
         times = df["time"].values if "time" in df else list(range(len(df)))
 
+        # Adaptive Volatility Lookback Scaling (Trend Channel Navigator adaptation)
+        # Scales pivot scan window with ATR14 vs ATR100 volatility regime
+        w = self.pivot_window
+        if self.adaptive_window and len(df) >= 30:
+            tr = np.maximum(
+                highs[1:] - lows[1:],
+                np.maximum(np.abs(highs[1:] - closes[:-1]), np.abs(lows[1:] - closes[:-1]))
+            )
+            atr14 = float(np.mean(tr[-14:])) if len(tr) >= 14 else float(np.mean(tr))
+            atr_long_len = min(100, len(tr))
+            atr_long = float(np.mean(tr[-atr_long_len:])) if atr_long_len > 0 else atr14
+            if atr_long > 1e-9:
+                vol_ratio = float(np.clip(atr14 / atr_long, 0.6, 1.8))
+                w = int(np.clip(round(self.pivot_window * vol_ratio), 3, 12))
+        
+        # Ensure sufficient bars exist for window w
+        if len(df) < w * 2 + 3:
+            w = max(2, (len(df) - 3) // 2)
+
         swing_highs = []
         swing_lows = []
-        w = self.pivot_window
 
         # Identify swing pivots (deterministic discovery)
         for i in range(w, len(df) - w):
@@ -33,7 +53,7 @@ class MarketStructureEngine:
                 swing_lows.append({"index": i, "price": float(lows[i]), "time": times[i]})
 
         if len(swing_highs) < 2 or len(swing_lows) < 2:
-            return StructureContext(bias="NEUTRAL")
+            return StructureContext(bias="NEUTRAL", adaptive_pivot_window=w)
 
         recent_sh = swing_highs[-1]["price"]
         prev_sh = swing_highs[-2]["price"]
@@ -167,6 +187,61 @@ class MarketStructureEngine:
             for c in cluster:
                 visited.add(c)
 
+        # Asymmetric Quantile Dynamic Channel (AQDC)
+        # Authored mechanism: connects phase swing extremes with independent 90th percentile
+        # upper and lower quantile deviation bands to reject rogue wick anomalies.
+        channel_basis = latest_close
+        channel_upper = latest_close * 1.01
+        channel_lower = latest_close * 0.99
+        channel_position_pct = 50.0
+        channel_quarter = "MIDDLE"
+
+        if swing_highs and swing_lows:
+            last_sh = swing_highs[-1]
+            last_sl = swing_lows[-1]
+            i1 = min(last_sh["index"], last_sl["index"])
+            i2 = max(last_sh["index"], last_sl["index"])
+            p1 = float(highs[i1] if i1 == last_sh["index"] else lows[i1])
+            p2 = float(highs[i2] if i2 == last_sh["index"] else lows[i2])
+
+            span_x = max(i2 - i1, 1)
+            slope_m = (p2 - p1) / span_x
+
+            # Compute basis values and deviations across the active phase [i1, len(df)-1]
+            phase_indices = np.arange(i1, len(df))
+            basis_series = p1 + slope_m * (phase_indices - i1)
+
+            # Projected basis at current bar
+            channel_basis = float(basis_series[-1])
+            # Bound basis to reasonable limits so wild projection doesn't drift away
+            channel_basis = float(np.clip(channel_basis, recent_min * 0.90, recent_max * 1.10))
+
+            phase_highs = highs[i1:]
+            phase_lows = lows[i1:]
+
+            upper_devs = phase_highs - basis_series
+            lower_devs = basis_series - phase_lows
+
+            pos_upper = upper_devs[upper_devs > 0]
+            pos_lower = lower_devs[lower_devs > 0]
+
+            fallback_band = max((recent_max - recent_min) * 0.15, latest_close * 0.003)
+            up_band = float(np.percentile(pos_upper, 90.0)) if len(pos_upper) > 0 else fallback_band
+            low_band = float(np.percentile(pos_lower, 90.0)) if len(pos_lower) > 0 else fallback_band
+
+            channel_upper = round(channel_basis + up_band, 4)
+            channel_lower = round(channel_basis - low_band, 4)
+
+            c_span = max(channel_upper - channel_lower, 1e-9)
+            channel_position_pct = round(float(np.clip(((latest_close - channel_lower) / c_span) * 100.0, 0.0, 100.0)), 1)
+
+            if channel_position_pct <= 25.0:
+                channel_quarter = "LOWER_QUARTER"
+            elif channel_position_pct >= 75.0:
+                channel_quarter = "UPPER_QUARTER"
+            else:
+                channel_quarter = "MIDDLE"
+
         return StructureContext(
             bias=bias,
             higher_highs=hh,
@@ -183,5 +258,11 @@ class MarketStructureEngine:
             discount_premium_zone=discount_premium_zone,
             order_blocks=order_blocks[-4:],
             fair_value_gaps=fair_value_gaps[-4:],
-            key_levels=key_levels
+            key_levels=key_levels,
+            channel_basis=round(channel_basis, 4),
+            channel_upper=round(channel_upper, 4),
+            channel_lower=round(channel_lower, 4),
+            channel_position_pct=channel_position_pct,
+            channel_quarter=channel_quarter,
+            adaptive_pivot_window=w
         )

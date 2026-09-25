@@ -110,6 +110,13 @@ class StructureContext:
     order_blocks: List[Dict[str, Any]] = field(default_factory=list)
     fair_value_gaps: List[Dict[str, Any]] = field(default_factory=list)
     key_levels: List[Dict[str, Any]] = field(default_factory=list)
+    # Adaptive Channel & Quantile Envelope Extensions
+    channel_basis: float = 0.0
+    channel_upper: float = 0.0
+    channel_lower: float = 0.0
+    channel_position_pct: float = 50.0
+    channel_quarter: str = "MIDDLE"  # "LOWER_QUARTER", "MIDDLE", "UPPER_QUARTER"
+    adaptive_pivot_window: int = 5
 
 @dataclass
 class LiquidityContext:
@@ -145,6 +152,10 @@ class MomentumContext:
     roc: float = 0.0
     divergence: str = "NONE"  # "BULLISH_DIVERGENCE", "BEARISH_DIVERGENCE", "NONE"
     acceleration: str = "STEADY"  # "ACCELERATING", "DECELERATING", "EXHAUSTION", "STEADY"
+    # Recency-Weighted Micro Regression Extensions
+    micro_r2: float = 0.0
+    micro_slope_angle: float = 0.0
+    is_statistically_trending: bool = False
 
 @dataclass
 class SessionContext:

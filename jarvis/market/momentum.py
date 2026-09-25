@@ -177,6 +177,36 @@ class MomentumEngine:
                 else:
                     break
 
+        # Recency-Weighted Micro Regression (Trend Channel Navigator adaptation)
+        # Authored mechanism: Exponential-decay linear regression over N=20 bars with lambda=0.94.
+        # Computes statistical R² fit quality and ATR-normalized slope angle.
+        n_micro = min(20, len(df))
+        if n_micro >= 5:
+            y_micro = close.iloc[-n_micro:].values
+            x_micro = np.arange(n_micro, dtype=float)
+            decay = 0.94
+            # weights: most recent bar has weight 1.0, earlier bars decay by 0.94^(bars_ago)
+            weights = np.array([decay ** (n_micro - 1 - i) for i in range(n_micro)], dtype=float)
+            sum_w = np.sum(weights)
+            mean_x = np.sum(weights * x_micro) / sum_w
+            mean_y = np.sum(weights * y_micro) / sum_w
+            cov_xy = np.sum(weights * (x_micro - mean_x) * (y_micro - mean_y))
+            var_x = np.sum(weights * (x_micro - mean_x) ** 2)
+            var_y = np.sum(weights * (y_micro - mean_y) ** 2)
+            
+            micro_slope = cov_xy / (var_x + 1e-9)
+            denom_r2 = var_x * var_y
+            micro_r2 = float(np.clip((cov_xy ** 2) / (denom_r2 + 1e-9), 0.0, 1.0)) if denom_r2 > 1e-12 else 0.0
+
+            # ATR-normalized slope angle in degrees
+            recent_atr = float(tr_smooth.iloc[-1] / self.adx_period) if len(tr_smooth) > 0 and float(tr_smooth.iloc[-1]) > 0 else (c_price * 0.001)
+            micro_angle = float(np.degrees(np.arctan(micro_slope / (recent_atr + 1e-9))))
+            is_stat_trending = bool(micro_r2 >= 0.60 and abs(micro_angle) >= 20.0)
+        else:
+            micro_r2 = 0.0
+            micro_angle = 0.0
+            is_stat_trending = False
+
         return MomentumContext(
             rsi=round(cur_rsi, 1),
             adx=round(cur_adx, 1),
@@ -187,5 +217,8 @@ class MomentumEngine:
             slope=round(float(norm_slope), 3),
             roc=round(roc, 2),
             divergence=divergence,
-            acceleration=acceleration
+            acceleration=acceleration,
+            micro_r2=round(micro_r2, 4),
+            micro_slope_angle=round(micro_angle, 2),
+            is_statistically_trending=is_stat_trending
         )

@@ -434,7 +434,8 @@ class TestHorizonAdaptiveRatchetAndExits(unittest.TestCase):
         pos = PositionSnapshot(
             ticket=801, symbol="XAUUSD", type="BUY", volume=0.01,
             open_price=2400.0, current_price=2407.0, sl=2395.0, tp=2430.0,
-            profit=70.0, swap=0.0, commission=0.0, open_time=datetime.now(timezone.utc).isoformat(),
+            profit=70.0, swap=0.0, commission=0.0,
+            open_time=(datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat(),
             magic=JARVIS_MAGIC_NUMBER, comment="[DAY_TRADING]"
         )
         self.mt5_client.modify_position.return_value = {"status": "MODIFIED"}
@@ -464,7 +465,8 @@ class TestHorizonAdaptiveRatchetAndExits(unittest.TestCase):
         pos = PositionSnapshot(
             ticket=901, symbol="XAUUSD", type="BUY", volume=0.01,
             open_price=2400.0, current_price=2398.0, sl=2390.0, tp=2430.0,
-            profit=-20.0, swap=0.0, commission=0.0, open_time=datetime.now(timezone.utc).isoformat(),
+            profit=-20.0, swap=0.0, commission=0.0,
+            open_time=(datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat(),
             magic=JARVIS_MAGIC_NUMBER, comment="[SCALP]"
         )
         self.monitor._manage_single_position(pos)

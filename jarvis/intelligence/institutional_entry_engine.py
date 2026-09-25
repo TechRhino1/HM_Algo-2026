@@ -188,7 +188,10 @@ class InstitutionalEntryEngine:
                 "mss_displacement_ratio": float(disp_ratio),
                 "ote_level": float(ote_level),
                 "micro_fvg_ce": float(micro_fvg_ce) if micro_fvg_ce is not None else None,
-                "m5_atr": float(m5_atr)
+                "m5_atr": float(m5_atr),
+                "channel_quarter": str(getattr(getattr(context, "structure", None), "channel_quarter", "MIDDLE")),
+                "channel_position_pct": float(getattr(getattr(context, "structure", None), "channel_position_pct", 50.0)),
+                "micro_r2": float(getattr(getattr(context, "momentum", None), "micro_r2", 0.0))
             }
         }
 
@@ -308,7 +311,10 @@ class InstitutionalEntryEngine:
                 "m15_fvg_midpoint": float(m15_fvg_midpoint) if m15_fvg_midpoint is not None else None,
                 "breaker_retest": float(breaker_retest) if breaker_retest is not None else None,
                 "displacement_origin": float(origin_swing),
-                "h1_atr": float(h1_atr)
+                "h1_atr": float(h1_atr),
+                "channel_quarter": str(getattr(getattr(context, "structure", None), "channel_quarter", "MIDDLE")),
+                "channel_position_pct": float(getattr(getattr(context, "structure", None), "channel_position_pct", 50.0)),
+                "micro_r2": float(getattr(getattr(context, "momentum", None), "micro_r2", 0.0))
             }
         }
 
@@ -447,7 +453,10 @@ class InstitutionalEntryEngine:
                 "h1_choch_confirmed": h1_choch,
                 "htf_ob_level": float(htf_ob_level) if htf_ob_level is not None else None,
                 "outer_structural_boundary": float(outer_swing),
-                "d1_atr": float(d1_atr)
+                "d1_atr": float(d1_atr),
+                "channel_quarter": str(getattr(getattr(context, "structure", None), "channel_quarter", "MIDDLE")),
+                "channel_position_pct": float(getattr(getattr(context, "structure", None), "channel_position_pct", 50.0)),
+                "micro_r2": float(getattr(getattr(context, "momentum", None), "micro_r2", 0.0))
             }
         }
 
