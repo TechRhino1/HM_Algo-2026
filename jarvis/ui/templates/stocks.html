@@ -14,14 +14,16 @@
     <!-- TradingView Lightweight Charts Library (Local Fast Cache + CDN Fallback) -->
     <script src="/static/js/vendor/lightweight-charts.standalone.production.js"></script>
     <script>if(typeof LightweightCharts==='undefined'){document.write('<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"><\/script>');}</script>
+    <link rel="stylesheet" href="/static/css/bootstrap.min.css">
     <!-- Stock Screener Stylesheet -->
     <link rel="stylesheet" href="/static/css/stocks.css?v=20260912_v2">
     <link rel="stylesheet" href="/static/css/auth.css?v=20260912_v2">
     <!-- Unified Design System (loaded LAST - see hm_ui.css) -->
     <link rel="stylesheet" href="/static/css/hm_ui.css?v=20260912_v2">
-    <link rel="stylesheet" href="/static/css/theme_bugatti.css">
     <!-- iOS liquid-glass responsive layer (small screens only; desktop untouched) -->
     <link rel="stylesheet" href="/static/css/ios_pages.css?v=20260922_v1">
+    <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
+    <link rel="stylesheet" href="/static/css/theme_bugatti.css">
 </head>
 <body>
 
@@ -31,37 +33,38 @@
     <!-- ==========================================================================
          TOP INSTITUTIONAL HUD HEADER
          ========================================================================== -->
-    <header class="stocks-hud">
-        <div class="brand-wrapper">
+    <header class="stocks-hud bugatti-navbar">
+        <div class="brand-wrapper bugatti-brand">
             <div class="brand-logo">
-                <div class="brand-icon">⚡</div>
-                <div class="brand-text">HM <span>Algo 2.0</span><span class="brand-text__desc"> • Stock Intelligence</span></div>
+                <span class="bugatti-brand__mark" aria-hidden="true"></span>
+                <div class="brand-text bugatti-brand__text">HM <span>Algo 2.0</span><span class="brand-text__desc"> • Stock Intelligence</span></div>
             </div>
-            <div class="badge badge-live">
+            <div class="badge badge-live bugatti-brand__badge">
                 <span class="pulse-dot"></span> AI SCREENER ACTIVE
             </div>
         </div>
 
-        <div class="nav-links-wrapper" role="navigation" aria-label="Market sections">
-            <a href="/" class="btn-nav-switch">
-                <span>⚡ Forex / Crypto</span>
+        <div class="nav-links-wrapper bugatti-nav-links" role="navigation" aria-label="Market sections">
+            <a href="/" class="btn-nav-switch bugatti-desk-link">
+                <span>⚡ Cockpit</span>
             </a>
-            <a href="/stocks" class="btn-nav-switch btn-nav-active">
+            <a href="/console" class="btn-nav-switch bugatti-desk-link">
+                <span>📟 Console</span>
+            </a>
+            <a href="/positions" class="btn-nav-switch bugatti-desk-link">
+                <span>📋 Positions</span>
+            </a>
+            <a href="/stocks" class="btn-nav-switch bugatti-desk-link btn-nav-active active" aria-current="page">
                 <span>🇺🇸 US Stocks</span>
             </a>
-            <a href="/india" class="btn-nav-switch">
+            <a href="/india" class="btn-nav-switch bugatti-desk-link">
                 <span>🇮🇳 India Stocks</span>
             </a>
-            <a href="/options" class="btn-nav-switch">
-                <span>📊 India Options (F&O)</span>
+            <a href="/options" class="btn-nav-switch bugatti-desk-link">
+                <span>📊 Options (F&O)</span>
             </a>
         </div>
 
-        <!-- Explicit auth slot. Without it auth.js falls back to appending the
-             widget INTO .nav-links-wrapper (auth.js:137), which put the four
-             market pills and the account pill in one flex-wrap:wrap row - the
-             row overflowed and broke into two and three lines. The header is
-             the flex parent, so the widget belongs here as a sibling. -->
         <div id="auth-header-widget" class="auth-header-widget"></div>
     </header>
 
@@ -605,6 +608,8 @@
         </div>
     </div>
 
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
     <!-- Universal Authentication & Stock Controller Script -->
     <script src="/static/js/auth.js?v=20260912_v2"></script>
     <script src="/static/js/stocks.js?v=20260912_v2"></script>

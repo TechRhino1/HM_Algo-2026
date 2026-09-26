@@ -11,12 +11,14 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
+<link rel="stylesheet" href="/static/css/bootstrap.min.css">
 <link rel="stylesheet" href="/static/css/console.css">
 <link rel="stylesheet" href="/static/css/auth.css">
 <link rel="stylesheet" href="/static/css/hm_ui.css">
-<link rel="stylesheet" href="/static/css/theme_bugatti.css">
 <!-- iOS liquid-glass responsive layer (small screens only; desktop untouched) -->
 <link rel="stylesheet" href="/static/css/ios_pages.css?v=20260922_v1">
+<!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
+<link rel="stylesheet" href="/static/css/theme_bugatti.css">
 </head>
 
 <body data-view="trade" data-panel="chart">
@@ -27,20 +29,22 @@
      Two rows on desktop; the second row collapses into a summary strip on
      mobile so the account is never more than a glance away.
      ═══════════════════════════════════════════════════════════════════════ -->
-<header class="cx-topbar">
+<header class="cx-topbar bugatti-navbar">
   <div class="cx-topbar__row cx-topbar__row--primary">
-    <a class="cx-brand" href="/" aria-label="HM Algo 2.0 console home">
-      <span class="cx-brand__mark" aria-hidden="true">◆</span>
-      <span class="cx-brand__name">HM Algo 2.0</span>
+    <a class="cx-brand bugatti-brand" href="/" aria-label="HM Algo 2.0 console home">
+      <span class="cx-brand__mark bugatti-brand__mark" aria-hidden="true">◆</span>
+      <span class="cx-brand__name bugatti-brand__text">HM Algo 2.0</span>
+      <span class="bugatti-brand__badge">CONSOLE</span>
     </a>
 
-    <!-- Desk switcher. The legacy terminal hid its equivalent below 900px,
-         which left a phone user with no route to the other three desks. -->
-    <nav class="cx-desks" aria-label="Trading desks">
-      <a href="/" class="cx-desk is-active" aria-current="page">Forex&nbsp;/&nbsp;Crypto</a>
-      <a href="/stocks" class="cx-desk">US&nbsp;Stocks</a>
-      <a href="/india" class="cx-desk">India</a>
-      <a href="/options" class="cx-desk">Options</a>
+    <!-- Desk switcher -->
+    <nav class="cx-desks bugatti-nav-links" aria-label="Trading desks">
+      <a href="/" class="cx-desk bugatti-desk-link">⚡ Cockpit</a>
+      <a href="/console" class="cx-desk bugatti-desk-link is-active active" aria-current="page">📟 Console</a>
+      <a href="/positions" class="cx-desk bugatti-desk-link">📋 Positions</a>
+      <a href="/stocks" class="cx-desk bugatti-desk-link">🇺🇸 US Stocks</a>
+      <a href="/india" class="cx-desk bugatti-desk-link">🇮🇳 India</a>
+      <a href="/options" class="cx-desk bugatti-desk-link">📊 Options</a>
     </nav>
 
     <div class="cx-topbar__tools">
@@ -432,11 +436,13 @@
       <button type="button" class="cx-iconbtn" id="cx-desks-close" aria-label="Close">✕</button>
     </div>
     <nav class="cx-sheet__nav" aria-label="Trading desks">
-      <a href="/" class="cx-sheet__link is-active">Forex / Crypto</a>
-      <a href="/stocks" class="cx-sheet__link">US Stocks</a>
-      <a href="/india" class="cx-sheet__link">India</a>
-      <a href="/options" class="cx-sheet__link">Options</a>
-      <a href="/classic" class="cx-sheet__link">Classic terminal</a>
+      <a href="/" class="cx-sheet__link">⚡ Cockpit (Forex/Crypto)</a>
+      <a href="/console" class="cx-sheet__link is-active">📟 Desk Console</a>
+      <a href="/positions" class="cx-sheet__link">📋 Live Positions Book</a>
+      <a href="/stocks" class="cx-sheet__link">🇺🇸 US Stocks</a>
+      <a href="/india" class="cx-sheet__link">🇮🇳 India Stocks</a>
+      <a href="/options" class="cx-sheet__link">📊 Options Desk</a>
+      <a href="/classic" class="cx-sheet__link">Rollback Terminal</a>
     </nav>
   </div>
 </div>
@@ -452,6 +458,7 @@
   </div>
 </div>
 
+<script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
 <script src="/static/js/vendor/lightweight-charts.standalone.production.js"></script>
 <script src="/static/js/auth.js"></script>
 <script src="/static/js/hm_ui.js"></script>

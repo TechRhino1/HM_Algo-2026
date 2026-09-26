@@ -7,14 +7,16 @@
 <meta name="color-scheme" content="dark">
 <title>HM Algo 2.0 — Trading Terminal</title>
 
+<!-- Bootstrap 5: Responsive framework scaffolding and grid -->
+<link rel="stylesheet" href="/static/css/bootstrap.min.css">
 <!-- Base token set. The theme below consumes these and defines no duplicates. -->
 <link rel="stylesheet" href="/static/css/hm_ui.css">
 <link rel="stylesheet" href="/static/css/theme_terminal.css">
-<link rel="stylesheet" href="/static/css/theme_bugatti.css">
 <link rel="stylesheet" href="/static/css/auth.css">
-<!-- iOS design language for phones (≤599px) and tablets (600-1024px). Loaded
-     last so its media rules win over the base themes; ≥1025px is untouched. -->
+<!-- iOS design language for phones (≤599px) and tablets (600-1024px). -->
 <link rel="stylesheet" href="/static/css/ios_mobile.css">
+<!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
+<link rel="stylesheet" href="/static/css/theme_bugatti.css">
 
 <!--
   DYNAMIC-DATA CONTRACT
@@ -32,14 +34,22 @@
 <a class="tt-sr-only" href="#main">Skip to main content</a>
 
 <!-- ═══ Rail ═══════════════════════════════════════════════════════════ -->
-<header class="tt-rail" role="banner">
-  <div class="tt-brand">
-    <span class="tt-brand__mark" aria-hidden="true"></span>
-    <!-- The wordmark is its own span so the phone app bar can ellipsise it: a
-         bare text node cannot be truncated. It truncates BEFORE the session
-         chip beside it, because the chip is state and the wordmark is not. -->
-    <span class="tt-brand__text">HM Algo 2.0</span>
+<header class="tt-rail bugatti-navbar" role="banner">
+  <div class="tt-brand bugatti-brand">
+    <span class="tt-brand__mark bugatti-brand__mark" aria-hidden="true"></span>
+    <span class="tt-brand__text bugatti-brand__text">HM Algo 2.0</span>
+    <span class="bugatti-brand__badge" id="nav-mode-badge">DEMO</span>
   </div>
+
+  <!-- Universal Bugatti Desks Switcher -->
+  <nav class="bugatti-nav-links d-none d-lg-flex" aria-label="Trading desks">
+    <a href="/" class="bugatti-desk-link active" aria-current="page"><span>⚡ Cockpit</span></a>
+    <a href="/console" class="bugatti-desk-link"><span>📟 Console</span></a>
+    <a href="/positions" class="bugatti-desk-link"><span>📋 Positions</span></a>
+    <a href="/stocks" class="bugatti-desk-link"><span>🇺🇸 Stocks</span></a>
+    <a href="/india" class="bugatti-desk-link"><span>🇮🇳 India</span></a>
+    <a href="/options" class="bugatti-desk-link"><span>📊 Options</span></a>
+  </nav>
 
   <!-- Phone-only navigation drawer trigger. It reuses the page's existing
        dropdown controller (`data-dropdown-trigger` + `aria-controls`), so open,
@@ -1200,11 +1210,13 @@
       <button type="button" class="tt-drawer__item" data-pane-btn="ticket"><span class="tt-drawer__ico" aria-hidden="true">⇥</span>Ticket</button>
     </div>
 
-    <p class="tt-drawer__section" id="drawer-sec-markets">Markets</p>
+    <p class="tt-drawer__section" id="drawer-sec-markets">Desks &amp; Markets</p>
     <div class="tt-drawer__group" role="group" aria-labelledby="drawer-sec-markets">
-      <a class="tt-drawer__item" href="/"><span class="tt-drawer__ico" aria-hidden="true">⚡</span>Forex / Crypto</a>
-      <a class="tt-drawer__item" href="/stocks"><span class="tt-drawer__ico" aria-hidden="true">🇺🇸</span>US Stocks</a>
-      <a class="tt-drawer__item" href="/india"><span class="tt-drawer__ico" aria-hidden="true">🇮🇳</span>India Stocks</a>
+      <a class="tt-drawer__item" href="/"><span class="tt-drawer__ico" aria-hidden="true">⚡</span>Cockpit (Forex/Crypto)</a>
+      <a class="tt-drawer__item" href="/console"><span class="tt-drawer__ico" aria-hidden="true">📟</span>Console &amp; Operations</a>
+      <a class="tt-drawer__item" href="/positions"><span class="tt-drawer__ico" aria-hidden="true">📋</span>Live Positions Book</a>
+      <a class="tt-drawer__item" href="/stocks"><span class="tt-drawer__ico" aria-hidden="true">🇺🇸</span>US Stocks Screener</a>
+      <a class="tt-drawer__item" href="/india"><span class="tt-drawer__ico" aria-hidden="true">🇮🇳</span>India Stocks (NSE/BSE)</a>
       <a class="tt-drawer__item" href="/options"><span class="tt-drawer__ico" aria-hidden="true">📊</span>India Options (F&amp;O)</a>
     </div>
 
@@ -1259,6 +1271,7 @@
 
 <div class="tt-drawer-scrim" id="nav-drawer-scrim" aria-hidden="true"></div>
 
+<script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
 <script src="/static/js/vendor/lightweight-charts.standalone.production.js"></script>
 <script src="/static/js/hm_ui.js"></script>
 <script src="/static/js/auth.js"></script>

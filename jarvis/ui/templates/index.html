@@ -16,11 +16,14 @@
     <script>if(typeof LightweightCharts==='undefined'){document.write('<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"><\/script>');}</script>
     <script src="https://s3.tradingview.com/tv.js" defer></script>
     <!-- Terminal Stylesheet -->
+    <link rel="stylesheet" href="/static/css/bootstrap.min.css">
     <link rel="stylesheet" href="/static/css/terminal.css?v=20260912_v2">
     <link rel="stylesheet" href="/static/css/auth.css?v=20260912_v2">
     <!-- Unified Design System (loaded LAST so it modernises the shell without
          rewriting the page stylesheets). See hm_ui.css for the token contract. -->
     <link rel="stylesheet" href="/static/css/hm_ui.css?v=20260912_v2">
+    <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
+    <link rel="stylesheet" href="/static/css/theme_bugatti.css">
 </head>
 <body>
 
@@ -1086,6 +1089,8 @@
         </div>
     </div>
 
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
     <!-- Universal Authentication Module & Terminal Controller Script -->
     <script src="/static/js/auth.js?v=20260912_v2"></script>
     <script src="/static/js/terminal.js?v=20260912_v2"></script>

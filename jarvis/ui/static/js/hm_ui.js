@@ -526,7 +526,7 @@
         here = ALIASES[here] || here;
 
         var links = doc.querySelectorAll(
-            '.btn-nav-switch, .market-nav-item, .nav-links-wrapper a[href], .hm-nav a[href]'
+            '.btn-nav-switch, .market-nav-item, .nav-links-wrapper a[href], .hm-nav a[href], .bugatti-desk-link, .cx-desk'
         );
 
         Array.prototype.forEach.call(links, function (a) {

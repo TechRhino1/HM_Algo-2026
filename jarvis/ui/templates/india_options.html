@@ -13,14 +13,16 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Chart.js for Payoff Diagram & OI Bar Charts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/css/bootstrap.min.css">
     <!-- India Options Stylesheet -->
     <link rel="stylesheet" href="/static/css/india_options.css?v=20260912_v2">
     <link rel="stylesheet" href="/static/css/auth.css?v=20260912_v2">
     <!-- Unified Design System (loaded LAST - see hm_ui.css) -->
     <link rel="stylesheet" href="/static/css/hm_ui.css?v=20260912_v2">
-    <link rel="stylesheet" href="/static/css/theme_bugatti.css">
     <!-- iOS liquid-glass responsive layer (small screens only; desktop untouched) -->
     <link rel="stylesheet" href="/static/css/ios_pages.css?v=20260922_v1">
+    <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
+    <link rel="stylesheet" href="/static/css/theme_bugatti.css">
 </head>
 <body>
 
@@ -30,30 +32,36 @@
     <!-- ==========================================================================
          TOP INSTITUTIONAL HUD HEADER
          ========================================================================== -->
-    <header class="opt-hud">
-        <div class="brand-wrapper">
+    <header class="opt-hud bugatti-navbar">
+        <div class="brand-wrapper bugatti-brand">
             <div class="brand-logo">
-                <div class="brand-flag-icon">🇮🇳</div>
-                <div class="brand-text">HM <span>Algo 2.0</span><span class="brand-text__desc"> • Options & Derivatives Terminal</span></div>
+                <span class="bugatti-brand__mark" aria-hidden="true"></span>
+                <div class="brand-text bugatti-brand__text">HM <span>Algo 2.0</span><span class="brand-text__desc"> • Options Desk</span></div>
             </div>
-            <div class="badge badge-nse-live">
-                <span class="pulse-dot"></span> NSE F&O SUITE ACTIVE
+            <div class="badge badge-nse-live bugatti-brand__badge">
+                <span class="pulse-dot"></span> NSE F&amp;O ACTIVE
             </div>
         </div>
 
-        <!-- 4-Way Cross-Market Navigation -->
-        <div class="nav-links-wrapper" role="navigation" aria-label="Market sections">
-            <a href="/" class="btn-nav-switch">
-                <span>⚡ Forex / Crypto</span>
+        <!-- 6-Way Cross-Market Navigation -->
+        <div class="nav-links-wrapper bugatti-nav-links" role="navigation" aria-label="Market sections">
+            <a href="/" class="btn-nav-switch bugatti-desk-link">
+                <span>⚡ Cockpit</span>
             </a>
-            <a href="/stocks" class="btn-nav-switch">
+            <a href="/console" class="btn-nav-switch bugatti-desk-link">
+                <span>📟 Console</span>
+            </a>
+            <a href="/positions" class="btn-nav-switch bugatti-desk-link">
+                <span>📋 Positions</span>
+            </a>
+            <a href="/stocks" class="btn-nav-switch bugatti-desk-link">
                 <span>🇺🇸 US Stocks</span>
             </a>
-            <a href="/india" class="btn-nav-switch">
+            <a href="/india" class="btn-nav-switch bugatti-desk-link">
                 <span>🇮🇳 India Stocks</span>
             </a>
-            <a href="/options" class="btn-nav-switch active">
-                <span>📊 India Options (F&O)</span>
+            <a href="/options" class="btn-nav-switch bugatti-desk-link active" aria-current="page">
+                <span>📊 Options (F&amp;O)</span>
             </a>
         </div>
 
@@ -437,6 +445,8 @@
 
     </main>
 
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
     <!-- Universal Authentication & Options Terminal Controller Script -->
     <script src="/static/js/auth.js?v=20260912_v2"></script>
     <script src="/static/js/india_options.js?v=20260912_v2"></script>

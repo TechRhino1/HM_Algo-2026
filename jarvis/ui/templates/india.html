@@ -14,14 +14,16 @@
     <!-- TradingView Lightweight Charts Library (Local Fast Cache + CDN Fallback) -->
     <script src="/static/js/vendor/lightweight-charts.standalone.production.js"></script>
     <script>if(typeof LightweightCharts==='undefined'){document.write('<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"><\/script>');}</script>
+    <link rel="stylesheet" href="/static/css/bootstrap.min.css">
     <!-- India Terminal Stylesheet -->
     <link rel="stylesheet" href="/static/css/india.css?v=20260912_v2">
     <link rel="stylesheet" href="/static/css/auth.css?v=20260912_v2">
     <!-- Unified Design System (loaded LAST - see hm_ui.css) -->
     <link rel="stylesheet" href="/static/css/hm_ui.css?v=20260912_v2">
-    <link rel="stylesheet" href="/static/css/theme_bugatti.css">
     <!-- iOS liquid-glass responsive layer (small screens only; desktop untouched) -->
     <link rel="stylesheet" href="/static/css/ios_pages.css?v=20260922_v1">
+    <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
+    <link rel="stylesheet" href="/static/css/theme_bugatti.css">
 </head>
 <body>
 
@@ -31,30 +33,36 @@
     <!-- ==========================================================================
          TOP INSTITUTIONAL HUD HEADER
          ========================================================================== -->
-    <header class="india-hud">
-        <div class="brand-wrapper">
+    <header class="india-hud bugatti-navbar">
+        <div class="brand-wrapper bugatti-brand">
             <div class="brand-logo">
-                <div class="brand-flag-icon">🇮🇳</div>
-                <div class="brand-text">HM <span>Algo 2.0</span><span class="brand-text__desc"> • India Markets Intelligence</span></div>
+                <span class="bugatti-brand__mark" aria-hidden="true"></span>
+                <div class="brand-text bugatti-brand__text">HM <span>Algo 2.0</span><span class="brand-text__desc"> • India Intelligence</span></div>
             </div>
-            <div class="badge badge-nse-live">
-                <span class="pulse-dot"></span> NSE / BSE & F&O ENGINE ACTIVE
+            <div class="badge badge-nse-live bugatti-brand__badge">
+                <span class="pulse-dot"></span> NSE / BSE & F&amp;O ACTIVE
             </div>
         </div>
 
         <!-- Global Cross-Market Navigation Switches -->
-        <div class="nav-links-wrapper" role="navigation" aria-label="Market sections">
-            <a href="/" class="btn-nav-switch">
-                <span>⚡ Forex / Crypto</span>
+        <div class="nav-links-wrapper bugatti-nav-links" role="navigation" aria-label="Market sections">
+            <a href="/" class="btn-nav-switch bugatti-desk-link">
+                <span>⚡ Cockpit</span>
             </a>
-            <a href="/stocks" class="btn-nav-switch">
+            <a href="/console" class="btn-nav-switch bugatti-desk-link">
+                <span>📟 Console</span>
+            </a>
+            <a href="/positions" class="btn-nav-switch bugatti-desk-link">
+                <span>📋 Positions</span>
+            </a>
+            <a href="/stocks" class="btn-nav-switch bugatti-desk-link">
                 <span>🇺🇸 US Stocks</span>
             </a>
-            <a href="/india" class="btn-nav-switch active">
+            <a href="/india" class="btn-nav-switch bugatti-desk-link active" aria-current="page">
                 <span>🇮🇳 India Stocks</span>
             </a>
-            <a href="/options" class="btn-nav-switch">
-                <span>📊 India Options (F&O)</span>
+            <a href="/options" class="btn-nav-switch bugatti-desk-link">
+                <span>📊 Options (F&amp;O)</span>
             </a>
         </div>
 
@@ -625,6 +633,8 @@
         </div>
     </div>
 
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
     <!-- Universal Authentication & India Controller Script -->
     <script src="/static/js/auth.js?v=20260912_v2"></script>
     <script src="/static/js/india.js?v=20260912_v2"></script>

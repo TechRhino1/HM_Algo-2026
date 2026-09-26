@@ -423,6 +423,15 @@
 
     setText(mg, num(acc.free_margin, 2));
 
+    // Sync Universal Bugatti Navbar Telemetry Pods
+    var navEq = $('nav-equity'), navPf = $('nav-profit'), navMg = $('nav-margin');
+    if (navEq) setText(navEq, num(acc.equity, 2) + ' ' + (acc.currency || ''));
+    if (navPf) {
+      setText(navPf, (profit > 0 ? '+' : '') + num(profit, 2));
+      navPf.style.color = profit > 0 ? 'var(--emerald-velocity)' : (profit < 0 ? 'var(--hyper-crimson)' : '#ffffff');
+    }
+    if (navMg) setText(navMg, num(acc.free_margin, 2));
+
     // Margin level is only meaningful with open exposure; 0 means "no positions".
     var ml = Number(acc.margin_level || 0);
     setText(rk, ml > 0 ? num(ml, 1) + '%' : 'flat');

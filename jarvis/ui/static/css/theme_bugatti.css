@@ -8,11 +8,13 @@
   /* --- Bugatti Luxury Palette --- */
   --bg-onyx: #07090e;
   --bg-titanium: #0b0f17;
-  --bg-card: rgba(14, 20, 32, 0.72);
-  --bg-card-hover: rgba(20, 29, 48, 0.85);
+  --bg-card: rgba(14, 20, 32, 0.85);
+  --bg-card-hover: rgba(20, 29, 48, 0.95);
+  --bg-surface-elevated: rgba(18, 26, 42, 0.92);
   --bg-bevel: rgba(255, 255, 255, 0.05);
 
   --bugatti-blue: #0066ff;
+  --bugatti-blue-hover: #1e7aff;
   --bugatti-blue-glow: 0 0 20px rgba(0, 102, 255, 0.45);
   --electric-cyan: #00f0ff;
   --electric-cyan-glow: 0 0 16px rgba(0, 240, 255, 0.4);
@@ -24,55 +26,91 @@
   --hyper-crimson: #ff3344;
   --hyper-crimson-glow: 0 0 16px rgba(255, 51, 68, 0.45);
   --amber-perf: #f59e0b;
+  --amber-perf-glow: 0 0 16px rgba(245, 158, 11, 0.4);
   --emerald-velocity: #00f59b;
   --emerald-velocity-glow: 0 0 16px rgba(0, 245, 155, 0.4);
 
   /* --- Cockpit Typography --- */
   --font-cockpit: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-hud: 'JetBrains Mono', 'Roboto Mono', Consolas, monospace;
+  --font-hud: 'JetBrains Mono', 'Roboto Mono', 'SF Mono', Consolas, monospace;
 
   /* Carbon Weave Texture */
-  --carbon-pattern: radial-gradient(circle at 50% 50%, rgba(0, 102, 255, 0.04) 0%, transparent 60%),
+  --carbon-pattern: radial-gradient(circle at 50% 0%, rgba(0, 102, 255, 0.08) 0%, transparent 70%),
                     linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
                     linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+
+  /* Bootstrap 5 Theme Overrides */
+  --bs-body-bg: var(--bg-onyx);
+  --bs-body-color: var(--machined-silver);
+  --bs-body-font-family: var(--font-cockpit);
+  --bs-primary: var(--bugatti-blue);
+  --bs-success: var(--emerald-velocity);
+  --bs-danger: var(--hyper-crimson);
+  --bs-warning: var(--amber-perf);
+  --bs-info: var(--electric-cyan);
+  --bs-border-color: var(--titanium-border);
 }
 
-/* ── Global Cockpit Theme Overrides ─────────────────────────────────────── */
-body.tt-app {
+/* ── Base Cockpit App Scaffolding ────────────────────────────────────────── */
+html, body {
   background-color: var(--bg-onyx) !important;
-  background-image: var(--carbon-pattern) !important;
-  background-size: 100% 100%, 24px 24px, 24px 24px !important;
   color: var(--machined-silver) !important;
   font-family: var(--font-cockpit) !important;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
 }
 
-/* ── Top Rail & Cockpit HUD ──────────────────────────────────────────────── */
-.tt-rail {
-  background: rgba(7, 9, 14, 0.88) !important;
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
+body {
+  background-image: var(--carbon-pattern) !important;
+  background-size: 100% 100%, 24px 24px, 24px 24px !important;
+  background-attachment: fixed !important;
+}
+
+/* Overriding legacy rigid app shell traps */
+body.tt-app, body.ios-app {
+  height: auto !important;
+  min-height: 100vh !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+/* ── Universal Bugatti Navigation Bar ────────────────────────────────────── */
+.bugatti-navbar {
+  background: rgba(7, 9, 14, 0.94) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
   border-bottom: 1px solid var(--titanium-border) !important;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6) !important;
+  padding: 0.5rem 1rem !important;
+  z-index: 1040;
 }
 
-.tt-brand {
-  position: relative;
+.bugatti-brand {
   display: flex;
   align-items: center;
   gap: 10px;
+  text-decoration: none !important;
+  color: #ffffff !important;
 }
 
-.tt-brand__mark {
+.bugatti-brand__mark {
   background: linear-gradient(135deg, var(--bugatti-blue), var(--electric-cyan)) !important;
   box-shadow: var(--bugatti-blue-glow) !important;
   border-radius: 6px !important;
-  width: 14px !important;
-  height: 14px !important;
+  width: 18px !important;
+  height: 18px !important;
+  display: inline-block;
+  flex-shrink: 0;
 }
 
-.tt-brand__text {
+.bugatti-brand__text {
   font-family: var(--font-cockpit) !important;
   font-weight: 800 !important;
+  font-size: 1.05rem !important;
   letter-spacing: 0.08em !important;
   text-transform: uppercase !important;
   background: linear-gradient(180deg, #ffffff 30%, var(--liquid-metal) 100%);
@@ -80,104 +118,221 @@ body.tt-app {
   -webkit-text-fill-color: transparent;
 }
 
-/* Cockpit HUD Metric Pods */
-.tt-metric {
+.bugatti-brand__badge {
+  font-family: var(--font-hud);
+  font-size: 0.625rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.06em;
+  background: rgba(0, 240, 255, 0.12);
+  color: var(--electric-cyan);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+}
+
+/* Desk Navigation Switcher */
+.bugatti-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bugatti-desk-link {
+  font-family: var(--font-cockpit);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 6px 12px;
+  border-radius: 8px;
+  color: var(--liquid-metal) !important;
+  text-decoration: none !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.bugatti-desk-link:hover {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--titanium-border);
+}
+
+.bugatti-desk-link.active,
+.bugatti-desk-link[aria-current="page"],
+.bugatti-desk-link.btn-nav-active {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.28), rgba(0, 240, 255, 0.16)) !important;
+  border-color: var(--bugatti-blue) !important;
+  box-shadow: 0 0 16px rgba(0, 102, 255, 0.35) !important;
+}
+
+/* Mobile Toggler */
+.bugatti-toggler {
+  border: 1px solid var(--titanium-border-strong) !important;
+  background: rgba(14, 20, 32, 0.8) !important;
+  border-radius: 8px !important;
+  padding: 6px 10px !important;
+  color: var(--electric-cyan) !important;
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bugatti-toggler:focus {
+  box-shadow: var(--electric-cyan-glow) !important;
+  outline: none;
+}
+
+/* Telemetry Pods in Header */
+.bugatti-telemetry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bugatti-pod {
   background: var(--bg-card);
   border: 1px solid var(--titanium-border);
   border-radius: 8px;
-  padding: 4px 12px !important;
+  padding: 4px 10px;
+  display: flex;
+  flex-direction: column;
+  min-width: 70px;
   transition: all 0.2s ease;
 }
 
-.tt-metric:hover {
+.bugatti-pod:hover {
   border-color: var(--bugatti-blue);
   box-shadow: var(--bugatti-blue-glow);
-  transform: translateY(-1px);
 }
 
-.tt-metric__label {
-  font-family: var(--font-hud) !important;
-  font-size: 0.6875rem !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.06em !important;
-  color: var(--liquid-metal) !important;
+.bugatti-pod__label {
+  font-family: var(--font-hud);
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--liquid-metal);
 }
 
-.tt-metric__value {
-  font-family: var(--font-hud) !important;
-  font-weight: 700 !important;
-  color: #ffffff !important;
-  font-size: 0.9375rem !important;
+.bugatti-pod__value {
+  font-family: var(--font-hud);
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: #ffffff;
 }
 
-/* ── High-Performance Cockpit Panels ─────────────────────────────────────── */
-.tt-panel {
+/* ── Cockpit Card Architecture ───────────────────────────────────────────── */
+.card-bugatti, .tt-panel {
   background: var(--bg-card) !important;
   backdrop-filter: blur(16px) !important;
   -webkit-backdrop-filter: blur(16px) !important;
   border: 1px solid var(--titanium-border) !important;
   border-radius: 12px !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
-  overflow: hidden !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45) !important;
+  overflow: hidden;
+  margin-bottom: 1rem;
 }
 
-.tt-panel__head {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent) !important;
+.card-bugatti-header, .tt-panel__head {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent) !important;
   border-bottom: 1px solid var(--titanium-border) !important;
-  padding: 8px 16px !important;
+  padding: 10px 16px !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.tt-panel__title {
+.card-bugatti-title, .tt-panel__title {
   font-family: var(--font-cockpit) !important;
   font-weight: 700 !important;
   font-size: 0.8125rem !important;
   letter-spacing: 0.08em !important;
   text-transform: uppercase !important;
   color: var(--machined-silver) !important;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-bugatti-body, .tt-panel__body {
+  padding: 14px 16px !important;
+  background: transparent !important;
+}
+
+.card-bugatti-body--flush, .tt-panel__body--flush {
+  padding: 0 !important;
 }
 
 /* ── Tactile Cockpit Switchgear & Buttons ─────────────────────────────────── */
-.tt-btn {
+.btn-bugatti-primary, .tt-btn--primary {
+  background: linear-gradient(135deg, var(--bugatti-blue), #004ecc) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  color: #ffffff !important;
   font-family: var(--font-cockpit) !important;
   font-weight: 600 !important;
   letter-spacing: 0.04em !important;
-  border-radius: 6px !important;
-  border: 1px solid var(--titanium-border) !important;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
-}
-
-.tt-btn--primary {
-  background: linear-gradient(135deg, var(--bugatti-blue), #004ecc) !important;
-  border-color: rgba(255, 255, 255, 0.2) !important;
-  color: #ffffff !important;
+  border-radius: 8px !important;
   box-shadow: var(--bugatti-blue-glow) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  min-height: 38px;
 }
 
-.tt-btn--primary:hover {
+.btn-bugatti-primary:hover, .tt-btn--primary:hover {
   background: linear-gradient(135deg, #1e7aff, var(--bugatti-blue)) !important;
+  box-shadow: 0 0 24px rgba(0, 102, 255, 0.6) !important;
   transform: translateY(-1px);
 }
 
-.tt-btn--buy {
+.btn-bugatti-buy, .tt-btn--buy {
   background: linear-gradient(135deg, var(--emerald-velocity), #059669) !important;
-  border-color: rgba(0, 245, 155, 0.3) !important;
+  border: 1px solid rgba(0, 245, 155, 0.3) !important;
   color: #041009 !important;
   font-weight: 800 !important;
+  border-radius: 8px !important;
   box-shadow: var(--emerald-velocity-glow) !important;
+  min-height: 42px;
 }
 
-.tt-btn--sell {
+.btn-bugatti-sell, .tt-btn--sell {
   background: linear-gradient(135deg, var(--hyper-crimson), #b91c1c) !important;
-  border-color: rgba(255, 51, 68, 0.3) !important;
+  border: 1px solid rgba(255, 51, 68, 0.3) !important;
   color: #ffffff !important;
   font-weight: 800 !important;
+  border-radius: 8px !important;
+  box-shadow: var(--hyper-crimson-glow) !important;
+  min-height: 42px;
+}
+
+.btn-bugatti-danger, .tt-btn--danger {
+  background: linear-gradient(135deg, var(--hyper-crimson), #991b1b) !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border: 1px solid rgba(255, 51, 68, 0.4) !important;
+  border-radius: 8px !important;
   box-shadow: var(--hyper-crimson-glow) !important;
 }
 
-.tt-btn--danger {
-  background: linear-gradient(135deg, var(--hyper-crimson), #991b1b) !important;
+.btn-bugatti-ghost {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--titanium-border) !important;
+  color: var(--machined-silver) !important;
+  font-family: var(--font-cockpit);
+  border-radius: 8px;
+}
+
+.btn-bugatti-ghost:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
   color: #ffffff !important;
-  box-shadow: var(--hyper-crimson-glow) !important;
+  border-color: var(--titanium-border-strong) !important;
 }
 
 /* ── Speedometer / Chronograph Arc Gauge (Portfolio Heat) ────────────────── */
@@ -187,7 +342,7 @@ body.tt-app {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  background: rgba(11, 15, 23, 0.6);
+  background: rgba(11, 15, 23, 0.7);
   border: 1px solid var(--titanium-border);
   border-radius: 12px;
 }
@@ -270,6 +425,7 @@ body.tt-app {
   border-radius: 10px;
   margin-bottom: 12px;
   overflow-x: auto;
+  width: 100%;
 }
 
 .lifecycle-step {
@@ -278,7 +434,7 @@ body.tt-app {
   align-items: center;
   gap: 4px;
   position: relative;
-  min-width: 60px;
+  min-width: 58px;
 }
 
 .lifecycle-step__node {
@@ -330,6 +486,7 @@ body.tt-app {
   background: rgba(255, 255, 255, 0.08);
   margin: 0 4px;
   margin-bottom: 16px;
+  min-width: 12px;
 }
 
 .lifecycle-line--passed {
@@ -341,7 +498,7 @@ body.tt-app {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 90px;
+  min-width: 85px;
 }
 
 .mfe-mae-track {
@@ -372,6 +529,94 @@ body.tt-app {
   font-family: var(--font-hud);
   font-size: 0.625rem;
   color: var(--liquid-metal);
+}
+
+/* ── Tabular High-Density Bugatti Tables ─────────────────────────────────── */
+.table-responsive {
+  border-radius: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-bugatti, .tt-table {
+  width: 100%;
+  margin-bottom: 0;
+  color: var(--machined-silver) !important;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table-bugatti thead th, .tt-table thead th {
+  font-family: var(--font-hud) !important;
+  font-size: 0.6875rem !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  color: var(--liquid-metal) !important;
+  background: rgba(14, 20, 32, 0.9) !important;
+  border-bottom: 1px solid var(--titanium-border) !important;
+  padding: 10px 12px !important;
+  white-space: nowrap;
+}
+
+.table-bugatti tbody tr, .tt-table tbody tr {
+  transition: background 0.15s ease !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+}
+
+.table-bugatti tbody tr:hover, .tt-table tbody tr:hover {
+  background: rgba(0, 102, 255, 0.08) !important;
+}
+
+.table-bugatti tbody td, .tt-table tbody td {
+  padding: 8px 12px !important;
+  font-size: 0.8125rem !important;
+  vertical-align: middle !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+/* Force table thead to remain visible on tablets/laptops and override iOS mobile card hiding */
+@media (min-width: 576px) {
+  .tt-table > thead {
+    display: table-header-group !important;
+  }
+  .tt-table, .tt-table > tbody {
+    display: table !important;
+    width: 100% !important;
+  }
+  .tt-table > tbody > tr {
+    display: table-row !important;
+  }
+  .tt-table > tbody > tr > td {
+    display: table-cell !important;
+  }
+}
+
+/* ── Forms, Inputs & Switchgear ──────────────────────────────────────────── */
+.form-control, .form-select, .tt-input, .tt-select {
+  background-color: rgba(9, 13, 21, 0.85) !important;
+  border: 1px solid var(--titanium-border) !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  font-family: var(--font-hud) !important;
+  font-size: 0.875rem !important;
+  min-height: 40px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-control:focus, .form-select:focus, .tt-input:focus, .tt-select:focus {
+  border-color: var(--bugatti-blue) !important;
+  box-shadow: var(--bugatti-blue-glow) !important;
+  outline: none !important;
+  background-color: rgba(14, 20, 32, 0.95) !important;
+}
+
+.form-label, .tt-field__label {
+  font-family: var(--font-hud);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--liquid-metal);
+  margin-bottom: 4px;
 }
 
 /* ── Failsafe Double-Confirmation Modal ──────────────────────────────────── */
@@ -422,44 +667,113 @@ body.tt-app {
   gap: 12px;
 }
 
-/* ── Tabular High-Density Tables ─────────────────────────────────────────── */
-.tt-table thead th {
-  font-family: var(--font-hud) !important;
-  font-size: 0.6875rem !important;
-  letter-spacing: 0.06em !important;
-  text-transform: uppercase !important;
-  color: var(--liquid-metal) !important;
-  border-bottom: 1px solid var(--titanium-border) !important;
-  padding: 8px 12px !important;
-}
-
-.tt-table tbody tr {
-  transition: background 0.15s ease !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
-}
-
-.tt-table tbody tr:hover {
-  background: rgba(0, 102, 255, 0.08) !important;
-}
-
-.tt-table tbody td {
-  padding: 8px 12px !important;
-  font-size: 0.8125rem !important;
-}
-
-/* ── Responsive Cockpit Adjustments ──────────────────────────────────────── */
-@media (max-width: 1024px) {
+/* ── Responsive Cockpit Breakpoints (320px to 2560px+) ───────────────────── */
+@media (max-width: 575.98px) {
+  .bugatti-navbar {
+    padding: 0.4rem 0.6rem !important;
+  }
+  .bugatti-telemetry {
+    display: none; /* Relocated into collapsed offcanvas/nav drawer on tiny phones */
+  }
   .lifecycle-stepper {
-    padding: 8px 12px;
+    padding: 6px 8px;
+    gap: 2px;
+  }
+  .lifecycle-step {
+    min-width: 44px;
+  }
+  .lifecycle-step__label {
+    font-size: 0.5rem;
   }
   .cockpit-gauge-container {
-    padding: 8px;
+    padding: 6px;
   }
 }
 
-@media (max-width: 768px) {
-  .cockpit-modal {
-    margin: 16px;
-    max-width: 100%;
+@media (min-width: 576px) and (max-width: 991.98px) {
+  .bugatti-telemetry {
+    gap: 6px;
+  }
+  .bugatti-pod {
+    min-width: 60px;
+    padding: 3px 6px;
+  }
+  .bugatti-pod__value {
+    font-size: 0.75rem;
   }
 }
+
+@media (min-width: 992px) {
+  .bugatti-telemetry {
+    gap: 10px;
+  }
+}
+
+@media (min-width: 1400px) {
+  .container-xxl, .container-fluid {
+    max-width: 2560px;
+  }
+  .tt-panel {
+    border-radius: 14px !important;
+  }
+}
+
+/* ── Responsive Chart Viewports & Canvas Sizing ─────────────────────────── */
+.tt-chart__body {
+  position: relative !important;
+  width: 100% !important;
+  min-height: 280px !important;
+  height: 480px !important;
+}
+
+@media (max-width: 575.98px) {
+  .tt-chart__body {
+    min-height: 260px !important;
+    height: 320px !important;
+  }
+}
+
+@media (min-width: 576px) and (max-width: 991.98px) {
+  .tt-chart__body {
+    min-height: 320px !important;
+    height: 380px !important;
+  }
+}
+
+@media (min-width: 992px) and (max-width: 1399.98px) {
+  .tt-chart__body {
+    min-height: 400px !important;
+    height: 460px !important;
+  }
+}
+
+@media (min-width: 1400px) {
+  .tt-chart__body {
+    min-height: 480px !important;
+    height: 540px !important;
+  }
+}
+
+/* ── High-Performance Table Scrolling & Sticky Symbol Column ────────────── */
+.tt-panel__body--flush, .table-responsive {
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(0, 102, 255, 0.4) rgba(255, 255, 255, 0.05) !important;
+}
+
+.tt-table--positions, #pos-table, #watch-table, #missed-trades-table, #calibration-table, #profiles-table {
+  min-width: 640px !important;
+}
+
+@media (max-width: 767.98px) {
+  .tt-table th:first-child,
+  .tt-table td:first-child {
+    position: sticky !important;
+    left: 0 !important;
+    background-color: #0b0f17 !important;
+    z-index: 2 !important;
+    box-shadow: 2px 0 6px rgba(0, 0, 0, 0.5) !important;
+  }
+}
+
