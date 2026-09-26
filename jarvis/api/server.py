@@ -427,6 +427,8 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 "/api/telemetry_state", "/api/telemetry", "/api/candles", "/api/rates",
                 "/api/radar", "/api/market-status", "/api/news", "/api/history",
                 "/api/tunnel_info", "/api/pending_orders", "/api/risk_status",
+                "/api/risk/portfolio-heat",
+                "/api/intelligence/missed-trades", "/api/intelligence/calibration", "/api/intelligence/symbol-profiles",
                 "/api/stream/telemetry", "/api/auth/me", "/api/auth/verify",
                 # Probes: no session, and no reliance on the loopback bypass.
                 "/health", "/ready"
@@ -831,21 +833,23 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     "account": snap["account"],
                     "timestamp": snap["timestamp"]
                 })
-            elif path == "/api/risk_status":
+            elif path in ("/api/risk_status", "/api/risk/portfolio-heat"):
                 try:
                     acc = self.mt5_client.get_account_snapshot() if (hasattr(self, "mt5_client") and self.mt5_client) else None
+                    pos = self.mt5_client.get_open_positions() if (hasattr(self, "mt5_client") and self.mt5_client) else []
                     equity = getattr(acc, "equity", 10000.0) or 10000.0
                     balance = getattr(acc, "balance", 10000.0) or 10000.0
                     if hasattr(self, "orchestrator") and self.orchestrator and hasattr(self.orchestrator, "risk_engine"):
-                        r_status = self.orchestrator.risk_engine.get_risk_status(equity, balance)
+                        r_status = self.orchestrator.risk_engine.get_risk_status(equity, balance, account=acc, positions=pos)
                     else:
                         from jarvis.risk.risk_engine import RiskEngine
                         re = RiskEngine()
-                        r_status = re.get_risk_status(equity, balance)
+                        r_status = re.get_risk_status(equity, balance, account=acc, positions=pos)
                     self._send_json(r_status)
                 except Exception as e:
                     logger.error(f"Error fetching risk status: {e}")
                     self._send_json({"error": str(e)}, status_code=500)
+
             elif path == "/api/metrics":
                 self._send_metrics(query)
             else:

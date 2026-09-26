@@ -10,6 +10,7 @@
 <!-- Base token set. The theme below consumes these and defines no duplicates. -->
 <link rel="stylesheet" href="/static/css/hm_ui.css">
 <link rel="stylesheet" href="/static/css/theme_terminal.css">
+<link rel="stylesheet" href="/static/css/theme_bugatti.css">
 <link rel="stylesheet" href="/static/css/auth.css">
 <!-- iOS design language for phones (≤599px) and tablets (600-1024px). Loaded
      last so its media rules win over the base themes; ≥1025px is untouched. -->
@@ -346,6 +347,45 @@
           <option value="D1">D1</option>
         </select>
       </div>
+
+      <!-- Bugatti Cockpit Trade Lifecycle Stepper -->
+      <div class="lifecycle-stepper" id="trade-lifecycle-stepper" aria-label="Trade Lifecycle Pipeline" style="margin: 8px 16px 0 16px;">
+        <div class="lifecycle-step lifecycle-step--passed" id="step-candidate">
+          <span class="lifecycle-step__node"></span>
+          <span class="lifecycle-step__label">Candidate</span>
+        </div>
+        <div class="lifecycle-line lifecycle-line--passed" id="line-1"></div>
+        <div class="lifecycle-step lifecycle-step--passed" id="step-regime">
+          <span class="lifecycle-step__node"></span>
+          <span class="lifecycle-step__label">Regime</span>
+        </div>
+        <div class="lifecycle-line lifecycle-line--passed" id="line-2"></div>
+        <div class="lifecycle-step lifecycle-step--passed" id="step-analysts">
+          <span class="lifecycle-step__node"></span>
+          <span class="lifecycle-step__label">Analysts</span>
+        </div>
+        <div class="lifecycle-line lifecycle-line--passed" id="line-3"></div>
+        <div class="lifecycle-step lifecycle-step--active" id="step-gate">
+          <span class="lifecycle-step__node"></span>
+          <span class="lifecycle-step__label">Quality Gate</span>
+        </div>
+        <div class="lifecycle-line" id="line-4"></div>
+        <div class="lifecycle-step" id="step-hrp">
+          <span class="lifecycle-step__node"></span>
+          <span class="lifecycle-step__label">HRP Sizing</span>
+        </div>
+        <div class="lifecycle-line" id="line-5"></div>
+        <div class="lifecycle-step" id="step-execution">
+          <span class="lifecycle-step__node"></span>
+          <span class="lifecycle-step__label">Execution</span>
+        </div>
+        <div class="lifecycle-line" id="line-6"></div>
+        <div class="lifecycle-step" id="step-trailing">
+          <span class="lifecycle-step__node"></span>
+          <span class="lifecycle-step__label">BE / Trail</span>
+        </div>
+      </div>
+
       <div class="tt-panel__body tt-chart__body">
         <div class="tt-chart" id="chart"></div>
         <div class="tt-chart__tv" id="chart-tv" hidden></div>
@@ -384,7 +424,8 @@
               <th scope="col" class="tt-num">Now</th>
               <th scope="col" class="tt-num">SL</th>
               <th scope="col" class="tt-num">TP</th>
-              <th scope="col" class="tt-num">P&amp;L</th>
+              <th scope="col" class="tt-num">MFE / MAE</th>
+              <th scope="col" class="tt-num">P&amp;L (R)</th>
               <th scope="col" class="tt-pos-actions-col">Actions</th>
             </tr>
           </thead>
@@ -810,6 +851,23 @@
         <button type="button" class="tt-btn tt-btn--sm" id="btn-resume-trading" style="background:#10b981;color:#fff;border:none;font-size:0.75rem;padding:4px 8px;border-radius:4px;cursor:pointer;display:none;margin-left:4px;">▶ Resume</button>
       </div>
       <div class="tt-panel__body">
+        <div class="cockpit-gauge-container" style="margin-bottom: 14px;">
+          <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:6px;">
+            <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--machined-silver);">Portfolio Heat Instrument</span>
+            <span class="tt-chip tt-chip--none" id="cockpit-heat-zone">NORMAL</span>
+          </div>
+          <div class="cockpit-gauge">
+            <svg viewBox="0 0 140 90">
+              <path class="cockpit-gauge-bg" d="M 20 80 A 50 50 0 0 1 120 80" />
+              <path class="cockpit-gauge-meter cockpit-gauge-meter--normal" id="cockpit-gauge-meter"
+                    d="M 20 80 A 50 50 0 0 1 120 80"
+                    stroke-dasharray="157" stroke-dashoffset="157" />
+            </svg>
+            <div class="cockpit-gauge-value" id="cockpit-heat-val">0.0</div>
+          </div>
+          <div class="cockpit-gauge-tier" id="cockpit-heat-tier">0.0 / 100 · 1.0X SIZING</div>
+        </div>
+
         <div class="tt-metrics" id="risk-metrics" data-state="loading"></div>
         <div class="tt-metrics" id="risk-guard-metrics" style="margin-top:var(--hm-space-2);border-top:1px solid var(--hm-border);padding-top:var(--hm-space-2);"></div>
         <div class="tt-pad" id="exposure-body" data-state="loading"></div>
@@ -843,6 +901,93 @@
             </tr>
           </thead>
           <tbody id="regime-policy-body" data-state="loading"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Missed Trades & Vetoed Opportunities ────────────────────────── -->
+    <div class="tt-panel tt-slot tt-slot--missed" style="margin-top:var(--hm-space-3);">
+      <div class="tt-panel__head">
+        <h2 class="tt-panel__title">Missed Trades &amp; Vetoed Setups</h2>
+        <span class="tt-panel__count" id="missed-count">0</span>
+        <span class="tt-panel__spacer"></span>
+        <span class="tt-chip tt-chip--muted" id="missed-capital-guard">Capital Protected</span>
+        <button class="tt-btn tt-btn--sm" id="missed-refresh" type="button">Refresh</button>
+      </div>
+      <div class="tt-panel__body tt-panel__body--flush">
+        <table class="tt-table">
+          <thead>
+            <tr>
+              <th scope="col">Symbol</th>
+              <th scope="col">Side</th>
+              <th scope="col">Style</th>
+              <th scope="col" class="tt-num">Conf</th>
+              <th scope="col" class="tt-num">Entry</th>
+              <th scope="col">Veto Gate</th>
+              <th scope="col">Exact Rejection Reason</th>
+              <th scope="col" class="tt-num">Protection</th>
+            </tr>
+          </thead>
+          <tbody id="missed-body" data-state="loading"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── AI/ML Calibration & Honest Hit Rates ───────────────────────── -->
+    <div class="tt-panel tt-slot tt-slot--calibration" style="margin-top:var(--hm-space-3);">
+      <div class="tt-panel__head">
+        <h2 class="tt-panel__title">AI/ML Calibration &amp; Honest Base Rates</h2>
+        <span class="tt-panel__spacer"></span>
+        <span class="tt-chip tt-chip--high" id="calibration-status">WELL_CALIBRATED</span>
+      </div>
+      <div class="tt-panel__body">
+        <div class="tt-metrics" id="calibration-metrics" data-state="loading"></div>
+        <div style="margin-top:var(--hm-space-3); font-weight:600; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--machined-silver); margin-bottom:8px;">
+          365-Day Measured Empirical Hit Rates (MT5 Terminal Data)
+        </div>
+        <table class="tt-table">
+          <thead>
+            <tr>
+              <th scope="col">Symbol</th>
+              <th scope="col">Style</th>
+              <th scope="col" class="tt-num">Sample (N)</th>
+              <th scope="col" class="tt-num">Measured Win%</th>
+              <th scope="col" class="tt-num">Profit Factor</th>
+              <th scope="col" class="tt-num">Expectancy (R)</th>
+              <th scope="col" class="tt-num">BE Hurdle</th>
+              <th scope="col">Data Provenance</th>
+            </tr>
+          </thead>
+          <tbody id="calibration-base-rates-body" data-state="loading"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Dynamic Symbol Profile & Execution Matrix ──────────────────── -->
+    <div class="tt-panel tt-slot tt-slot--profiles" style="margin-top:var(--hm-space-3);">
+      <div class="tt-panel__head">
+        <h2 class="tt-panel__title">Symbol Profile &amp; Execution Matrix</h2>
+        <span class="tt-panel__count" id="profiles-count">20</span>
+        <span class="tt-panel__spacer"></span>
+        <span class="tt-chip tt-chip--muted">XM Ultra Low Standard</span>
+      </div>
+      <div class="tt-panel__body tt-panel__body--flush">
+        <table class="tt-table">
+          <thead>
+            <tr>
+              <th scope="col">Symbol</th>
+              <th scope="col">Class</th>
+              <th scope="col" class="tt-num">SL ATR</th>
+              <th scope="col" class="tt-num">Anti-Wick</th>
+              <th scope="col" class="tt-num">Fast Cash (R)</th>
+              <th scope="col" class="tt-num">BE Trigger (R)</th>
+              <th scope="col" class="tt-num">Trail ATR</th>
+              <th scope="col" class="tt-num">Typical Spread</th>
+              <th scope="col" class="tt-num">Max Spread</th>
+              <th scope="col">Trading Hours (UTC)</th>
+            </tr>
+          </thead>
+          <tbody id="profiles-body" data-state="loading"></tbody>
         </table>
       </div>
     </div>
@@ -1084,6 +1229,30 @@
     </div>
     <div id="ai-modal-content">
       <!-- Injected by dashboard.js -->
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Bugatti Failsafe Double-Confirmation Modal ════════════════════ -->
+<div class="cockpit-modal-backdrop" id="cockpit-confirm-modal" hidden style="display:none;">
+  <div class="cockpit-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+    <div class="cockpit-modal__head">
+      <h3 style="margin:0; font-size:1.05rem; display:flex; align-items:center; gap:8px;" id="confirm-modal-title">
+        <span id="confirm-modal-icon">🚨</span> <span id="confirm-modal-heading">Emergency Stop Confirmation</span>
+      </h3>
+      <button type="button" class="tt-btn tt-btn--ghost tt-btn--sm" id="confirm-modal-close" style="font-size:1.2rem; cursor:pointer; border:none; background:transparent; color:var(--machined-silver);">✕</button>
+    </div>
+    <div class="cockpit-modal__body">
+      <p id="confirm-modal-msg" style="margin-bottom:12px; color:var(--machined-silver);">
+        Are you sure you want to trigger the Emergency Circuit Breaker? This will halt all active autonomous trading loops immediately.
+      </p>
+      <div id="confirm-modal-warning" style="background:rgba(255,51,68,0.12); border-left:3px solid var(--hyper-crimson); padding:10px 14px; border-radius:4px; font-size:0.8125rem; color:#fca5a5;">
+        This action directly engages broker-level execution safeguards.
+      </div>
+    </div>
+    <div class="cockpit-modal__actions">
+      <button type="button" class="tt-btn tt-btn--sm" id="confirm-modal-cancel">Cancel</button>
+      <button type="button" class="tt-btn tt-btn--danger tt-btn--sm" id="confirm-modal-proceed">Confirm Execution</button>
     </div>
   </div>
 </div>

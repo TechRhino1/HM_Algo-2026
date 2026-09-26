@@ -251,3 +251,25 @@ class TestCorrelationIsIgnored:
         import jarvis.risk.hrp_allocator as mod
         src = inspect.getsource(mod.HierarchicalRiskParityAllocator.allocate_weights)
         assert "get_correlation_distance" not in src
+
+
+class TestTrueHRPAllocation:
+    def test_hrp_weights_sum_to_one(self):
+        rng = np.random.default_rng(42)
+        df = pd.DataFrame(rng.normal(size=(100, 4)), columns=list("ABCD"))
+        weights = HRP.allocate_hrp_weights(df)
+        assert sum(weights.values()) == pytest.approx(1.0, abs=1e-3)
+
+    def test_hrp_diversifies_correlated_cluster(self):
+        # A and B are highly correlated (cluster 1), C is independent (cluster 2)
+        rng = np.random.default_rng(42)
+        base = rng.normal(size=100)
+        a = base + rng.normal(scale=0.1, size=100)
+        b = base + rng.normal(scale=0.1, size=100)
+        c = rng.normal(size=100)
+        df = pd.DataFrame({"A": a, "B": b, "C": c})
+        w = HRP.allocate_hrp_weights(df)
+        # HRP allocates more weight to independent asset C than to individual assets A or B
+        assert w["C"] > w["A"]
+        assert w["C"] > w["B"]
+        assert (w["A"] + w["B"] + w["C"]) == pytest.approx(1.0, abs=1e-3)

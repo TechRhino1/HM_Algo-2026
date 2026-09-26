@@ -162,3 +162,54 @@ class MarketRegimeClassifier:
             regime_transition=regime_transition,
             regime_persistence=regime_persistence
         )
+
+
+class CUSUMFilter:
+    """E.S. Page (1954) / Marcos Lopez de Prado (2018) Cumulative Sum Filter.
+    Detects structural breaks and volatility regime transitions when cumulative deviations
+    exceed a dynamic volatility-scaled threshold h.
+    """
+
+    def __init__(self, threshold_std: float = 2.0):
+        self.threshold_std = threshold_std
+        self.s_pos = 0.0
+        self.s_neg = 0.0
+
+    def update(self, return_val: float, rolling_vol: float) -> tuple[bool, str]:
+        """Update CUSUM accumulator with latest return.
+        Returns (is_event, direction).
+        """
+        h = max(rolling_vol * self.threshold_std, 1e-6)
+        self.s_pos = max(0.0, self.s_pos + return_val)
+        self.s_neg = min(0.0, self.s_neg + return_val)
+
+        if self.s_pos > h:
+            self.s_pos = 0.0
+            return True, "BULLISH_EXPANSION_BREAK"
+        elif self.s_neg < -h:
+            self.s_neg = 0.0
+            return True, "BEARISH_EXPANSION_BREAK"
+        return False, "NONE"
+
+
+def validate_strategy_for_regime(strategy_name: str, regime_str: str, adx: float = 0.0) -> tuple[bool, str]:
+    """Strictly validates strategy compatibility with the identified market regime.
+    Prevents trend breakouts in choppy range compression, and prevents counter-trend fades
+    in aggressive expansion.
+    """
+    strat = str(strategy_name or "").upper()
+    reg = str(regime_str or "").upper()
+
+    # 1. Range / Consolidation / Compression regime: Ban trend breakouts
+    is_range = any(r in reg for r in ["RANGE", "CONSOLIDATION", "COMPRESSION", "LOW_VOLATILITY"])
+    if is_range or (adx > 0 and adx < 20.0):
+        if any(s in strat for s in ["BREAKOUT_EXPANSION", "TREND_FOLLOWING"]):
+            return False, f"Strategy {strat} rejected: Incompatible with Range/Compression market state."
+
+    # 2. Strong Trend / Breakout regime: Ban counter-trend mean reversion
+    is_trend = any(r in reg for r in ["TREND_BULL", "TREND_BEAR", "BREAKOUT", "EXPANSION"])
+    if is_trend and adx >= 25.0:
+        if "RANGE_MEAN_REVERSION" in strat:
+            return False, f"Strategy {strat} rejected: Counter-trend fade prohibited during strong trend regime."
+
+    return True, "Approved"

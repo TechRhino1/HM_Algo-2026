@@ -1,0 +1,465 @@
+/* ===========================================================================
+   HM Algo 2.0 — Bugatti Hypercar Cockpit Design System (theme_bugatti.css)
+   Inspired by Bugatti Chiron, Tourbillon, and Bolide Cockpit Ergonomics.
+   Obsidian Chassis · French Racing Blue · Electric Cyan · Machined Titanium
+   =========================================================================== */
+
+:root {
+  /* --- Bugatti Luxury Palette --- */
+  --bg-onyx: #07090e;
+  --bg-titanium: #0b0f17;
+  --bg-card: rgba(14, 20, 32, 0.72);
+  --bg-card-hover: rgba(20, 29, 48, 0.85);
+  --bg-bevel: rgba(255, 255, 255, 0.05);
+
+  --bugatti-blue: #0066ff;
+  --bugatti-blue-glow: 0 0 20px rgba(0, 102, 255, 0.45);
+  --electric-cyan: #00f0ff;
+  --electric-cyan-glow: 0 0 16px rgba(0, 240, 255, 0.4);
+  --machined-silver: #e2e8f0;
+  --liquid-metal: #94a3b8;
+  --titanium-border: rgba(148, 163, 184, 0.16);
+  --titanium-border-strong: rgba(226, 232, 240, 0.32);
+
+  --hyper-crimson: #ff3344;
+  --hyper-crimson-glow: 0 0 16px rgba(255, 51, 68, 0.45);
+  --amber-perf: #f59e0b;
+  --emerald-velocity: #00f59b;
+  --emerald-velocity-glow: 0 0 16px rgba(0, 245, 155, 0.4);
+
+  /* --- Cockpit Typography --- */
+  --font-cockpit: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-hud: 'JetBrains Mono', 'Roboto Mono', Consolas, monospace;
+
+  /* Carbon Weave Texture */
+  --carbon-pattern: radial-gradient(circle at 50% 50%, rgba(0, 102, 255, 0.04) 0%, transparent 60%),
+                    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+}
+
+/* ── Global Cockpit Theme Overrides ─────────────────────────────────────── */
+body.tt-app {
+  background-color: var(--bg-onyx) !important;
+  background-image: var(--carbon-pattern) !important;
+  background-size: 100% 100%, 24px 24px, 24px 24px !important;
+  color: var(--machined-silver) !important;
+  font-family: var(--font-cockpit) !important;
+}
+
+/* ── Top Rail & Cockpit HUD ──────────────────────────────────────────────── */
+.tt-rail {
+  background: rgba(7, 9, 14, 0.88) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border-bottom: 1px solid var(--titanium-border) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5) !important;
+}
+
+.tt-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tt-brand__mark {
+  background: linear-gradient(135deg, var(--bugatti-blue), var(--electric-cyan)) !important;
+  box-shadow: var(--bugatti-blue-glow) !important;
+  border-radius: 6px !important;
+  width: 14px !important;
+  height: 14px !important;
+}
+
+.tt-brand__text {
+  font-family: var(--font-cockpit) !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  background: linear-gradient(180deg, #ffffff 30%, var(--liquid-metal) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Cockpit HUD Metric Pods */
+.tt-metric {
+  background: var(--bg-card);
+  border: 1px solid var(--titanium-border);
+  border-radius: 8px;
+  padding: 4px 12px !important;
+  transition: all 0.2s ease;
+}
+
+.tt-metric:hover {
+  border-color: var(--bugatti-blue);
+  box-shadow: var(--bugatti-blue-glow);
+  transform: translateY(-1px);
+}
+
+.tt-metric__label {
+  font-family: var(--font-hud) !important;
+  font-size: 0.6875rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  color: var(--liquid-metal) !important;
+}
+
+.tt-metric__value {
+  font-family: var(--font-hud) !important;
+  font-weight: 700 !important;
+  color: #ffffff !important;
+  font-size: 0.9375rem !important;
+}
+
+/* ── High-Performance Cockpit Panels ─────────────────────────────────────── */
+.tt-panel {
+  background: var(--bg-card) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid var(--titanium-border) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+  overflow: hidden !important;
+}
+
+.tt-panel__head {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent) !important;
+  border-bottom: 1px solid var(--titanium-border) !important;
+  padding: 8px 16px !important;
+}
+
+.tt-panel__title {
+  font-family: var(--font-cockpit) !important;
+  font-weight: 700 !important;
+  font-size: 0.8125rem !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: var(--machined-silver) !important;
+}
+
+/* ── Tactile Cockpit Switchgear & Buttons ─────────────────────────────────── */
+.tt-btn {
+  font-family: var(--font-cockpit) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.04em !important;
+  border-radius: 6px !important;
+  border: 1px solid var(--titanium-border) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.tt-btn--primary {
+  background: linear-gradient(135deg, var(--bugatti-blue), #004ecc) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  color: #ffffff !important;
+  box-shadow: var(--bugatti-blue-glow) !important;
+}
+
+.tt-btn--primary:hover {
+  background: linear-gradient(135deg, #1e7aff, var(--bugatti-blue)) !important;
+  transform: translateY(-1px);
+}
+
+.tt-btn--buy {
+  background: linear-gradient(135deg, var(--emerald-velocity), #059669) !important;
+  border-color: rgba(0, 245, 155, 0.3) !important;
+  color: #041009 !important;
+  font-weight: 800 !important;
+  box-shadow: var(--emerald-velocity-glow) !important;
+}
+
+.tt-btn--sell {
+  background: linear-gradient(135deg, var(--hyper-crimson), #b91c1c) !important;
+  border-color: rgba(255, 51, 68, 0.3) !important;
+  color: #ffffff !important;
+  font-weight: 800 !important;
+  box-shadow: var(--hyper-crimson-glow) !important;
+}
+
+.tt-btn--danger {
+  background: linear-gradient(135deg, var(--hyper-crimson), #991b1b) !important;
+  color: #ffffff !important;
+  box-shadow: var(--hyper-crimson-glow) !important;
+}
+
+/* ── Speedometer / Chronograph Arc Gauge (Portfolio Heat) ────────────────── */
+.cockpit-gauge-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(11, 15, 23, 0.6);
+  border: 1px solid var(--titanium-border);
+  border-radius: 12px;
+}
+
+.cockpit-gauge {
+  position: relative;
+  width: 140px;
+  height: 90px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.cockpit-gauge svg {
+  width: 140px;
+  height: 90px;
+}
+
+.cockpit-gauge-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 12;
+  stroke-linecap: round;
+}
+
+.cockpit-gauge-meter {
+  fill: none;
+  stroke-width: 12;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s cubic-bezier(0.16, 1, 0.3, 1), stroke 0.3s ease;
+}
+
+.cockpit-gauge-meter--normal {
+  stroke: var(--emerald-velocity);
+  filter: drop-shadow(0 0 6px rgba(0, 245, 155, 0.5));
+}
+
+.cockpit-gauge-meter--moderate {
+  stroke: var(--electric-cyan);
+  filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.5));
+}
+
+.cockpit-gauge-meter--high {
+  stroke: var(--amber-perf);
+  filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.5));
+}
+
+.cockpit-gauge-meter--extreme {
+  stroke: var(--hyper-crimson);
+  filter: drop-shadow(0 0 8px rgba(255, 51, 68, 0.6));
+}
+
+.cockpit-gauge-value {
+  position: absolute;
+  bottom: 0px;
+  text-align: center;
+  font-family: var(--font-hud);
+  font-weight: 800;
+  font-size: 1.4rem;
+  color: #ffffff;
+}
+
+.cockpit-gauge-tier {
+  font-family: var(--font-hud);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* ── Interactive Trade Lifecycle Stepper ─────────────────────────────────── */
+.lifecycle-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(11, 15, 23, 0.7);
+  border: 1px solid var(--titanium-border);
+  border-radius: 10px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.lifecycle-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  min-width: 60px;
+}
+
+.lifecycle-step__node {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid var(--liquid-metal);
+  transition: all 0.3s ease;
+  z-index: 2;
+}
+
+.lifecycle-step--active .lifecycle-step__node {
+  background: var(--electric-cyan);
+  border-color: #ffffff;
+  box-shadow: var(--electric-cyan-glow);
+  transform: scale(1.3);
+}
+
+.lifecycle-step--passed .lifecycle-step__node {
+  background: var(--emerald-velocity);
+  border-color: var(--emerald-velocity);
+  box-shadow: 0 0 8px rgba(0, 245, 155, 0.4);
+}
+
+.lifecycle-step--failed .lifecycle-step__node {
+  background: var(--hyper-crimson);
+  border-color: var(--hyper-crimson);
+  box-shadow: var(--hyper-crimson-glow);
+}
+
+.lifecycle-step__label {
+  font-family: var(--font-hud);
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  color: var(--liquid-metal);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.lifecycle-step--active .lifecycle-step__label {
+  color: var(--electric-cyan);
+  font-weight: 700;
+}
+
+.lifecycle-line {
+  flex-grow: 1;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 0 4px;
+  margin-bottom: 16px;
+}
+
+.lifecycle-line--passed {
+  background: linear-gradient(90deg, var(--emerald-velocity), var(--electric-cyan));
+}
+
+/* ── MFE / MAE Position Progress Bar ─────────────────────────────────────── */
+.mfe-mae-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 90px;
+}
+
+.mfe-mae-track {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+
+.mfe-mae-fill-fav {
+  height: 100%;
+  background: linear-gradient(90deg, var(--emerald-velocity), var(--electric-cyan));
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.mfe-mae-fill-adv {
+  height: 100%;
+  background: var(--hyper-crimson);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.mfe-mae-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-hud);
+  font-size: 0.625rem;
+  color: var(--liquid-metal);
+}
+
+/* ── Failsafe Double-Confirmation Modal ──────────────────────────────────── */
+.cockpit-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 7, 13, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.cockpit-modal {
+  background: #0b0f17;
+  border: 1px solid var(--titanium-border-strong);
+  border-radius: 16px;
+  max-width: 520px;
+  width: 100%;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8), 0 0 40px rgba(0, 102, 255, 0.15);
+  overflow: hidden;
+}
+
+.cockpit-modal__head {
+  padding: 16px 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent);
+  border-bottom: 1px solid var(--titanium-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cockpit-modal__body {
+  padding: 24px 20px;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.cockpit-modal__actions {
+  padding: 16px 20px;
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid var(--titanium-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* ── Tabular High-Density Tables ─────────────────────────────────────────── */
+.tt-table thead th {
+  font-family: var(--font-hud) !important;
+  font-size: 0.6875rem !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  color: var(--liquid-metal) !important;
+  border-bottom: 1px solid var(--titanium-border) !important;
+  padding: 8px 12px !important;
+}
+
+.tt-table tbody tr {
+  transition: background 0.15s ease !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+}
+
+.tt-table tbody tr:hover {
+  background: rgba(0, 102, 255, 0.08) !important;
+}
+
+.tt-table tbody td {
+  padding: 8px 12px !important;
+  font-size: 0.8125rem !important;
+}
+
+/* ── Responsive Cockpit Adjustments ──────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .lifecycle-stepper {
+    padding: 8px 12px;
+  }
+  .cockpit-gauge-container {
+    padding: 8px;
+  }
+}
+
+@media (max-width: 768px) {
+  .cockpit-modal {
+    margin: 16px;
+    max-width: 100%;
+  }
+}

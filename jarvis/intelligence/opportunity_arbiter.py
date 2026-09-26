@@ -310,6 +310,13 @@ class UniversalOpportunityArbiter:
                 4
             )
 
+        # Strict Regime-to-Strategy Incompatibility Gating
+        from jarvis.intelligence.regime_engine import validate_strategy_for_regime
+        adx_val = float(getattr(getattr(context, "momentum", None), "adx", 0.0) or 0.0) if context else 0.0
+        strat_compat, compat_reason = validate_strategy_for_regime(strategy, regime_str, adx=adx_val)
+        if not strat_compat:
+            utility_score = 0.0
+
         # Setup Grade Assignment:
         # GRADE A+ if Utility >= 1.80, Win Prob >= 70%, Confluence >= 75, EV >= 0.85R
         # GRADE A if Utility >= 1.35, Win Prob >= 60%, Confluence >= 65, EV >= 0.50R

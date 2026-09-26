@@ -883,10 +883,29 @@
       total += profit;
       var tr = document.createElement('tr');
       var side = String(p.type || p.side || '').toUpperCase();
-      var dirCls = /BUY|LONG/.test(side) ? 'tt-dir--buy' : 'tt-dir--sell';
+      var isBuy = /BUY|LONG/.test(side);
+      var dirCls = isBuy ? 'tt-dir--buy' : 'tt-dir--sell';
       var ticket = p.ticket;
       var sl = Number(p.sl);
       var tp = Number(p.tp);
+
+      var sl_dist = Math.abs(Number(p.open_price) - sl);
+      var cur_diff = (Number(p.current_price) - Number(p.open_price)) * (isBuy ? 1 : -1);
+      var r_mult = sl_dist > 0 ? (cur_diff / sl_dist) : 0;
+      var mfe = Number(p.mfe || p.max_favorable_excursion || (cur_diff > 0 ? cur_diff : 0));
+      var mfe_pct = Math.min(100, Math.max(12, Math.round((mfe / (sl_dist * 2 || 1)) * 100)));
+      var be_status = p.is_be_locked ? '<span style="color:var(--emerald-velocity); font-size:10px; font-weight:700;"> [BE LOCKED]</span>' : '';
+      var mfeHtml = '<div class="mfe-mae-bar">' +
+        '<div class="mfe-mae-track">' +
+          '<div class="mfe-mae-fill-fav" style="width:' + mfe_pct + '%"></div>' +
+        '</div>' +
+        '<div class="mfe-mae-labels"><span>+' + num(mfe, 2) + '</span>' + be_status + '</div>' +
+      '</div>';
+      var rHtml = '<span class="tt-num tt-pos-pnl ' + signClass(profit) + '">' +
+        (profit > 0 ? '+' : '') + num(profit, 2) +
+        '<span style="display:block; font-size:10px; opacity:0.85;">(' + (r_mult >= 0 ? '+' : '') + num(r_mult, 2) + 'R)</span>' +
+      '</span>';
+
       tr.innerHTML =
         '<td><span class="tt-symbol">' + esc(p.symbol) + '</span></td>' +
         '<td><span class="tt-dir ' + dirCls + '">' + esc(side || '—') + '</span></td>' +
@@ -898,7 +917,8 @@
           (p.tp1 ? '<span class="tt-muted" style="font-size:10px; display:block;">TP1: ' + formatPrice(p.tp1, p.symbol) + '</span>' : '') +
           (p.milestone_status && p.milestone_status !== 'OPEN' ? '<span class="tt-chip tt-chip--accent" style="font-size:9px; display:inline-block; padding:1px 3px; margin-top:2px;">' + esc(p.milestone_status.replace(/_/g, ' ')) + '</span>' : '') +
         '</td>' +
-        '<td class="tt-num tt-pos-pnl ' + signClass(profit) + '">' + (profit > 0 ? '+' : '') + num(profit, 2) + '</td>' +
+        '<td class="tt-num">' + mfeHtml + '</td>' +
+        '<td class="tt-num">' + rHtml + '</td>' +
         '<td class="tt-pos-actions">' +
           (ticket !== undefined && ticket !== null
             ? '<button class="tt-btn tt-btn--sm tt-btn--pos-close" data-pos-close="' + esc(String(ticket)) + '" type="button">Close</button>'
@@ -1187,6 +1207,82 @@
 
     // The context strip reads the same decision, so it follows this render.
     renderContextAnalyst();
+    renderLifecycleStepper();
+  }
+
+  /* ── Trade Lifecycle Stepper ─────────────────────────────────────────── */
+  function renderLifecycleStepper() {
+    var sym = state.symbol;
+    var d = sym ? state.decisions[sym] : null;
+    var positions = state.positions || [];
+    var symPos = null;
+    for (var i = 0; i < positions.length; i++) {
+      if (positions[i].symbol === sym) { symPos = positions[i]; break; }
+    }
+
+    var stepCand = $('step-candidate');
+    var stepReg = $('step-regime');
+    var stepAna = $('step-analysts');
+    var stepGate = $('step-gate');
+    var stepHrp = $('step-hrp');
+    var stepExec = $('step-execution');
+    var stepTrail = $('step-trailing');
+
+    var l1 = $('line-1');
+    var l2 = $('line-2');
+    var l3 = $('line-3');
+    var l4 = $('line-4');
+    var l5 = $('line-5');
+    var l6 = $('line-6');
+
+    var setStep = function (el, status) {
+      if (!el) return;
+      el.className = 'lifecycle-step' + (status ? ' lifecycle-step--' + status : '');
+    };
+    var setLine = function (el, passed) {
+      if (!el) return;
+      el.className = 'lifecycle-line' + (passed ? ' lifecycle-line--passed' : '');
+    };
+
+    if (!d) {
+      setStep(stepCand, 'active');
+      setStep(stepReg, '');
+      setStep(stepAna, '');
+      setStep(stepGate, '');
+      setStep(stepHrp, '');
+      setStep(stepExec, '');
+      setStep(stepTrail, '');
+      setLine(l1, false); setLine(l2, false); setLine(l3, false);
+      setLine(l4, false); setLine(l5, false); setLine(l6, false);
+      return;
+    }
+
+    setStep(stepCand, 'passed'); setLine(l1, true);
+
+    var regPassed = Boolean(d.regime && (d.regime.confidence === undefined || d.regime.confidence >= 0.4));
+    setStep(stepReg, regPassed ? 'passed' : 'failed');
+    setLine(l2, regPassed);
+
+    var anaPassed = regPassed && Boolean(d.analyst_signals || d.master_confluence_score > 0 || d.score > 0);
+    setStep(stepAna, anaPassed ? 'passed' : (regPassed ? 'failed' : ''));
+    setLine(l3, anaPassed);
+
+    var qg = d.quality_gate;
+    var gatePassed = anaPassed && qg && qg.passed;
+    var gateFailed = anaPassed && qg && !qg.passed;
+    setStep(stepGate, gatePassed ? 'passed' : (gateFailed ? 'failed' : (anaPassed ? 'active' : '')));
+    setLine(l4, gatePassed);
+
+    var hrpPassed = gatePassed && Boolean(d.calculated_risk_percent > 0 || d.execution_authorized);
+    setStep(stepHrp, hrpPassed ? 'passed' : (gatePassed ? 'active' : ''));
+    setLine(l5, hrpPassed);
+
+    var isExec = Boolean(symPos);
+    setStep(stepExec, isExec ? 'passed' : (hrpPassed && d.decision === 'EXECUTE' ? 'active' : ''));
+    setLine(l6, isExec);
+
+    var isTrailed = symPos && Boolean(symPos.is_be_locked || (symPos.mfe && symPos.mfe > 0));
+    setStep(stepTrail, isTrailed ? 'passed' : (isExec ? 'active' : ''));
   }
 
   /* ── Ticket prefill ───────────────────────────────────────────────────── */
@@ -3868,6 +3964,9 @@
     renderAnalyticsMetrics();
     loadHistory();
     renderRisk();
+    loadMissedTrades();
+    loadCalibration();
+    loadSymbolProfiles();
   }
 
   function renderAnalyticsMetrics() {
@@ -4328,6 +4427,29 @@
             btnResume.style.display = 'none';
           }
         }
+        // Animate Bugatti Speedometer Arc Gauge
+        var heatScore = Number(r.portfolio_heat_score || 0);
+        var heatZone = String(r.portfolio_heat_zone || 'NORMAL').toUpperCase();
+        var heatValEl = $('cockpit-heat-val');
+        var heatZoneEl = $('cockpit-heat-zone');
+        var heatTierEl = $('cockpit-heat-tier');
+        var meterEl = $('cockpit-gauge-meter');
+
+        if (heatValEl) heatValEl.textContent = num(heatScore, 1);
+        if (heatZoneEl) {
+          heatZoneEl.textContent = heatZone;
+          heatZoneEl.className = 'tt-chip ' + (heatScore >= 85 ? 'tt-chip--danger' : (heatScore >= 70 ? 'tt-chip--warn' : (heatScore >= 50 ? 'tt-chip--accent' : 'tt-chip--high')));
+        }
+        if (heatTierEl) {
+          heatTierEl.textContent = num(heatScore, 1) + ' / 100 · ' + num(r.heat_risk_multiplier || 1.0, 2) + 'X SIZING · ' + (r.margin_utilization_pct || 0) + '% MARGIN';
+        }
+        if (meterEl) {
+          var offset = Math.max(0, Math.min(157, 157 - (heatScore / 100.0) * 157));
+          meterEl.style.strokeDashoffset = String(offset);
+          var meterCls = heatScore >= 85 ? 'extreme' : (heatScore >= 70 ? 'high' : (heatScore >= 50 ? 'moderate' : 'normal'));
+          meterEl.className.baseVal = 'cockpit-gauge-meter cockpit-gauge-meter--' + meterCls;
+        }
+
         guardHost.innerHTML = [
           ['Daily loss', num(r.daily_loss_pct, 2) + '% / ' + num(r.max_daily_loss_pct, 1) + '% max'],
           ['Total DD', num(r.total_dd_pct, 2) + '% / ' + num(r.max_drawdown_pct, 1) + '% max'],
@@ -4467,6 +4589,127 @@
           '<span class="tt-metric__value">' + esc(t[1]) + '</span></div>';
       }).join('');
     }
+  }
+
+  /* ── Missed Trades & Vetoed Opportunities ────────────────────────────── */
+  function loadMissedTrades() {
+    var body = $('missed-body');
+    var count = $('missed-count');
+    if (!body) return;
+
+    apiGet('/api/intelligence/missed-trades', TIMEOUT.normal).then(function (res) {
+      if (!res.ok || !res.data) {
+        setState(body, 'empty', 'No missed trades', 'All evaluated setups passed filters.');
+        return;
+      }
+      var items = res.data.missed_trades || [];
+      if (count) count.textContent = String(items.length);
+      if (!items.length) {
+        setState(body, 'empty', 'No missed trades', 'All recent setups passed filters.');
+        return;
+      }
+      body.removeAttribute('data-state');
+      body.innerHTML = items.map(function (m) {
+        var side = String(m.direction || '').toUpperCase();
+        var dirCls = /BUY|LONG/.test(side) ? 'tt-dir--buy' : 'tt-dir--sell';
+        var gateChip = '<span class="tt-chip tt-chip--warn" style="font-size:10px;">' + esc(m.gate) + '</span>';
+        return '<tr>' +
+          '<td><span class="tt-symbol">' + esc(m.symbol) + '</span></td>' +
+          '<td><span class="tt-dir ' + dirCls + '">' + esc(side) + '</span></td>' +
+          '<td><span class="tt-chip tt-chip--muted" style="font-size:10px;">' + esc(m.style) + '</span></td>' +
+          '<td class="tt-num">' + pct(m.confidence, 0) + '</td>' +
+          '<td class="tt-num">' + formatPrice(m.entry_price, m.symbol) + '</td>' +
+          '<td>' + gateChip + '</td>' +
+          '<td style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + esc(m.reason) + '">' + esc(m.reason) + '</td>' +
+          '<td class="tt-num"><span style="color:var(--emerald-velocity); font-weight:700; font-size:11px;">🛡️ SAVED</span></td>' +
+        '</tr>';
+      }).join('');
+    });
+  }
+
+  /* ── AI/ML Calibration & Honest Hit Rates ────────────────────────────── */
+  function loadCalibration() {
+    var metrics = $('calibration-metrics');
+    var baseRatesBody = $('calibration-base-rates-body');
+    var statusChip = $('calibration-status');
+    if (!metrics || !baseRatesBody) return;
+
+    apiGet('/api/intelligence/calibration', TIMEOUT.normal).then(function (res) {
+      if (!res.ok || !res.data) return;
+      var data = res.data;
+      if (statusChip && data.calibration_status) {
+        statusChip.textContent = data.calibration_status;
+      }
+
+      metrics.removeAttribute('data-state');
+      metrics.innerHTML = [
+        ['Brier Score', num(data.brier_score, 3) + ' (ref: ' + num(data.brier_benchmark, 2) + ')'],
+        ['Expected Calib Error (ECE)', pct(data.ece, 1)],
+        ['Model Reliability', '10-Bin Calibrated'],
+        ['Audit Window', '365 Days Real MT5']
+      ].map(function (t) {
+        return '<div class="tt-metric">' +
+          '<span class="tt-metric__label">' + esc(t[0]) + '</span>' +
+          '<span class="tt-metric__value" style="font-weight:700; color:var(--electric-cyan);">' + esc(t[1]) + '</span></div>';
+      }).join('');
+
+      var rates = data.honest_base_rates || {};
+      var syms = Object.keys(rates);
+      if (!syms.length) {
+        setState(baseRatesBody, 'empty', 'No base rates', null);
+        return;
+      }
+      baseRatesBody.removeAttribute('data-state');
+      baseRatesBody.innerHTML = syms.map(function (s) {
+        var r = rates[s];
+        var winClass = r.measured_winrate >= r.break_even_wr ? 'tt-up' : 'tt-down';
+        return '<tr>' +
+          '<td><span class="tt-symbol">' + esc(r.symbol) + '</span></td>' +
+          '<td><span class="tt-chip tt-chip--muted" style="font-size:10px;">' + esc(r.style) + '</span></td>' +
+          '<td class="tt-num">' + (r.sample_size || '—') + '</td>' +
+          '<td class="tt-num ' + winClass + '" style="font-weight:700;">' + num(r.measured_winrate, 1) + '%</td>' +
+          '<td class="tt-num ' + (r.profit_factor >= 1.0 ? 'tt-up' : 'tt-down') + '">' + num(r.profit_factor, 2) + '</td>' +
+          '<td class="tt-num ' + (r.expectancy_r >= 0 ? 'tt-up' : 'tt-down') + '">' + (r.expectancy_r >= 0 ? '+' : '') + num(r.expectancy_r, 4) + 'R</td>' +
+          '<td class="tt-num">' + num(r.break_even_wr, 1) + '%</td>' +
+          '<td><span class="tt-chip tt-chip--none" style="font-size:10px;">' + (r.proxy ? 'Universe Median' : 'MT5 Terminal Bars') + '</span></td>' +
+        '</tr>';
+      }).join('');
+    });
+  }
+
+  /* ── Symbol Profile Matrix ────────────────────────────────────────────── */
+  function loadSymbolProfiles() {
+    var body = $('profiles-body');
+    var count = $('profiles-count');
+    if (!body) return;
+
+    apiGet('/api/intelligence/symbol-profiles', TIMEOUT.normal).then(function (res) {
+      if (!res.ok || !res.data) return;
+      var profiles = res.data.profiles || {};
+      var syms = Object.keys(profiles);
+      if (count) count.textContent = String(syms.length);
+      if (!syms.length) {
+        setState(body, 'empty', 'No profiles configured', null);
+        return;
+      }
+      body.removeAttribute('data-state');
+      body.innerHTML = syms.map(function (s) {
+        var p = profiles[s];
+        var hours = p.allowed_utc_hours ? (p.allowed_utc_hours[0] + ':00 - ' + p.allowed_utc_hours[1] + ':00 UTC') : '24h (All Sessions)';
+        return '<tr>' +
+          '<td><span class="tt-symbol">' + esc(p.symbol) + '</span></td>' +
+          '<td><span class="tt-chip tt-chip--muted" style="font-size:10px;">' + esc(p.asset_class) + '</span></td>' +
+          '<td class="tt-num">' + num(p.sl_atr_multiplier, 2) + 'x</td>' +
+          '<td class="tt-num">' + num(p.anti_wick_buffer_atr, 2) + 'x</td>' +
+          '<td class="tt-num" style="color:var(--amber-perf); font-weight:700;">' + num(p.fast_cash_r, 2) + 'R (' + Math.round((p.fast_cash_volume_pct || 0.5) * 100) + '%)</td>' +
+          '<td class="tt-num" style="color:var(--emerald-velocity); font-weight:700;">' + num(p.be_trigger_r, 2) + 'R</td>' +
+          '<td class="tt-num">' + num(p.runner_trail_atr, 2) + 'x</td>' +
+          '<td class="tt-num">' + num(p.typical_spread_pips, 1) + '</td>' +
+          '<td class="tt-num">' + num(p.max_allowed_spread_pips, 1) + '</td>' +
+          '<td><span style="font-size:11px; color:var(--machined-silver);">' + esc(hours) + '</span></td>' +
+        '</tr>';
+      }).join('');
+    });
   }
 
   /* ── Backtest ─────────────────────────────────────────────────────────── */
@@ -5070,35 +5313,70 @@
       });
     });
 
+  /* ── Bugatti Cockpit Confirmation Modal ─────────────────────────────── */
+  function showCockpitConfirm(title, message, isDanger, onConfirm) {
+    var modal = $('cockpit-confirm-modal');
+    if (!modal) {
+      if (window.confirm(message)) onConfirm();
+      return;
+    }
+    var heading = $('confirm-modal-heading');
+    var msg = $('confirm-modal-msg');
+    var icon = $('confirm-modal-icon');
+    var proceed = $('confirm-modal-proceed');
+    var cancel = $('confirm-modal-cancel');
+    var close = $('confirm-modal-close');
+
+    if (heading) heading.textContent = title;
+    if (msg) msg.textContent = message;
+    if (icon) icon.textContent = isDanger ? '🚨' : '⚡';
+    if (proceed) {
+      proceed.className = isDanger ? 'tt-btn tt-btn--danger tt-btn--sm' : 'tt-btn tt-btn--primary tt-btn--sm';
+      proceed.onclick = function () {
+        modal.hidden = true;
+        modal.style.display = 'none';
+        onConfirm();
+      };
+    }
+    var hideModal = function () {
+      modal.hidden = true;
+      modal.style.display = 'none';
+    };
+    if (cancel) cancel.onclick = hideModal;
+    if (close) close.onclick = hideModal;
+
+    modal.hidden = false;
+    modal.style.display = 'flex';
+  }
+
     var flattenBtn = $('flatten-all');
     if (flattenBtn) {
       flattenBtn.addEventListener('click', function () {
         var open = state.positions || [];
         if (!open.length) { toast('Nothing to flatten', 'warn'); return; }
-        if (!window.confirm('Close all ' + open.length + ' open positions?')) return;
-        /* Fan out a close per position. Each one already goes through the same
-           /api/action/close_position path the per-row Close button uses, so a
-           broker refusal on any one position is reported on its own toast and
-           the others still proceed. */
-        /* Only positions carrying a ticket can be closed, so the summary is
-           counted against the attempted set — otherwise a ticket-less row
-           would leave the total one short and the toast would never fire. */
-        var targets = open.filter(function (p) {
-          return p.ticket !== undefined && p.ticket !== null;
-        });
-        if (!targets.length) { toast('Nothing to flatten', 'warn'); return; }
-        var done = 0, failed = 0;
-        targets.forEach(function (p) {
-          apiPost('/api/action/close_position', { ticket: p.ticket }, TIMEOUT.normal).then(function (res) {
-            var data = res.data || {};
-            if (res.ok && !actionRefused(data)) done++; else failed++;
-            if (done + failed === targets.length) {
-              if (failed) toast(failed + ' of ' + targets.length + ' failed to close', 'error');
-              else toast('All positions flattened', 'success');
-              loadTelemetry();
-            }
-          });
-        });
+        showCockpitConfirm(
+          'Emergency Flatten All Positions',
+          'Are you sure you want to close all ' + open.length + ' open positions immediately at market price?',
+          true,
+          function () {
+            var targets = open.filter(function (p) {
+              return p.ticket !== undefined && p.ticket !== null;
+            });
+            if (!targets.length) { toast('Nothing to flatten', 'warn'); return; }
+            var done = 0, failed = 0;
+            targets.forEach(function (p) {
+              apiPost('/api/action/close_position', { ticket: p.ticket }, TIMEOUT.normal).then(function (res) {
+                var data = res.data || {};
+                if (res.ok && !actionRefused(data)) done++; else failed++;
+                if (done + failed === targets.length) {
+                  if (failed) toast(failed + ' of ' + targets.length + ' failed to close', 'error');
+                  else toast('All positions flattened', 'success');
+                  loadTelemetry();
+                }
+              });
+            });
+          }
+        );
       });
     }
 
@@ -5427,21 +5705,35 @@
         return;
       }
       if (ev.target.id === 'btn-emergency-stop') {
-        if (confirm('🚨 ACTIVATE EMERGENCY STOP?\nThis will trip the circuit breaker and halt all automated trading immediately.')) {
-          apiPost('/api/action/emergency_stop', { reason: 'Operator Emergency Stop Button', close_positions: false }).then(function (res) {
-            alert('Emergency stop activated! Circuit breaker is TRIPPED.');
-            renderRisk();
-          });
-        }
+        showCockpitConfirm(
+          'Activate Emergency Circuit Breaker',
+          '🚨 Trip the circuit breaker and halt all autonomous trading loops immediately?',
+          true,
+          function () {
+            apiPost('/api/action/emergency_stop', { reason: 'Operator Emergency Stop Button', close_positions: false }).then(function (res) {
+              toast('Emergency stop activated! Circuit breaker is TRIPPED.', 'warn');
+              renderRisk();
+            });
+          }
+        );
         return;
       }
       if (ev.target.id === 'btn-resume-trading') {
-        if (confirm('Resume automated trading? This will reset the circuit breaker.')) {
-          apiPost('/api/action/resume_trading', {}).then(function (res) {
-            alert('Trading resumed. Circuit breaker is RESET.');
-            renderRisk();
-          });
-        }
+        showCockpitConfirm(
+          'Resume Automated Trading',
+          'Reset the circuit breaker and resume autonomous market scanning and trade dispatch?',
+          false,
+          function () {
+            apiPost('/api/action/resume_trading', {}).then(function (res) {
+              toast('Trading resumed. Circuit breaker is RESET.', 'success');
+              renderRisk();
+            });
+          }
+        );
+        return;
+      }
+      if (ev.target.id === 'missed-refresh') {
+        loadMissedTrades();
         return;
       }
     });

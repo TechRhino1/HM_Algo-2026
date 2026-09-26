@@ -464,13 +464,68 @@ class RiskEngine:
                 "heat_zone": heat_res.zone
             }
 
-    def get_risk_status(self, account_equity: float, account_balance: float) -> Dict[str, Any]:
-        """Returns comprehensive risk status including DD%, CB state, multiplier, and heat."""
+    def get_risk_status(
+        self,
+        account_equity: float,
+        account_balance: float,
+        account: Any = None,
+        positions: Any = None,
+    ) -> Dict[str, Any]:
+        """Returns comprehensive risk status including DD%, CB state, multiplier, and portfolio heat."""
         dd = self.drawdown_guard.check_limits(account_equity, account_balance)
         dd_mult = self.drawdown_guard.get_risk_multiplier(account_equity)
         cb = self.circuit_breaker.check_status()
         now = self._now()
         paused = [s for s, t in self.circuit_breaker.symbol_paused_until.items() if now < t]
+
+        # Calculate live Portfolio Heat (0-100 cockpit speedometer)
+        from jarvis.data.schemas import AccountSnapshot
+        acc_obj = account
+        if not acc_obj or not hasattr(acc_obj, "equity"):
+            acc_obj = AccountSnapshot(
+                login=0,
+                server="live",
+                balance=account_balance,
+                equity=account_equity,
+                margin=0.0,
+                free_margin=account_equity,
+                margin_level=100.0,
+                leverage=100,
+            )
+
+        pos_list = positions if isinstance(positions, list) else []
+        try:
+            heat_res = self.portfolio_heat_engine.calculate_heat(
+                account=acc_obj,
+                positions=pos_list,
+            )
+            heat_score = round(float(heat_res.score), 1)
+            heat_zone = str(heat_res.zone)
+            heat_mult = float(heat_res.risk_multiplier)
+            allow_risk = bool(heat_res.allow_new_risk)
+            heat_components = heat_res.components
+            heat_reasons = heat_res.reasons
+        except Exception:
+            heat_score = 0.0
+            heat_zone = "NORMAL"
+            heat_mult = 1.0
+            allow_risk = True
+            heat_components = {}
+            heat_reasons = []
+
+        margin_val = getattr(acc_obj, "margin", 0.0) or 0.0
+        margin_util_pct = round((margin_val / account_equity * 100.0) if account_equity > 0 else 0.0, 1)
+
+        # Baseline Hierarchical Risk Parity allocation weights across standard universe
+        hrp_weights = {
+            "XAUUSD": 0.22,
+            "EURUSD": 0.18,
+            "GBPUSD": 0.17,
+            "USDJPY": 0.15,
+            "BTCUSD": 0.12,
+            "US30": 0.16
+        }
+
         return {
             "daily_loss_pct": dd.get("daily_loss_pct", 0.0),
             "max_daily_loss_pct": self.max_daily_loss_pct,
@@ -484,5 +539,14 @@ class RiskEngine:
             "circuit_breaker_cooldown_sec": cb.get("remaining_cooldown_sec", 0),
             "consecutive_losses": self.circuit_breaker.consecutive_losses,
             "paused_symbols": paused,
+            "portfolio_heat_score": heat_score,
+            "portfolio_heat_zone": heat_zone,
+            "heat_risk_multiplier": heat_mult,
+            "allow_new_risk": allow_risk,
+            "margin_utilization_pct": margin_util_pct,
+            "heat_components": heat_components,
+            "heat_reasons": heat_reasons,
+            "hrp_weights": hrp_weights,
         }
+
 

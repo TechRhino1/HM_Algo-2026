@@ -426,7 +426,7 @@ class BacktestEngine:
                     favorable_dist=float(open_trade["mfe"]),
                     atr=float(atr or 0.0),
                     policy=open_trade["exit_policy"],
-                    partial_already_taken=bool(open_trade.get("partial_closed", False)),
+                    partial_already_taken=bool(open_trade.get("partial_closed", False) or open_trade.get("partial_unsupported", False)),
                     be_already_locked=bool(open_trade.get("be_locked", False)),
                     # No structural reference is passed here: this loop only has bar
                     # OHLC, and inventing a swing level from the same bar would
@@ -436,7 +436,7 @@ class BacktestEngine:
                 )
 
                 # Apply the partial scale-out (only if the lots can actually split)
-                if exit_dec.partial_close_pct > 0.0 and not open_trade.get("partial_closed", False):
+                if exit_dec.partial_close_pct > 0.0 and not (open_trade.get("partial_closed", False) or open_trade.get("partial_unsupported", False)):
                     partial_ratio = exit_dec.partial_close_pct
                     partial_lots = round(open_trade["lots"] * partial_ratio, 2)
                     if partial_lots >= 0.01 and (open_trade["lots"] - partial_lots) >= 0.01:
@@ -451,9 +451,10 @@ class BacktestEngine:
                         open_trade["partial_closed"] = True
                         open_trade["partial_close_bar"] = open_trade.get("bars_held", 0)
                     else:
-                        # Cannot split lots (micro size): treat the partial as taken so
-                        # we still advance to breakeven protection.
-                        open_trade["partial_closed"] = True
+                        # Cannot split lots (micro size): do not fake a partial close.
+                        # Mark partial_unsupported so evaluate_exit doesn't re-trigger partials,
+                        # and allow the trade to breathe to its full be_trigger_r or TP.
+                        open_trade["partial_unsupported"] = True
                         open_trade["partial_close_bar"] = open_trade.get("bars_held", 0)
 
                 # Ratchet the stop (one-way only; evaluate_exit enforces this)

@@ -133,32 +133,90 @@ class MetaLabeler:
                 self.model_path,
             )
 
-    def build_dataset(self, candles, horizon=20, label_frac=0.5):
-        """Create (X, y) from a candle series.
+    def build_dataset(self, candles, horizon=24, label_frac=0.5, pt_mult=2.0, sl_mult=1.0, method="triple_barrier"):
+        """Create (X, y) from a candle series using Marcos Lopez de Prado's Triple Barrier Method.
 
-        For each bar i we emit two samples (bias=+1 long, bias=-1 short) labeled by
-        whether the forward move in that direction exceeds ~half-ATR (a profitable
-        move net of spread/cost)."""
+        For each bar i we emit two samples (bias=+1 long, bias=-1 short).
+        Under the Triple Barrier Method:
+          - Upper Barrier (Take Profit): entry + (atr * pt_mult) for BUY, entry - (atr * pt_mult) for SELL
+          - Lower Barrier (Stop Loss): entry - (atr * sl_mult) for BUY, entry + (atr * sl_mult) for SELL
+          - Vertical Barrier: horizon bars max holding duration
+        Label is 1 if price reaches Upper Barrier before Lower Barrier; 0 if Lower Barrier hit first.
+        """
         X, y = [], []
         n = len(candles)
         if n < self.MIN_WINDOW + horizon + 1:
             return np.empty((0, 14)), np.empty((0,))
+
         for i in range(self.MIN_WINDOW - 1, n - horizon):
             window = candles[i - self.MIN_WINDOW + 1: i + 1]
             atr = np.mean(np.abs(
                 np.array([_safe_float(candles[k].get("high")) for k in range(i - self.MIN_WINDOW + 1, i + 1)], dtype=float)
                 - np.array([_safe_float(candles[k].get("low")) for k in range(i - self.MIN_WINDOW + 1, i + 1)], dtype=float)
             ))
-            thr = max(atr * label_frac, 1e-9)
-            fwd = _safe_float(candles[i + horizon].get("close")) - _safe_float(candles[i].get("close"))
-            f_long = _window_features(window, bias=1.0)
-            if f_long is not None:
-                X.append(f_long)
-                y.append(1 if fwd > thr else 0)
-            f_short = _window_features(window, bias=-1.0)
-            if f_short is not None:
-                X.append(f_short)
-                y.append(1 if -fwd > thr else 0)
+            entry_p = _safe_float(candles[i].get("close"))
+            if atr <= 0 or entry_p <= 0:
+                continue
+
+            if method == "triple_barrier":
+                # --- Long evaluation ---
+                up_long = entry_p + (atr * pt_mult)
+                dn_long = entry_p - (atr * sl_mult)
+                long_label = 0
+                for j in range(i + 1, i + horizon + 1):
+                    h = _safe_float(candles[j].get("high"))
+                    l = _safe_float(candles[j].get("low"))
+                    if h >= up_long and l > dn_long:
+                        long_label = 1
+                        break
+                    elif l <= dn_long:
+                        long_label = 0
+                        break
+                else:
+                    # Vertical barrier reached
+                    c_end = _safe_float(candles[i + horizon].get("close"))
+                    long_label = 1 if (c_end - entry_p) > (atr * 0.25) else 0
+
+                f_long = _window_features(window, bias=1.0)
+                if f_long is not None:
+                    X.append(f_long)
+                    y.append(long_label)
+
+                # --- Short evaluation ---
+                dn_short = entry_p - (atr * pt_mult)
+                up_short = entry_p + (atr * sl_mult)
+                short_label = 0
+                for j in range(i + 1, i + horizon + 1):
+                    h = _safe_float(candles[j].get("high"))
+                    l = _safe_float(candles[j].get("low"))
+                    if l <= dn_short and h < up_short:
+                        short_label = 1
+                        break
+                    elif h >= up_short:
+                        short_label = 0
+                        break
+                else:
+                    # Vertical barrier reached
+                    c_end = _safe_float(candles[i + horizon].get("close"))
+                    short_label = 1 if (entry_p - c_end) > (atr * 0.25) else 0
+
+                f_short = _window_features(window, bias=-1.0)
+                if f_short is not None:
+                    X.append(f_short)
+                    y.append(short_label)
+            else:
+                # Legacy fixed horizon fallback
+                thr = max(atr * label_frac, 1e-9)
+                fwd = _safe_float(candles[i + horizon].get("close")) - entry_p
+                f_long = _window_features(window, bias=1.0)
+                if f_long is not None:
+                    X.append(f_long)
+                    y.append(1 if fwd > thr else 0)
+                f_short = _window_features(window, bias=-1.0)
+                if f_short is not None:
+                    X.append(f_short)
+                    y.append(1 if -fwd > thr else 0)
+
         return np.array(X, dtype=float), np.array(y, dtype=int)
 
     def train(self, candles, horizon=20, label_frac=0.5):
