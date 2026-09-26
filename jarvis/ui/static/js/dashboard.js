@@ -1253,7 +1253,14 @@
     entrySell: '#c084fc',
     stopAtRisk: '#ff0055',
     stopLocked: '#fbbf24',
-    target: '#00ff88'
+    target: '#00ff88',
+    tp1: '#38bdf8',
+    tp2: '#10b981',
+    tp3: '#c084fc',
+    navUpper: '#f43f5e',
+    navBasis: '#3b82f6',
+    navLower: '#10b981',
+    navQuarter: 'rgba(148, 163, 184, 0.45)'
   };
 
   /* Build the chart once. Returns null when the library or the container is
@@ -1430,13 +1437,151 @@
     var last = candles[candles.length - 1].close;
     var above = highs.filter(function (h) { return h > last; }).sort(function (a, b) { return a - b; });
     var below = lows.filter(function (l) { return l < last; }).sort(function (a, b) { return b - a; });
-    if (!above.length && !below.length) return null;
+
+    var r1 = above.length > 0 ? above[0] : null;
+    var r2 = above.length > 1 ? above[1] : null;
+    var s1 = below.length > 0 ? below[0] : null;
+    var s2 = below.length > 1 ? below[1] : null;
+
+    // ── Indicator 1: KN - Smart TP SL Signals ─────────────────────────────────
+    var calcEMA = function (arr, p) {
+      if (!arr || !arr.length) return 0;
+      var k = 2 / (p + 1);
+      var ema = arr[0].close;
+      for (var idx = 1; idx < arr.length; idx++) {
+        ema = arr[idx].close * k + ema * (1 - k);
+      }
+      return ema;
+    };
+
+    var calcATR = function (arr, p) {
+      if (!arr || arr.length < 2) return (last * 0.002);
+      var len = Math.min(p || 14, arr.length - 1);
+      var sum = 0;
+      for (var idx = arr.length - len; idx < arr.length; idx++) {
+        var cur = arr[idx], prev = arr[idx - 1];
+        sum += Math.max(cur.high - cur.low, Math.abs(cur.high - prev.close), Math.abs(cur.low - prev.close));
+      }
+      return sum / len;
+    };
+
+    var fastEMA = calcEMA(candles, 5);
+    var slowEMA = calcEMA(candles, 13);
+    var atr14 = calcATR(candles, 14);
+    var knBullish = fastEMA >= slowEMA;
+    var knSignal = knBullish ? 'BULLISH' : 'BEARISH';
+    var knSL = knBullish ? (last - 1.5 * atr14) : (last + 1.5 * atr14);
+    var knRisk = Math.abs(last - knSL);
+    var knTP1 = knBullish ? (last + 1.0 * knRisk) : (last - 1.0 * knRisk);
+    var knTP2 = knBullish ? (last + 2.0 * knRisk) : (last - 2.0 * knRisk);
+    var knTP3 = knBullish ? (last + 3.0 * knRisk) : (last - 3.0 * knRisk);
+
+    // ── Indicator 2: Trend Channel Navigator (AQDC) ───────────────────────────
+    var w = 5;
+    var sh = null, sl = null;
+    for (var k = candles.length - 1 - w; k >= w; k--) {
+      var bar = candles[k];
+      var isH = true, isL = true;
+      for (var j = 1; j <= w; j++) {
+        if (candles[k - j].high >= bar.high || candles[k + j].high > bar.high) isH = false;
+        if (candles[k - j].low <= bar.low || candles[k + j].low < bar.low) isL = false;
+      }
+      if (isH && !sh) sh = { index: k, price: bar.high };
+      if (isL && !sl) sl = { index: k, price: bar.low };
+      if (sh && sl) break;
+    }
+    if (!sh || !sl) {
+      var slc = candles.slice(-Math.min(30, candles.length));
+      var mx = -Infinity, mn = Infinity, imx = 0, imn = 0;
+      slc.forEach(function (b, i) {
+        if (b.high > mx) { mx = b.high; imx = candles.length - slc.length + i; }
+        if (b.low < mn) { mn = b.low; imn = candles.length - slc.length + i; }
+      });
+      sh = { index: imx, price: mx };
+      sl = { index: imn, price: mn };
+    }
+
+    var i1 = Math.min(sh.index, sl.index);
+    var i2 = Math.max(sh.index, sl.index);
+    var p1 = i1 === sh.index ? sh.price : sl.price;
+    var p2 = i2 === sh.index ? sh.price : sl.price;
+    var slope = (p2 - p1) / Math.max(i2 - i1, 1);
+    var curIdx = candles.length - 1;
+    var curBasis = p1 + slope * (curIdx - i1);
+
+    var upDevs = [], lowDevs = [];
+    for (var idx = i1; idx <= curIdx; idx++) {
+      var bVal = p1 + slope * (idx - i1);
+      if (candles[idx].high > bVal) upDevs.push(candles[idx].high - bVal);
+      if (candles[idx].low < bVal) lowDevs.push(bVal - candles[idx].low);
+    }
+    upDevs.sort(function (a, b) { return a - b; });
+    lowDevs.sort(function (a, b) { return a - b; });
+
+    var p90 = function (arr, fallback) {
+      if (!arr.length) return fallback;
+      var pos = Math.min(arr.length - 1, Math.floor(arr.length * 0.90));
+      return arr[pos];
+    };
+
+    var chUpper = curBasis + p90(upDevs, atr14 * 1.5);
+    var chLower = curBasis - p90(lowDevs, atr14 * 1.5);
+    var chSpan = Math.max(chUpper - chLower, 1e-9);
+    var posPct = Math.max(0, Math.min(100, ((last - chLower) / chSpan) * 100.0));
+    var quarter = posPct <= 25.0 ? 'LOWER_QUARTER' : (posPct >= 75.0 ? 'UPPER_QUARTER' : 'MIDDLE');
+    var q25 = chLower + 0.25 * chSpan;
+    var q75 = chLower + 0.75 * chSpan;
+
+    // Recency-weighted Micro Regression (N=20, lambda=0.94)
+    var nMicro = Math.min(20, candles.length);
+    var decay = 0.94;
+    var sumW = 0, sumWX = 0, sumWY = 0;
+    var mClose = candles.slice(-nMicro);
+    for (var m = 0; m < nMicro; m++) {
+      var wgt = Math.pow(decay, nMicro - 1 - m);
+      sumW += wgt;
+      sumWX += wgt * m;
+      sumWY += wgt * mClose[m].close;
+    }
+    var meanX = sumWX / sumW;
+    var meanY = sumWY / sumW;
+    var covXY = 0, varX = 0, varY = 0;
+    for (var m = 0; m < nMicro; m++) {
+      var dx = m - meanX;
+      var dy = mClose[m].close - meanY;
+      var wgt = Math.pow(decay, nMicro - 1 - m);
+      covXY += wgt * dx * dy;
+      varX += wgt * dx * dx;
+      varY += wgt * dy * dy;
+    }
+    var mSlope = covXY / (varX + 1e-9);
+    var mR2 = (varX * varY > 1e-12) ? Math.max(0, Math.min(1, (covXY * covXY) / (varX * varY + 1e-9))) : 0;
+    var angle = Math.atan(mSlope / (atr14 + 1e-9)) * (180 / Math.PI);
 
     return {
-      r1: above.length > 0 ? above[0] : null,
-      r2: above.length > 1 ? above[1] : null,
-      s1: below.length > 0 ? below[0] : null,
-      s2: below.length > 1 ? below[1] : null
+      r1: r1,
+      r2: r2,
+      s1: s1,
+      s2: s2,
+      // Indicator 1: KN Smart TP SL
+      kn_signal: knSignal,
+      kn_fast_ema: fastEMA,
+      kn_slow_ema: slowEMA,
+      kn_atr: atr14,
+      kn_sl: knSL,
+      kn_tp1: knTP1,
+      kn_tp2: knTP2,
+      kn_tp3: knTP3,
+      // Indicator 2: Trend Channel Navigator (AQDC)
+      channel_basis: curBasis,
+      channel_upper: chUpper,
+      channel_lower: chLower,
+      quarter_25: q25,
+      quarter_75: q75,
+      channel_quarter: quarter,
+      channel_pos_pct: posPct,
+      micro_r2: mR2,
+      micro_slope_angle: angle
     };
   }
 
@@ -1452,9 +1597,7 @@
     state.chart[bucket] = [];
   }
 
-  /* The legend chips for the derived levels. Split out from drawLevels() so the
-     TradingView source can keep reporting the feed's own support and resistance
-     even though it draws them in an external widget we do not control. */
+  /* The legend chips for the derived levels and institutional indicators. */
   function levelChipsHtml(digits) {
     var lv = state.chartLevels;
     if (!lv) return '';
@@ -1468,6 +1611,19 @@
       chips.push('<span class="tt-level tt-level--' + d[1].charAt(0).toLowerCase() + '">' +
                  '<i aria-hidden="true"></i>' + d[1] + ' <b>' + num(price, digits) + '</b></span>');
     });
+
+    // Indicator 1 & 2 legend badges
+    if (lv.channel_quarter) {
+      var navCol = lv.channel_quarter === 'LOWER_QUARTER' ? '#10b981' : (lv.channel_quarter === 'UPPER_QUARTER' ? '#f43f5e' : '#3b82f6');
+      chips.push('<span class="tt-level" style="border-color:' + navCol + ';color:' + navCol + '">' +
+                 '<i aria-hidden="true"></i>NAVIGATOR: <b>' + esc(lv.channel_quarter) + '</b> (R² ' + num(lv.micro_r2, 2) + ')</span>');
+    }
+    if (lv.kn_signal) {
+      var knCol = lv.kn_signal === 'BULLISH' ? '#10b981' : '#f43f5e';
+      chips.push('<span class="tt-level" style="border-color:' + knCol + ';color:' + knCol + '">' +
+                 '<i aria-hidden="true"></i>KN SMART: <b>' + esc(lv.kn_signal) + '</b></span>');
+    }
+
     return chips.join('');
   }
 
@@ -1503,17 +1659,62 @@
       }));
     });
 
+    // ── Trend Channel Navigator (AQDC) Price Lines ──────────────────────────
+    if (lv.channel_upper && lv.channel_basis && lv.channel_lower) {
+      state.chart.lines.push(state.chart.candles.createPriceLine({
+        price: lv.channel_upper,
+        color: CHART_COLORS.navUpper,
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true,
+        title: 'NAVIGATOR UPPER (90%): ' + num(lv.channel_upper, digits)
+      }));
+      state.chart.lines.push(state.chart.candles.createPriceLine({
+        price: lv.channel_basis,
+        color: CHART_COLORS.navBasis,
+        lineWidth: 1.5,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true,
+        title: 'NAVIGATOR BASIS: ' + num(lv.channel_basis, digits)
+      }));
+      state.chart.lines.push(state.chart.candles.createPriceLine({
+        price: lv.channel_lower,
+        color: CHART_COLORS.navLower,
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true,
+        title: 'NAVIGATOR LOWER (90%): ' + num(lv.channel_lower, digits)
+      }));
+      if (lv.quarter_75) {
+        state.chart.lines.push(state.chart.candles.createPriceLine({
+          price: lv.quarter_75,
+          color: CHART_COLORS.navQuarter,
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: false,
+          title: 'PULLBACK ZONE (75%): ' + num(lv.quarter_75, digits)
+        }));
+      }
+      if (lv.quarter_25) {
+        state.chart.lines.push(state.chart.candles.createPriceLine({
+          price: lv.quarter_25,
+          color: CHART_COLORS.navQuarter,
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: false,
+          title: 'PULLBACK ZONE (25%): ' + num(lv.quarter_25, digits)
+        }));
+      }
+    }
+
     if (legend) {
       var chips = levelChipsHtml(digits);
       legend.innerHTML = chips || '<span class="tt-hint">No swing pivot in range</span>';
     }
   }
 
-  /* Entry, stop and target for the open positions on this symbol.
-
-     The stop is drawn amber and labelled "locked" once it has moved past entry,
-     because a stop in profit is a different fact from a stop at risk and the
-     colour is the fastest way to tell them apart. */
+  /* Active Entry, stop loss and take profit targets (TP1, TP2, TP3 smart milestones)
+     for the active trade or dynamic indicator targets when no position is open. */
   function drawTradeOverlays(sym, digits) {
     var mine = (state.positions || []).filter(function (p) {
       return String(p.symbol || '').toUpperCase() === String(sym || '').toUpperCase();
@@ -1525,50 +1726,148 @@
 
     if (!state.chart) return;
     clearLines('tradeLines');
-    if (!state.showLevels || !mine.length) return;
+    if (!state.showLevels) return;
 
-    mine.forEach(function (pos) {
-      var side = String(pos.type || pos.side || '').toUpperCase();
-      var isBuy = side === 'BUY' || side === 'LONG';
-      var entry = Number(pos.open_price || 0);
-      var sl = Number(pos.sl || 0);
-      var tp = Number(pos.tp || 0);
-      var lots = Number(pos.volume || 0);
-      var lotText = isFinite(lots) ? lots.toFixed(2) : '—';
-      var series = state.chart.candles;
+    var series = state.chart.candles;
+    var lv = state.chartLevels;
 
-      if (entry > 0) {
-        state.chart.tradeLines.push(series.createPriceLine({
-          price: entry,
-          color: isBuy ? CHART_COLORS.entryBuy : CHART_COLORS.entrySell,
-          lineWidth: 2,
-          lineStyle: LightweightCharts.LineStyle.Solid,
-          axisLabelVisible: true,
-          title: (isBuy ? 'BUY' : 'SELL') + ' ' + lotText + 'L @ ' + num(entry, digits)
-        }));
-      }
-      if (sl > 0) {
-        var locked = isBuy ? sl >= entry : sl <= entry;
-        state.chart.tradeLines.push(series.createPriceLine({
-          price: sl,
-          color: locked ? CHART_COLORS.stopLocked : CHART_COLORS.stopAtRisk,
-          lineWidth: 2,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: (locked ? 'SL locked' : 'SL') + ': ' + num(sl, digits)
-        }));
-      }
-      if (tp > 0) {
-        state.chart.tradeLines.push(series.createPriceLine({
-          price: tp,
-          color: CHART_COLORS.target,
-          lineWidth: 2,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: 'TP: ' + num(tp, digits)
-        }));
-      }
-    });
+    if (mine.length) {
+      // ── Active Open Position Overlays ───────────────────────────────────────
+      mine.forEach(function (pos) {
+        var side = String(pos.type || pos.side || '').toUpperCase();
+        var isBuy = side === 'BUY' || side === 'LONG';
+        var entry = Number(pos.open_price || 0);
+        var sl = Number(pos.sl || 0);
+        var tp = Number(pos.tp || 0);
+        var lots = Number(pos.volume || 0);
+        var lotText = isFinite(lots) ? lots.toFixed(2) : '—';
+
+        if (entry > 0) {
+          state.chart.tradeLines.push(series.createPriceLine({
+            price: entry,
+            color: isBuy ? CHART_COLORS.entryBuy : CHART_COLORS.entrySell,
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            title: (isBuy ? 'BUY' : 'SELL') + ' ' + lotText + 'L @ ' + num(entry, digits)
+          }));
+        }
+        if (sl > 0) {
+          var locked = isBuy ? sl >= entry : sl <= entry;
+          state.chart.tradeLines.push(series.createPriceLine({
+            price: sl,
+            color: locked ? CHART_COLORS.stopLocked : CHART_COLORS.stopAtRisk,
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: (locked ? 'SL locked' : 'SL') + ': ' + num(sl, digits)
+          }));
+        }
+        if (tp > 0) {
+          state.chart.tradeLines.push(series.createPriceLine({
+            price: tp,
+            color: CHART_COLORS.target,
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'TP: ' + num(tp, digits)
+          }));
+        }
+
+        // Smart Milestones TP1, TP2, TP3
+        var tp1 = Number(pos.tp1 || 0);
+        var tp2 = Number(pos.tp2 || 0);
+        var tp3 = Number(pos.tp3 || 0);
+        var risk = (entry > 0 && sl > 0) ? Math.abs(entry - sl) : 0;
+
+        if (tp1 > 0) {
+          state.chart.tradeLines.push(series.createPriceLine({
+            price: tp1,
+            color: CHART_COLORS.tp1,
+            lineWidth: 1.5,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'TP1 (50% Cash): ' + num(tp1, digits)
+          }));
+        } else if (risk > 0 && tp > 0) {
+          var calcTp1 = isBuy ? entry + risk : entry - risk;
+          state.chart.tradeLines.push(series.createPriceLine({
+            price: calcTp1,
+            color: CHART_COLORS.tp1,
+            lineWidth: 1.5,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'TP1 (1.0R Cash): ' + num(calcTp1, digits)
+          }));
+        }
+
+        if (tp2 > 0 && Math.abs(tp2 - tp) > 1e-6) {
+          state.chart.tradeLines.push(series.createPriceLine({
+            price: tp2,
+            color: CHART_COLORS.tp2,
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'TP2: ' + num(tp2, digits)
+          }));
+        }
+
+        if (tp3 > 0) {
+          state.chart.tradeLines.push(series.createPriceLine({
+            price: tp3,
+            color: CHART_COLORS.tp3,
+            lineWidth: 1.5,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'TP3 (Runner): ' + num(tp3, digits)
+          }));
+        } else if (risk > 0) {
+          var calcTp3 = isBuy ? entry + (risk * 3.0) : entry - (risk * 3.0);
+          state.chart.tradeLines.push(series.createPriceLine({
+            price: calcTp3,
+            color: CHART_COLORS.tp3,
+            lineWidth: 1.5,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'TP3 (3.0R Runner): ' + num(calcTp3, digits)
+          }));
+        }
+      });
+    } else if (lv && lv.kn_sl) {
+      // ── KN Smart Signals Dynamic Levels (when no active position) ───────────
+      state.chart.tradeLines.push(series.createPriceLine({
+        price: lv.kn_sl,
+        color: CHART_COLORS.stopAtRisk,
+        lineWidth: 1.5,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'KN SMART SL: ' + num(lv.kn_sl, digits)
+      }));
+      state.chart.tradeLines.push(series.createPriceLine({
+        price: lv.kn_tp1,
+        color: CHART_COLORS.tp1,
+        lineWidth: 1.5,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'KN SMART TP1 (1.0R): ' + num(lv.kn_tp1, digits)
+      }));
+      state.chart.tradeLines.push(series.createPriceLine({
+        price: lv.kn_tp2,
+        color: CHART_COLORS.tp2,
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'KN SMART TP2 (2.0R): ' + num(lv.kn_tp2, digits)
+      }));
+      state.chart.tradeLines.push(series.createPriceLine({
+        price: lv.kn_tp3,
+        color: CHART_COLORS.tp3,
+        lineWidth: 1.5,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'KN SMART TP3 (3.0R): ' + num(lv.kn_tp3, digits)
+      }));
+    }
   }
 
   /* The floating trade card over the chart. Sourced from the broker's position
@@ -1674,27 +1973,6 @@
           shape: isBuy ? 'arrowUp' : 'arrowDown',
           text: (isBuy ? 'BUY ' : 'SELL ') + (isFinite(lots) ? lots.toFixed(2) : '?') + 'L @ '
                 + num(pos.open_price, digits)
-        });
-      });
-
-      // Only rows that carry a real `closed_at` get an exit marker. A journal
-      // row's `timestamp` is when it was logged, which is not a close time.
-      (state.history || []).forEach(function (t) {
-        if (!t.closed_at) return;
-        if (String(t.symbol || '').toUpperCase() !== symU) return;
-        var seconds = utcSeconds(t.closed_at);
-        var bar = seconds === null ? null : barTimeAt(seconds);
-        if (bar === null) return;
-        var pnl = historyPnl(t);
-        var wasBuy = /BUY|LONG/.test(String(t.action || t.type || '').toUpperCase());
-        markers.push({
-          time: bar,
-          // Closing a long sells, closing a short buys — the marker points the
-          // way the closing transaction went.
-          position: wasBuy ? 'aboveBar' : 'belowBar',
-          color: pnl === null ? '#8b93a7' : (pnl > 0 ? CHART_COLORS.target : CHART_COLORS.stopAtRisk),
-          shape: wasBuy ? 'arrowDown' : 'arrowUp',
-          text: 'EXIT ' + (pnl === null ? '' : (pnl > 0 ? '+' : '') + num(pnl, 2))
         });
       });
     }

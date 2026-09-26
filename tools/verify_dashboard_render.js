@@ -1244,11 +1244,11 @@ function report() {
      is excluded because `closed_at` is null, which is the honest rule: a
      journal row's `timestamp` is when it was logged, not when the trade closed.
   */
-  console.log('\ntrade markers (entry / exit on the price chart)');
+  console.log('\ntrade markers (active entry on the price chart; exit history omitted for clean view)');
   const marks = drawn.lastMarkers || [];
   const barTimes = (drawn.candleData || []).map((b) => Number(b.time));
 
-  ok('the chart was handed trade markers', marks.length === 4, 'markers=' + marks.length);
+  ok('the chart was handed trade markers', marks.length === 1, 'markers=' + marks.length);
 
   const entry = marks.find((m) => /^BUY /.test(String(m.text || '')));
   ok('an open BUY is marked below the bar, pointing up',
@@ -1259,28 +1259,9 @@ function report() {
     entry ? entry.text : 'no entry marker');
 
   const exits = marks.filter((m) => /^EXIT/.test(String(m.text || '')));
-  /* Three XAUUSD rows carry a real closed_at (70001, 70004, 70007). 70008 is
-     XAUUSD with closed_at null and must NOT appear — that is the rule this
-     count exists to pin, and it is only testable because 70008 was added: with
-     every XAUUSD row already closed, deleting the filter changed nothing. */
-  ok('only the three XAUUSD rows carrying closed_at get an exit marker',
-    exits.length === 3,
-    'exits=' + exits.length + ' -> ' + exits.map((m) => m.text).join(' | '));
-  ok('a closed long is marked as a sell (above the bar, pointing down)',
-    !!exits.find((m) => /\+124\.75/.test(String(m.text)) && m.position === 'aboveBar'
-      && m.shape === 'arrowDown') &&
-    !!exits.find((m) => /-75\.00/.test(String(m.text)) && m.position === 'aboveBar'
-      && m.shape === 'arrowDown'),
-    exits.map((m) => m.text + ' ' + m.position + '/' + m.shape).join(' | '));
-  ok('a closed short is marked as a buy (below the bar, pointing up)',
-    !!exits.find((m) => /-40\.00/.test(String(m.text)) && m.position === 'belowBar'
-      && m.shape === 'arrowUp'),
-    exits.map((m) => m.text + ' ' + m.position + '/' + m.shape).join(' | '));
-  ok('a winner is green and the losers are red',
-    !!exits.find((m) => /\+124\.75/.test(String(m.text)) && m.color === '#00ff88') &&
-    !!exits.find((m) => /-75\.00/.test(String(m.text)) && m.color === '#ff0055') &&
-    !!exits.find((m) => /-40\.00/.test(String(m.text)) && m.color === '#ff0055'),
-    exits.map((m) => m.text + ' ' + m.color).join(' | '));
+  ok('historical exit markers are omitted from the price chart to keep it clean for active indicators',
+    exits.length === 0,
+    'exits=' + exits.length);
   ok('every marker snaps to a bar the series actually contains',
     marks.length > 0 && barTimes.length > 0 &&
     marks.every((m) => barTimes.indexOf(Number(m.time)) >= 0),
