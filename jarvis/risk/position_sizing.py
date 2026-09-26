@@ -1,4 +1,5 @@
 import logging
+import math
 from typing import Dict, Any
 
 logger = logging.getLogger("JARVIS_PositionSizer")
@@ -26,6 +27,15 @@ class PositionSizer:
         if risk_distance <= 0 or account_balance <= 0:
             return 0.0
 
+        # Keep the configured maximum immutable. Volatility, drawdown,
+        # conviction and evidence may reduce the working budget but must never
+        # enlarge the maximum loss allowed by configuration.
+        try:
+            risk_ceiling_pct = float(risk_pct)
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(risk_ceiling_pct) or risk_ceiling_pct <= 0.0:
+            return 0.0
         # Adjust risk_pct based on volatility and drawdown — softened to preserve profitability
         sym_name = str(symbol_info.get("name", "") if symbol_info else "").upper()
         is_high_vol = any(x in sym_name for x in ["XAU", "GOLD", "BTC", "OIL", "US30", "NAS100"])
@@ -100,16 +110,12 @@ class PositionSizer:
         # keeps this function honest about its contract rather than silently
         # overriding an explicit argument with a hardcoded global.
         #
-        # Consequence worth knowing: the micro-account floor further down allows
-        # the broker minimum lot whenever the risk it forces is <= 2x the target,
-        # so tightening the target also tightens that floor. On a $762 account
-        # XAUUSD at a 0.01 minimum lot risks 1.31%, which is under 2x the old
-        # inflated 0.776% but over 2x the honest 0.575% -- so such a trade is now
-        # refused. That is the correct answer to "you cannot risk 0.5% here",
-        # but it does mean small accounts stop trading wide-stop symbols.
-        ceiling = float(risk_pct) if risk_pct and risk_pct > 0 else 0.0
-        scaled = risk_pct * invalidation_risk_coefficient * combined_scaler
-        effective_risk_pct = min(ceiling, max(0.10, scaled)) if ceiling > 0 else max(0.10, scaled)
+        # If the broker minimum volume cannot fit inside the resulting monetary
+        # budget, the trade is refused rather than exceeding the configured cap.
+        ceiling = risk_ceiling_pct
+        scaled = risk_pct * max(0.0, min(1.0, float(invalidation_risk_coefficient))) * combined_scaler
+        # Never create a floor above the configured maximum risk.
+        effective_risk_pct = min(ceiling, max(0.0, scaled))
         if ceiling > 0 and scaled > ceiling + 1e-9:
             logger.debug(
                 "[%s] risk clamped: multipliers wanted %.2f%%, ceiling is %.2f%% "
@@ -138,31 +144,39 @@ class PositionSizer:
         # Precise lot sizing formula across all asset classes & currency quote conventions
         raw_lots = risk_amount_dollars / dollar_risk_per_lot
 
-        # Option B: Micro Account / Small Balance Handling with Strict Risk Ceiling (P0)
+        # Broker minimum volume must never override the configured risk ceiling.
+        # If the smallest executable volume is too risky, refuse the trade.
         if raw_lots < min_vol:
             actual_risk_dollars = min_vol * dollar_risk_per_lot
             actual_risk_pct = (actual_risk_dollars / (account_balance + 1e-9)) * 100.0
-            max_acceptable_risk_pct = min(3.0, 2.0 * effective_risk_pct)
-            if actual_risk_pct > max_acceptable_risk_pct:
+            if actual_risk_pct > effective_risk_pct * 1.005:
                 logger.error(
-                    f"REJECTED [{sym_key}]: Minimum lot size ({min_vol}) would force "
-                    f"{actual_risk_pct:.2f}% risk (target was {effective_risk_pct:.2f}%). "
-                    f"Account balance too small for this symbol/stop-distance combination."
+                    f"REJECTED [{sym_key}]: minimum volume {min_vol} would force "
+                    f"{actual_risk_pct:.3f}% risk above allowed {effective_risk_pct:.3f}%.",
                 )
                 return 0.0
-            logger.warning(
-                f"MICRO ACCOUNT RISK WARNING [{sym_key}]: Raw lot size ({raw_lots:.5f}) is below broker minimum ({min_vol}). "
-                f"Executing at minimum volume floor {min_vol} lots (Actual risk: {actual_risk_pct:.2f}% / ${actual_risk_dollars:.2f} "
-                f"on ${account_balance:.2f} equity; target planned risk was {effective_risk_pct:.2f}% / ${risk_amount_dollars:.2f})."
-            )
             final_lots = min_vol
         else:
+            # Round DOWN to the broker volume step so quantisation cannot add risk.
             final_lots = min(raw_lots, max_vol)
+            if vol_step > 0:
+                final_lots = math.floor(final_lots / vol_step + 1e-12) * vol_step
+            if final_lots < min_vol:
+                final_lots = min_vol
 
         if final_lots <= 0.0:
             return 0.0
 
-        # Volume step rounding (e.g. step = 0.01)
-        final_lots = max(min_vol, round(final_lots / vol_step) * vol_step)
+        # Final monetary backstop after volume quantisation.
+        final_risk_dollars = final_lots * dollar_risk_per_lot
+        if final_risk_dollars > risk_amount_dollars * 1.005:
+            if vol_step > 0 and final_lots - vol_step >= min_vol:
+                final_lots = math.floor((final_lots - vol_step) / vol_step + 1e-12) * vol_step
+                final_risk_dollars = final_lots * dollar_risk_per_lot
+            if final_lots < min_vol or final_risk_dollars > risk_amount_dollars * 1.005:
+                logger.error(
+                    f"REJECTED [{sym_key}]: volume quantisation would exceed the monetary risk budget.",
+                )
+                return 0.0
         return round(final_lots, 2)
 

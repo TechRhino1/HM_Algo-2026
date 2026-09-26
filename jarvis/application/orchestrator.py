@@ -851,23 +851,9 @@ class JarvisOrchestrator:
         now_utc_hour = datetime.now(timezone.utc).hour
         is_asian_blackout = (1 <= now_utc_hour < 5) and not is_crypto(symbol) and self.mode == "live"
 
-        # Active Open Position Trailing & Profit Lock Management
-        # Suppressed on a dry run: trailing MODIFIES live stop levels, which is a
-        # side effect a read-only preview must never have.
-        if not dry_run:
-            for pos in active_sym_positions:
-                try:
-                    manage_res = self.order_manager.manage_position(pos, context)
-                    if manage_res.get("modified"):
-                        self.mt5_client.modify_position(
-                            ticket=pos.ticket,
-                            sl=manage_res["new_sl"],
-                            tp=manage_res["new_tp"]
-                        )
-                except Exception as e:
-                    logger.error(f"Error trailing position #{pos.ticket}: {e}", exc_info=True)
-
-        # These guards are keyed on "this cycle wants to enter", NOT on the
+        # Open-position management is owned by PositionMonitorEngine. The scan
+        # path is intentionally side-effect free so it cannot mutate live stops
+        # while ranking entry candidates.        # These guards are keyed on "this cycle wants to enter", NOT on the
         # legacy verdict. A candidate the calibrated policy accepted can still
         # carry decision.decision == "WAIT", because that is what the legacy
         # stack said about it -- and the calibrated policy exists precisely to
@@ -926,127 +912,10 @@ class JarvisOrchestrator:
                 reason = dd_status.get("breaches", ["Max drawdown reached"])[0] if dd_status.get("breaches") else "Max drawdown reached"
                 auth_res = {'authorized': False, 'reason': f'DRAWDOWN_GUARD: {reason}'}
 
-        # 7. Execute if authorized (Atomic Reservation -> Execute -> Commit/Release)
-        # A dry run stops here. Everything above has already decided what WOULD
-        # happen and auth_res carries the reason either way, so a preview loses no
-        # information by skipping the order itself.
-        exec_res = None
-        if not dry_run and auth_res.get("authorized") and decision.decision == "EXECUTE":
-            decision.execution_authorized = True
-            lots = auth_res.get("lots", 0.01)
-            # Unified lot cap based on account tier (§4)
-            if account:
-                lots = min(lots, get_max_lot_cap(account.equity))
-
-            # Claim in-process lock & reserve risk capacity BEFORE sending to MT5
-            risk_dist = abs(decision.entry_price - decision.stop_loss)
-            tick_v = float(sym_info.get("trade_tick_value", 1.0) or 1.0)
-            tick_s = float(sym_info.get("trade_tick_size", 0.0001) or 0.0001)
-            dollar_risk_per_unit = tick_v / max(tick_s, 1e-9)
-            est_risk_usd = lots * dollar_risk_per_unit * risk_dist
-            self.risk_engine.reserve_risk(canonical_sym, est_risk_usd)
-
-            # Claim atomically. The guard ~90 lines above reads
-            # `_execution_in_progress` and then RELEASES the lock, so two sweeps
-            # can both observe "not executing" and both reach this point. Only
-            # the one that wins this compare-and-claim may send an order; the
-            # loser releases its risk reservation and skips, instead of opening
-            # a second position on the same symbol.
-            with self._execution_lock:
-                if canonical_sym in self._execution_in_progress:
-                    claimed = False
-                else:
-                    self._execution_in_progress.add(canonical_sym)
-                    claimed = True
-
-            if not claimed:
-                logger.warning(
-                    "%s was claimed by a concurrent sweep while this one was still "
-                    "authorising; skipping to avoid a duplicate order.", canonical_sym,
-                )
-                self.risk_engine.release_risk(canonical_sym)
-                exec_res = None
-            else:
-                try:
-                    exec_res = self.execution_engine.execute_decision(decision, lots)
-                    status = (exec_res or {}).get("status")
-                    if status == "FILLED":
-                        self.risk_engine.commit_risk(canonical_sym)
-                    elif status == "UNKNOWN":
-                        # The order may be live at the broker. Keep the risk
-                        # reservation held rather than releasing it (releasing
-                        # would let another trade spend capacity we may already
-                        # be using), and do NOT treat this as a clean refusal:
-                        # the next sync reconciles it against real positions.
-                        logger.error(
-                            "Order for %s TIMED OUT with an unknown outcome -- the "
-                            "position may be open. Holding the risk reservation and "
-                            "refusing to retry until the broker state is confirmed.",
-                            canonical_sym,
-                        )
-                    else:
-                        self.risk_engine.release_risk(canonical_sym)
-                except Exception as e:
-                    self.risk_engine.release_risk(canonical_sym)
-                    logger.error(f"Execution error for {canonical_sym}: {e}", exc_info=True)
-                finally:
-                    # Always release in-progress lock. Start the cooldown for a
-                    # fill AND for an unknown outcome -- an unconfirmed order
-                    # must not be re-sent on the next sweep.
-                    with self._execution_lock:
-                        self._execution_in_progress.discard(canonical_sym)
-                        _st = (exec_res or {}).get("status")
-                        if _st in ("FILLED", "UNKNOWN"):
-                            self._last_execution_time[canonical_sym] = time.time()
-                            logger.info(f"Execution lock released for {canonical_sym}. Cooldown {self._SAME_SYMBOL_COOLDOWN_SEC}s started.")
-            # Record pending features for online learning and journal entry (§17)
-            if exec_res and exec_res.get("status") == "FILLED":
-                ticket = exec_res.get("ticket")
-                fill_price = float(exec_res.get("price", decision.entry_price))
-                actual_sl = float(exec_res.get("sl", decision.stop_loss))
-                actual_tp = float(exec_res.get("tp", decision.take_profit))
-
-                ml_feat = self.ml_predictor.extract_feature_vector(
-                    context=context,
-                    regime=regime,
-                    tentative_bias=decision.bias,
-                    devil_penalty=decision.adversarial_penalty,
-                    target_rr=decision.risk_reward_ratio
-                )
-
-                if ticket:
-                    self._pending_features[ticket] = {
-                        "features": ml_feat,
-                        "strategy": decision.strategy,
-                        "regime": regime.primary_regime.value if hasattr(regime.primary_regime, "value") else str(regime.primary_regime),
-                        "trade_style": active_trade_style,
-                        "type": decision.bias,
-                        "entry": fill_price,
-                        "sl": actual_sl,
-                        "risk_dist": abs(fill_price - actual_sl),
-                        "symbol": symbol
-                    }
-
-                self.trade_memory.record_trade({
-                    "ticket": ticket,
-                    "symbol": symbol,
-                    "type": decision.bias,
-                    "entry": fill_price,
-                    "sl": actual_sl,
-                    "tp": actual_tp,
-                    "lots": lots,
-                    "regime": regime.primary_regime.value,
-                    "strategy": decision.strategy,
-                    "model_confidence": decision.model_confidence,
-                    # AI10: the pre-calibration forecast. Without it the reliability
-                    # curve can only be refit from `model_confidence`, which is the
-                    # pipeline's own output — a curve fitting itself.
-                    "raw_win_prob": getattr(decision, "raw_win_prob", None),
-                    "adversarial_penalty": decision.adversarial_penalty,
-                    "expected_value": decision.expected_value,
-                    "ml_features": ml_feat.tolist() if hasattr(ml_feat, "tolist") else list(ml_feat)
-                })
-
+        # Entry execution is deliberately not performed here. This function is
+        # a pure candidate-discovery/authorization pass. The arbiter ranks the
+        # complete universe first, then _orchestration_loop_single_pass performs
+        # the single final execution after a second risk authorization.
         return {
             "symbol": symbol,
             "trade_style": active_trade_style,
@@ -1055,7 +924,7 @@ class JarvisOrchestrator:
             "authorized": auth_res.get("authorized", False),
             "auth_reason": auth_res.get("reason", ""),
             "dry_run": bool(dry_run),
-            "execution": exec_res
+            "execution": None
         }
 
     def scan_all_modes(
@@ -1091,7 +960,7 @@ class JarvisOrchestrator:
         # waits for every submitted future, so the sweep is complete before the
         # arbitration below — only the pool's lifetime changed, not the work.
         future_to_task = {
-            _executor.submit(self.run_cycle_for_symbol, sym, style, dry_run): (sym, style)
+            _executor.submit(self.run_cycle_for_symbol, sym, style, True): (sym, style)
             for sym, style in tasks
         }
         for fut in as_completed(future_to_task):
@@ -1208,13 +1077,22 @@ class JarvisOrchestrator:
                                                   or canonical_sym in p.symbol.upper())
                     ]
 
-                    auth_res = self.risk_engine.authorize_execution(
-                        decision, account, positions, sym_info,
-                        current_spread_pips=cur_spread,
-                        max_allowed_spread_pips=_spec.max_spread_pips,
-                        context=ctx,
-                        is_second_trade=(len(active_sym_positions) == 1)
-                    )
+                    # Re-apply the same calibrated entry authority used during
+                    # discovery. A legacy WAIT must not silently veto a validated
+                    # calibrated candidate, but the final risk gate remains mandatory.
+                    _final_entry = self._calibrated_entry_decision(sym, decision, getattr(decision, "regime", None))
+                    _final_override = None if _final_entry is None else bool(_final_entry.allowed)
+                    if _final_override is False:
+                        auth_res = {"authorized": False, "reason": f"CALIBRATED_ENTRY: {_final_entry.reason}"}
+                    else:
+                        auth_res = self.risk_engine.authorize_execution(
+                            decision, account, positions, sym_info,
+                            current_spread_pips=cur_spread,
+                            max_allowed_spread_pips=_spec.max_spread_pips,
+                            context=ctx,
+                            is_second_trade=(len(active_sym_positions) == 1),
+                            entry_authorized_override=_final_override,
+                        )
 
                     if auth_res.get("authorized"):
                         decision.execution_authorized = True
