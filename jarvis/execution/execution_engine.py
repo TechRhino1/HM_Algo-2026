@@ -125,7 +125,9 @@ class ExecutionEngine:
         spread_points = int(sym_spec.get("spread", 0) or 0)
         spread_dist = spread_points * point
         stops_level_dist = stops_level * point
-        min_broker_stop_dist = max(stops_level_dist, spread_dist * 2.0, 10.0 * point)
+        freeze_level = int(sym_spec.get("trade_freeze_level", 0) or 0)
+        freeze_dist = freeze_level * point
+        min_broker_stop_dist = max(stops_level_dist, freeze_dist, spread_dist * 1.25, 10.0 * point)
 
         planned_sl_dist = abs(decision.entry_price - decision.stop_loss)
         executable_sl_dist = max(planned_sl_dist, min_broker_stop_dist)
@@ -141,6 +143,28 @@ class ExecutionEngine:
             else:
                 decision.stop_loss = round(decision.entry_price + executable_sl_dist, digits)
             decision.sl_distance = executable_sl_dist
+
+            # Broker constraints can widen the stop after the strategy gate has
+            # already approved the setup. Recompute the actual executable R:R
+            # before dispatch; never send a degraded trade just because the
+            # broker requires a wider minimum stop.
+            final_rr = abs(decision.take_profit - decision.entry_price) / max(executable_sl_dist, 1e-12)
+            min_rr_required = max(
+                1.0,
+                float(getattr(decision, "risk_reward_ratio", 0.0) or 0.0),
+            )
+            if final_rr + 1e-9 < min_rr_required:
+                logger.warning(
+                    "REJECTING %s after broker-safe SL adjustment: executable R:R %.3f "
+                    "fell below required %.3f.",
+                    decision.symbol, final_rr, min_rr_required,
+                )
+                return {
+                    "status": "REJECTED",
+                    "reason": "BROKER_SL_WIDENING_DEGRADED_RR",
+                    "executable_rr": round(final_rr, 4),
+                    "required_rr": round(min_rr_required, 4),
+                }
 
             # Adjust lot size down if widening the SL would breach the risk budget
             tick_val = float(sym_spec.get("trade_tick_value", 1.0) or 1.0)
