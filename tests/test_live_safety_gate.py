@@ -8,17 +8,17 @@ from jarvis.application.orchestrator import JarvisOrchestrator
 
 
 class TestLiveSafetyGate(unittest.TestCase):
-    def test_verify_execution_mode_default_live(self):
-        """Default mode or 'live' resolves directly to 'live'."""
+    def test_verify_execution_mode_default_demo(self):
+        """Default mode resolves safely to 'demo', while 'live' resolves directly to 'live'."""
         self.assertEqual(verify_execution_mode("live"), "live")
-        self.assertEqual(verify_execution_mode(None), "live")
-        self.assertEqual(verify_execution_mode(""), "live")
+        self.assertEqual(verify_execution_mode(None), "demo")
+        self.assertEqual(verify_execution_mode(""), "demo")
 
     def test_verify_execution_mode_paper_for_testing(self):
-        """'paper' mode can be explicitly passed for testing and simulation."""
+        """'paper' mode or simulation synonyms map to paper; demo is allowed."""
         self.assertEqual(verify_execution_mode("paper"), "paper")
-        self.assertEqual(verify_execution_mode("backtest"), "backtest")
-        self.assertEqual(verify_execution_mode("simulated"), "simulated")
+        self.assertEqual(verify_execution_mode("backtest"), "paper")
+        self.assertEqual(verify_execution_mode("simulated"), "paper")
         self.assertEqual(verify_execution_mode("demo"), "demo")
 
     def test_orchestrator_initialization_live(self):

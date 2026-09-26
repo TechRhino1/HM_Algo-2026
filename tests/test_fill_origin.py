@@ -57,31 +57,25 @@ class FillOriginTest(unittest.TestCase):
         self.assertEqual(_origin(paper, res), "paper")
 
     def test_a_live_client_without_a_terminal_reports_the_fallback(self):
-        """The case that was invisible: real money, no broker, booked as `broker`.
-
-        `is_fallback` used to be absent here, so `_price_origin` fell through to
-        the mode — and the mode had already been downgraded to "paper", which
-        would at least have been an honest `paper`. It is worse than that on a
-        machine where MT5 *is* installed but the link is down: see the next test.
-        """
+        """Under Spec v2.2 INV-06, a live order without MT5 terminal strictly fails closed."""
         client = MT5Client(mode="live", auto_init=False)
         self.assertEqual(client.mode, "live", "the client is configured for real trading")
         with _no_terminal():
             res = client.send_market_order(**BUY)
 
-        self.assertEqual(res["status"], "FILLED")
-        # The downgrade really does happen — this is why the mode alone is not
-        # evidence of anything.
-        self.assertEqual(client.mode, "paper", "init_connection() downgraded the mode")
-        self.assertIs(res["is_fallback"], True, "a live order was simulated")
-        self.assertEqual(_origin(client, res), "synthetic")
+        self.assertEqual(res["status"], "FAILED")
+        self.assertIn("FAIL_CLOSED", res.get("reason", ""))
+        self.assertEqual(client.mode, "live", "mode must not be downgraded to paper")
+        self.assertEqual(_origin(client, {"status": "FILLED", "is_fallback": True}), "synthetic")
 
     def test_a_demo_client_without_a_terminal_reports_the_fallback(self):
+        """Under Spec v2.2 INV-06, a demo order without MT5 terminal strictly fails closed."""
         client = MT5Client(mode="demo", auto_init=False)
         with _no_terminal():
             res = client.send_market_order(**BUY)
-        self.assertIs(res["is_fallback"], True)
-        self.assertEqual(_origin(client, res), "synthetic")
+        self.assertEqual(res["status"], "FAILED")
+        self.assertIn("FAIL_CLOSED", res.get("reason", ""))
+        self.assertEqual(_origin(client, {"status": "FILLED", "is_fallback": True}), "synthetic")
 
     def test_a_live_client_that_reached_the_broker_reports_broker(self):
         client = MT5Client(mode="live", auto_init=False)

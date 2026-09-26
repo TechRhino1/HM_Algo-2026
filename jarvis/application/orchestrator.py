@@ -802,7 +802,7 @@ class JarvisOrchestrator:
         # ── Hard Quality Gate: min model_confidence ────────────────────────
         # Adaptive Confidence Gate: 0.50 for favorable asymmetric R:R (>=1.8) scalps, 0.55 standard.
         # Forex (the live trading domain) uses a relaxed 0.45 floor per the user directive.
-        is_favorable_scalp = (decision.risk_reward_ratio >= 1.8 and decision.expected_value > 0 and context.volatility.current_spread_pips <= (_spec.max_spread_pips * 0.75))
+        is_favorable_scalp = (active_trade_style == "SCALP" and decision.risk_reward_ratio >= 1.3 and decision.expected_value > 0 and context.volatility.current_spread_pips <= (_spec.max_spread_pips * 0.85))
         is_forex = (_spec.asset_class == "FOREX")
         MIN_CONFIDENCE = 0.45 if is_forex else (0.50 if is_favorable_scalp else 0.55)
         
@@ -1188,13 +1188,18 @@ class JarvisOrchestrator:
                     account = self.state_manager.account or self.mt5_client.get_account_snapshot()
                     positions = self.state_manager.positions
                     _spec = _resolve_sym(sym)
-                    sym_info = {
-                        "name": sym,
-                        "trade_contract_size": _spec.contract_size,
-                        "volume_min": 0.01,
-                        "volume_max": 100.0,
-                        "volume_step": 0.01
-                    }
+                    if hasattr(self.mt5_client, "get_symbol_trading_spec"):
+                        sym_info = self.mt5_client.get_symbol_trading_spec(sym)
+                    else:
+                        sym_info = {
+                            "name": sym,
+                            "trade_contract_size": _spec.contract_size,
+                            "trade_tick_value": _spec.pip_value_per_lot,
+                            "trade_tick_size": _spec.pip_size,
+                            "volume_min": 0.01,
+                            "volume_max": 100.0,
+                            "volume_step": 0.01
+                        }
                     ctx = best_opportunity.context
                     cur_spread = ctx.volatility.current_spread_pips if ctx and hasattr(ctx, "volatility") else _spec.typical_spread_pips
 
@@ -1218,7 +1223,10 @@ class JarvisOrchestrator:
                             lots = min(lots, get_max_lot_cap(account.equity))
 
                         risk_dist = abs(decision.entry_price - decision.stop_loss)
-                        est_risk_usd = lots * (_spec.contract_size or 100000.0) * risk_dist
+                        tick_v = float(sym_info.get("trade_tick_value", 1.0) or 1.0)
+                        tick_s = float(sym_info.get("trade_tick_size", 0.0001) or 0.0001)
+                        dollar_risk_per_unit = tick_v / max(tick_s, 1e-9)
+                        est_risk_usd = lots * dollar_risk_per_unit * risk_dist
                         self.risk_engine.reserve_risk(canonical_sym, est_risk_usd)
 
                         with self._execution_lock:

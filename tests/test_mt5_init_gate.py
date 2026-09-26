@@ -100,13 +100,12 @@ class InitGateTest(unittest.TestCase):
         self.assertEqual(fake.initialize_calls, 0)
 
     def test_the_mode_is_not_rewritten_when_the_package_is_missing(self):
-        """Regression guard: `init_connection` downgrades to paper when the
-        MetaTrader5 package cannot be imported, and that is what lets a live
-        fill be recognised as a fallback."""
+        """Under Spec v2.2 fail-closed matrix, live mode is strictly NOT rewritten to paper."""
         with mock.patch.object(mc, "MT5_AVAILABLE", False):
             client = self._client()
-            client.init_connection()
-        self.assertEqual(client.mode, "paper")
+            connected = client.init_connection()
+        self.assertEqual(client.mode, "live")
+        self.assertFalse(connected)
 
     def test_a_dead_terminal_is_not_logged_once_per_attempt(self):
         """Measured: 544 ERROR lines in 30 minutes on the live platform.

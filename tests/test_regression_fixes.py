@@ -3,7 +3,7 @@ import os
 import tempfile
 import sqlite3
 from unittest.mock import MagicMock, patch
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from jarvis.data.database import SQLiteTradeDB
 from jarvis.execution.mt5_client import MT5Client
@@ -559,6 +559,8 @@ class TestRegressionFixes(unittest.TestCase):
         with patch(
             "jarvis.market.data_feed.first_untrusted_frame",
             return_value=(None, None, 0.0),
+        ), patch.object(
+            orch, "_first_unusable_frame", return_value=(None, None)
         ):
             res = orch.run_cycle_for_symbol("XAUUSD")
         self.assertEqual(res.get("execution", {}).get("status"), "FILLED")
@@ -842,7 +844,7 @@ class TestRegressionFixes(unittest.TestCase):
         pos = PositionSnapshot(
             ticket=501, symbol="XAUUSD", type="BUY", volume=0.04,
             open_price=2400.0, current_price=2411.0, sl=2390.0, tp=2435.0,
-            profit=44.0, swap=0.0, commission=0.0, open_time=datetime.now(timezone.utc).isoformat(), magic=JARVIS_MAGIC_NUMBER
+            profit=44.0, swap=0.0, commission=0.0, open_time=(datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat(), magic=JARVIS_MAGIC_NUMBER
         )
         ctx = MarketContext(
             symbol="XAUUSD",

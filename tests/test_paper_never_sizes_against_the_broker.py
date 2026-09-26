@@ -116,15 +116,15 @@ class TestLiveStillSeesTheBroker:
         assert snap.login == _RealAccount.login
         assert snap.balance == pytest.approx(REAL_BALANCE)
 
-    def test_live_without_the_package_falls_back_to_paper(self):
-        # init_connection() rewrites mode to "paper" when MT5 is absent; the
-        # mode check must run after that rewrite, not before it.
+    def test_live_without_the_package_fails_closed(self):
+        """Spec v2.2 INV-06: live without package strictly fails closed; zero paper fallback."""
         c = MT5Client(magic_number=888999, mode="live", auto_init=False)
         with mock.patch.object(mc, "MT5_AVAILABLE", False), \
              mock.patch.object(mc, "mt5", None):
             snap = c.get_account_snapshot()
-        assert c.mode == "paper"
-        assert snap.balance == pytest.approx(PAPER_START)
+        assert c.mode == "live"
+        assert snap.login == 0
+        assert snap.trade_allowed is False
 
     def test_a_connected_live_client_that_answers_nothing_is_disconnected(self):
         c = MT5Client(magic_number=888999, mode="live", auto_init=False)
