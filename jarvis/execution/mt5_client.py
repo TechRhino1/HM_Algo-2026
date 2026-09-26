@@ -634,17 +634,26 @@ class MT5Client:
                 final_sl = float(sl_price)
                 final_tp = float(tp_price)
                 if order_type == "BUY":
-                    # BUY: SL must be strictly below current Bid; TP strictly above current Ask
-                    if final_sl > 0 and final_sl >= (tick.bid - min_stop_dist):
-                        final_sl = tick.bid - min_stop_dist
-                    if final_tp > 0 and final_tp <= (tick.ask + min_stop_dist):
-                        final_tp = tick.ask + min_stop_dist
+                    sl_too_close = final_sl > 0 and final_sl >= (tick.bid - min_stop_dist)
+                    tp_too_close = final_tp > 0 and final_tp <= (tick.ask + min_stop_dist)
                 else:
-                    # SELL: SL must be strictly ABOVE current Ask; TP strictly BELOW current Bid
-                    if final_sl > 0 and final_sl <= (tick.ask + min_stop_dist):
-                        final_sl = tick.ask + min_stop_dist
-                    if final_tp > 0 and final_tp >= (tick.bid - min_stop_dist):
-                        final_tp = tick.bid - min_stop_dist
+                    sl_too_close = final_sl > 0 and final_sl <= (tick.ask + min_stop_dist)
+                    tp_too_close = final_tp > 0 and final_tp >= (tick.bid - min_stop_dist)
+
+                # The execution layer owns broker-safe geometry. This gateway
+                # must not silently rewrite SL/TP after the risk/EV gate has
+                # approved them, because doing so changes monetary risk and R:R.
+                # Reject and let the next scan recalculate against the new quote.
+                if sl_too_close or tp_too_close:
+                    return {
+                        "status": "REJECTED",
+                        "reason": "BROKER_STOP_DISTANCE_CHANGED",
+                        "requested_sl": final_sl,
+                        "requested_tp": final_tp,
+                        "bid": tick.bid,
+                        "ask": tick.ask,
+                        "min_stop_dist": min_stop_dist,
+                    }
 
                 request = {
                     "action": getattr(mt5, "TRADE_ACTION_DEAL", 1),
