@@ -851,23 +851,9 @@ class JarvisOrchestrator:
         now_utc_hour = datetime.now(timezone.utc).hour
         is_asian_blackout = (1 <= now_utc_hour < 5) and not is_crypto(symbol) and self.mode == "live"
 
-        # Active Open Position Trailing & Profit Lock Management
-        # Suppressed on a dry run: trailing MODIFIES live stop levels, which is a
-        # side effect a read-only preview must never have.
-        if not dry_run:
-            for pos in active_sym_positions:
-                try:
-                    manage_res = self.order_manager.manage_position(pos, context)
-                    if manage_res.get("modified"):
-                        self.mt5_client.modify_position(
-                            ticket=pos.ticket,
-                            sl=manage_res["new_sl"],
-                            tp=manage_res["new_tp"]
-                        )
-                except Exception as e:
-                    logger.error(f"Error trailing position #{pos.ticket}: {e}", exc_info=True)
-
-        # These guards are keyed on "this cycle wants to enter", NOT on the
+        # Open-position management is owned by PositionMonitorEngine. The scan
+        # path is intentionally side-effect free so it cannot mutate live stops
+        # while ranking entry candidates.        # These guards are keyed on "this cycle wants to enter", NOT on the
         # legacy verdict. A candidate the calibrated policy accepted can still
         # carry decision.decision == "WAIT", because that is what the legacy
         # stack said about it -- and the calibrated policy exists precisely to
@@ -931,7 +917,12 @@ class JarvisOrchestrator:
         # happen and auth_res carries the reason either way, so a preview loses no
         # information by skipping the order itself.
         exec_res = None
-        if not dry_run and auth_res.get("authorized") and decision.decision == "EXECUTE":
+        # Entry discovery must never submit an order. The complete universe is
+        # ranked first; _orchestration_loop_single_pass is the sole autonomous
+        # entry dispatcher. Keeping this block unreachable also preserves the
+        # existing authorization logic for diagnostics without creating a second
+        # execution path.
+        if False and not dry_run and auth_res.get("authorized") and decision.decision == "EXECUTE":
             decision.execution_authorized = True
             lots = auth_res.get("lots", 0.01)
             # Unified lot cap based on account tier (§4)
@@ -1091,7 +1082,7 @@ class JarvisOrchestrator:
         # waits for every submitted future, so the sweep is complete before the
         # arbitration below — only the pool's lifetime changed, not the work.
         future_to_task = {
-            _executor.submit(self.run_cycle_for_symbol, sym, style, dry_run): (sym, style)
+            _executor.submit(self.run_cycle_for_symbol, sym, style, True): (sym, style)
             for sym, style in tasks
         }
         for fut in as_completed(future_to_task):
@@ -1208,13 +1199,22 @@ class JarvisOrchestrator:
                                                   or canonical_sym in p.symbol.upper())
                     ]
 
-                    auth_res = self.risk_engine.authorize_execution(
-                        decision, account, positions, sym_info,
-                        current_spread_pips=cur_spread,
-                        max_allowed_spread_pips=_spec.max_spread_pips,
-                        context=ctx,
-                        is_second_trade=(len(active_sym_positions) == 1)
-                    )
+                    # Re-apply the same calibrated entry authority used during
+                    # discovery. A legacy WAIT must not silently veto a validated
+                    # calibrated candidate, but the final risk gate remains mandatory.
+                    _final_entry = self._calibrated_entry_decision(sym, decision, getattr(decision, "regime", None))
+                    _final_override = None if _final_entry is None else bool(_final_entry.allowed)
+                    if _final_override is False:
+                        auth_res = {"authorized": False, "reason": f"CALIBRATED_ENTRY: {_final_entry.reason}"}
+                    else:
+                        auth_res = self.risk_engine.authorize_execution(
+                            decision, account, positions, sym_info,
+                            current_spread_pips=cur_spread,
+                            max_allowed_spread_pips=_spec.max_spread_pips,
+                            context=ctx,
+                            is_second_trade=(len(active_sym_positions) == 1),
+                            entry_authorized_override=_final_override,
+                        )
 
                     if auth_res.get("authorized"):
                         decision.execution_authorized = True
