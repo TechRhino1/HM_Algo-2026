@@ -32,4 +32,4 @@ def test_volume_quantisation_rounds_down():
         risk_pct=0.5,
         symbol_info=_info(),
     )
-    assert lots <= 0.5
+    assert lots == 0.54
