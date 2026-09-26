@@ -92,6 +92,45 @@ class TestResponsiveBugattiCockpit(unittest.TestCase):
         # Dynamic MFE/MAE column in positions table
         self.assertIn("MFE / MAE", html)
 
+    def test_unified_navbar_hierarchy_and_markets_dropdown(self):
+        """Verify navigation bar follows HM ALGO 2.0 | Cockpit | Trade | News | Analyst | Markets ▼ | Analytics | Backtest hierarchy."""
+        surfaces = ["dashboard", "stocks", "india", "options", "console", "positions"]
+        for s in surfaces:
+            html = self.templates[s]
+            self.assertIn("Markets", html, f"{s} missing Markets dropdown")
+            self.assertIn('id="markets-menu"', html, f"{s} missing markets-menu panel")
+            # Verify Markets dropdown contains US Market, Indian Market, and Options
+            self.assertIn('href="/stocks"', html, f"{s} missing US Stocks link in Markets dropdown")
+            self.assertIn('href="/india"', html, f"{s} missing India Stocks link in Markets dropdown")
+            self.assertIn('href="/options"', html, f"{s} missing Options link in Markets dropdown")
+
+    def test_trade_history_filters_and_pagination(self):
+        """Verify Trade History includes all requested multi-dimensional filters and full pagination controls."""
+        html = self.templates["dashboard"]
+        # Required multi-dimensional filters
+        self.assertIn('id="hist-filter-symbol"', html)
+        self.assertIn('id="hist-filter-side"', html)
+        self.assertIn('id="hist-filter-strategy"', html)
+        self.assertIn('id="hist-filter-regime"', html)
+        self.assertIn('id="hist-filter-outcome"', html)
+        self.assertIn('id="hist-filter-exit"', html)
+        self.assertIn('id="hist-filter-style"', html)
+        self.assertIn('id="hist-date-preset"', html)
+        self.assertIn('id="hist-date-from"', html)
+        self.assertIn('id="hist-date-to"', html)
+        self.assertIn('id="hist-filter-days"', html)
+
+        # Pagination controls
+        self.assertIn('id="hist-pagination-bar"', html)
+        self.assertIn('id="hist-page-info"', html)
+        self.assertIn('id="hist-page-size"', html)
+        self.assertIn('id="hist-page-first"', html)
+        self.assertIn('id="hist-page-prev"', html)
+        self.assertIn('id="hist-page-next"', html)
+        self.assertIn('id="hist-page-last"', html)
+        self.assertIn('id="hist-page-numbers"', html)
+
 
 if __name__ == "__main__":
     unittest.main()
+

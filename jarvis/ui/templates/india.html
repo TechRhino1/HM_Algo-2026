@@ -45,26 +45,29 @@
         </div>
 
         <!-- Global Cross-Market Navigation Switches -->
-        <div class="nav-links-wrapper bugatti-nav-links" role="navigation" aria-label="Market sections">
-            <a href="/" class="btn-nav-switch bugatti-desk-link">
-                <span>⚡ Cockpit</span>
-            </a>
-            <a href="/console" class="btn-nav-switch bugatti-desk-link">
-                <span>📟 Console</span>
-            </a>
-            <a href="/positions" class="btn-nav-switch bugatti-desk-link">
-                <span>📋 Positions</span>
-            </a>
-            <a href="/stocks" class="btn-nav-switch bugatti-desk-link">
-                <span>🇺🇸 US Stocks</span>
-            </a>
-            <a href="/india" class="btn-nav-switch bugatti-desk-link active" aria-current="page">
-                <span>🇮🇳 India Stocks</span>
-            </a>
-            <a href="/options" class="btn-nav-switch bugatti-desk-link">
-                <span>📊 Options (F&amp;O)</span>
-            </a>
-        </div>
+        <nav class="nav-links-wrapper bugatti-nav-links" role="navigation" aria-label="Primary navigation">
+            <a href="/" class="btn-nav-switch bugatti-desk-link"><span>⚡ Cockpit</span></a>
+            <a href="/?view=trade" class="btn-nav-switch bugatti-desk-link"><span>Trade</span></a>
+            <a href="/?view=news" class="btn-nav-switch bugatti-desk-link"><span>News</span></a>
+            <a href="/?view=analyst" class="btn-nav-switch bugatti-desk-link"><span>Analyst</span></a>
+            <div class="bugatti-dropdown" data-dropdown>
+                <button type="button" class="btn-nav-switch bugatti-desk-link active" id="markets-trigger"
+                        data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
+                        aria-controls="markets-menu">
+                    <span>Markets ▼</span>
+                </button>
+                <div class="bugatti-dropdown__menu" id="markets-menu" data-dropdown-panel hidden aria-label="Market sections">
+                    <a href="/stocks" class="bugatti-dropdown__item"><span>🇺🇸 US Market</span></a>
+                    <a href="/india" class="bugatti-dropdown__item active" aria-current="page"><span>🇮🇳 Indian Market</span></a>
+                    <a href="/options" class="bugatti-dropdown__item"><span>📊 Options</span></a>
+                    <div class="bugatti-dropdown__divider"></div>
+                    <a href="/console" class="bugatti-dropdown__item"><span>📟 Console</span></a>
+                    <a href="/positions" class="bugatti-dropdown__item"><span>📋 Positions</span></a>
+                </div>
+            </div>
+            <a href="/?view=analytics" class="btn-nav-switch bugatti-desk-link"><span>Analytics</span></a>
+            <a href="/?view=backtest" class="btn-nav-switch bugatti-desk-link"><span>Backtest</span></a>
+        </nav>
 
         <!-- Explicit auth slot - see stocks.html for why (auth.js:137 would
              otherwise append the widget inside .nav-links-wrapper and wrap the

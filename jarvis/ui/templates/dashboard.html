@@ -41,40 +41,19 @@
     <span class="bugatti-brand__badge" id="nav-mode-badge">DEMO</span>
   </div>
 
-  <!-- Universal Bugatti Desks Switcher -->
-  <nav class="bugatti-nav-links d-none d-lg-flex" aria-label="Trading desks">
-    <a href="/" class="bugatti-desk-link active" aria-current="page"><span>⚡ Cockpit</span></a>
-    <a href="/console" class="bugatti-desk-link"><span>📟 Console</span></a>
-    <a href="/positions" class="bugatti-desk-link"><span>📋 Positions</span></a>
-    <a href="/stocks" class="bugatti-desk-link"><span>🇺🇸 Stocks</span></a>
-    <a href="/india" class="bugatti-desk-link"><span>🇮🇳 India</span></a>
-    <a href="/options" class="bugatti-desk-link"><span>📊 Options</span></a>
-  </nav>
-
-  <!-- Phone-only navigation drawer trigger. It reuses the page's existing
-       dropdown controller (`data-dropdown-trigger` + `aria-controls`), so open,
-       close, Escape and click-outside are already handled and this adds no new
-       open/close state machine to keep in sync. Hidden from 768px up, where the
-       rail shows every destination inline. -->
+  <!-- Phone-only navigation drawer trigger -->
   <button type="button" class="tt-drawer-trigger" id="nav-drawer-trigger"
           data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
           aria-controls="nav-drawer" aria-label="Open navigation">
     <span class="tt-drawer-trigger__bars" aria-hidden="true"></span>
   </button>
 
-  <div class="tt-session" id="session-state" data-state="unknown"
-       title="Market session">
-    <span class="tt-session__dot" aria-hidden="true"></span>
-    <span id="session-label">—</span>
-  </div>
-
-  <!-- Primary destinations. One DOM node serves both breakpoints: a bottom tab
-       bar on phones and a vertical nav list in the tablet sidebar. Each item
-       carries an SF Symbols-style monochrome icon plus a text label, so the
-       control is never icon-only (VoiceOver reads the label, and the meaning
-       does not depend on recognising a glyph). -->
-  <nav class="tt-tabs" role="tablist" aria-label="Primary views">
-    <button class="tt-tab" role="tab" data-view-btn="trade"
+  <!-- Primary Bugatti Navigation: HM ALGO 2.0 | Cockpit | Trade | News | Analyst | Markets ▼ | Analytics | Backtest -->
+  <nav class="tt-tabs bugatti-nav-links" role="tablist" aria-label="Primary navigation">
+    <a href="/" class="tt-tab bugatti-desk-link active" title="Cockpit Master Desk">
+      <span>⚡ Cockpit</span>
+    </a>
+    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="trade"
             aria-selected="true" aria-controls="view-trade">
       <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
            fill="none" stroke="currentColor" stroke-width="1.8"
@@ -83,7 +62,7 @@
       </svg>
       <span class="tt-tab__label">Trade</span>
     </button>
-    <button class="tt-tab" role="tab" data-view-btn="news"
+    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="news"
             aria-selected="false" aria-controls="view-news">
       <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
            fill="none" stroke="currentColor" stroke-width="1.8"
@@ -93,7 +72,7 @@
       </svg>
       <span class="tt-tab__label">News</span>
     </button>
-    <button class="tt-tab" role="tab" data-view-btn="analyst"
+    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="analyst"
             aria-selected="false" aria-controls="view-analyst">
       <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
            fill="none" stroke="currentColor" stroke-width="1.8"
@@ -102,17 +81,33 @@
       </svg>
       <span class="tt-tab__label">Analyst</span>
     </button>
-    <button class="tt-tab" role="tab" data-view-btn="markets"
-            aria-selected="false" aria-controls="view-markets">
-      <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-           fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="8"/><path d="M4 12h16"/>
-        <path d="M12 4c2.6 2.6 2.6 12.8 0 16"/><path d="M12 4c-2.6 2.6-2.6 12.8 0 16"/>
-      </svg>
-      <span class="tt-tab__label">Markets</span>
-    </button>
-    <button class="tt-tab" role="tab" data-view-btn="analytics"
+
+    <!-- Consolidated Markets Dropdown -->
+    <div class="tt-dropdown bugatti-dropdown" data-dropdown>
+      <button type="button" class="tt-tab bugatti-desk-link" id="markets-trigger"
+              data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
+              aria-controls="markets-menu">
+        <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+             fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="8"/><path d="M4 12h16"/>
+          <path d="M12 4c2.6 2.6 2.6 12.8 0 16"/><path d="M12 4c-2.6 2.6-2.6 12.8 0 16"/>
+        </svg>
+        <span class="tt-tab__label">Markets</span>
+        <span class="tt-caret" aria-hidden="true">▼</span>
+      </button>
+      <nav class="tt-dropdown__panel tt-dropdown__panel--left bugatti-dropdown__menu" id="markets-menu"
+           data-dropdown-panel hidden aria-label="Market sections">
+        <a href="/stocks" class="bugatti-dropdown__item market-nav-item"><span>🇺🇸 US Market</span></a>
+        <a href="/india" class="bugatti-dropdown__item market-nav-item"><span>🇮🇳 Indian Market</span></a>
+        <a href="/options" class="bugatti-dropdown__item market-nav-item"><span>📊 Options</span></a>
+        <div class="bugatti-dropdown__divider"></div>
+        <a href="/console" class="bugatti-dropdown__item market-nav-item"><span>📟 Console</span></a>
+        <a href="/positions" class="bugatti-dropdown__item market-nav-item"><span>📋 Positions</span></a>
+      </nav>
+    </div>
+
+    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="analytics"
             aria-selected="false" aria-controls="view-analytics">
       <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
            fill="none" stroke="currentColor" stroke-width="1.8"
@@ -121,7 +116,7 @@
       </svg>
       <span class="tt-tab__label">Analytics</span>
     </button>
-    <button class="tt-tab" role="tab" data-view-btn="backtest"
+    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="backtest"
             aria-selected="false" aria-controls="view-backtest">
       <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
            fill="none" stroke="currentColor" stroke-width="1.8"
@@ -132,25 +127,10 @@
     </button>
   </nav>
 
-  <!-- Cross-page navigation. The four market pages carry these as a visible
-       .nav-links-wrapper row; the rail has no room for one, so the terminal
-       exposes the same destinations in a dropdown instead. The hrefs and labels
-       are copied from stocks.html / india.html verbatim, so markActiveNav() in
-       hm_ui.js marks the current page the same way from either entry point. -->
-  <div class="tt-dropdown" data-dropdown>
-    <button type="button" class="tt-nav-trigger" id="markets-trigger"
-            data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
-            aria-controls="markets-menu">
-      <span>Markets</span>
-      <span class="tt-caret" aria-hidden="true"></span>
-    </button>
-    <nav class="tt-dropdown__panel tt-dropdown__panel--left" id="markets-menu"
-         data-dropdown-panel hidden aria-label="Market sections">
-      <a href="/" class="market-nav-item"><span>⚡ Forex / Crypto</span></a>
-      <a href="/stocks" class="market-nav-item"><span>🇺🇸 US Stocks</span></a>
-      <a href="/india" class="market-nav-item"><span>🇮🇳 India Stocks</span></a>
-      <a href="/options" class="market-nav-item"><span>📊 India Options (F&amp;O)</span></a>
-    </nav>
+  <div class="tt-session" id="session-state" data-state="unknown"
+       title="Market session">
+    <span class="tt-session__dot" aria-hidden="true"></span>
+    <span id="session-label">—</span>
   </div>
 
   <span class="tt-rail__spacer"></span>
@@ -768,50 +748,113 @@
 
       <!-- Filters run client-side over the rows already fetched, so changing
            one is instant and never re-queries the database. -->
+      <!-- Multi-Dimensional Filters and Date Range Selectors -->
       <div class="tt-panel__body">
         <div class="tt-pad">
-          <div class="tt-row tt-wrap" style="gap:var(--hm-space-3)">
-            <div class="tt-field tt-grow" style="margin:0;min-width:110px">
+          <div class="hist-filter-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:var(--hm-space-2);">
+            <div class="tt-field" style="margin:0;">
               <label class="tt-field__label" for="hist-filter-symbol">Symbol</label>
-              <input class="tt-input" id="hist-filter-symbol" placeholder="All" autocomplete="off" spellcheck="false">
+              <input class="tt-input" id="hist-filter-symbol" placeholder="Search..." autocomplete="off" spellcheck="false">
             </div>
-            <div class="tt-field tt-grow" style="margin:0;min-width:100px">
-              <label class="tt-field__label" for="hist-filter-side">Side</label>
+            <div class="tt-field" style="margin:0;">
+              <label class="tt-field__label" for="hist-filter-side">Direction</label>
               <select class="tt-select" id="hist-filter-side">
-                <option value="ALL" selected>All</option>
-                <option value="BUY">Buy</option>
-                <option value="SELL">Sell</option>
+                <option value="ALL" selected>All Sides</option>
+                <option value="BUY">BUY</option>
+                <option value="SELL">SELL</option>
               </select>
             </div>
-            <div class="tt-field tt-grow" style="margin:0;min-width:110px">
-              <label class="tt-field__label" for="hist-filter-source">Executor</label>
-              <select class="tt-select" id="hist-filter-source">
-                <option value="ALL" selected>All</option>
-                <option value="AI">Bot (AI)</option>
-                <option value="MANUAL">Manual</option>
+            <div class="tt-field" style="margin:0;">
+              <label class="tt-field__label" for="hist-filter-strategy">Strategy</label>
+              <select class="tt-select" id="hist-filter-strategy">
+                <option value="ALL" selected>All Strategies</option>
+                <option value="TREND">Trend Following</option>
+                <option value="MEAN_REV">Mean Reversion</option>
+                <option value="BREAKOUT">Breakout</option>
+                <option value="SCALP">Momentum Scalper</option>
+                <option value="ADAPTIVE">Adaptive Dissection</option>
               </select>
             </div>
-            <div class="tt-field tt-grow" style="margin:0;min-width:100px">
-              <label class="tt-field__label" for="hist-filter-outcome">Outcome</label>
+            <div class="tt-field" style="margin:0;">
+              <label class="tt-field__label" for="hist-filter-regime">Market Regime</label>
+              <select class="tt-select" id="hist-filter-regime">
+                <option value="ALL" selected>All Regimes</option>
+                <option value="TRENDING">Trending</option>
+                <option value="RANGING">Ranging</option>
+                <option value="BREAKOUT">Breakout</option>
+                <option value="VOLATILE">High Volatility</option>
+                <option value="CONSOLIDATION">Consolidation</option>
+              </select>
+            </div>
+            <div class="tt-field" style="margin:0;">
+              <label class="tt-field__label" for="hist-filter-outcome">Win / Loss</label>
               <select class="tt-select" id="hist-filter-outcome">
-                <option value="ALL" selected>All</option>
+                <option value="ALL" selected>All Outcomes</option>
                 <option value="WIN">Win</option>
                 <option value="LOSS">Loss</option>
                 <option value="FLAT">Break-even</option>
                 <option value="OPEN">Unrealised</option>
               </select>
             </div>
-            <div class="tt-field tt-grow" style="margin:0;min-width:100px">
+            <div class="tt-field" style="margin:0;">
+              <label class="tt-field__label" for="hist-filter-exit">Exit Reason</label>
+              <select class="tt-select" id="hist-filter-exit">
+                <option value="ALL" selected>All Exits</option>
+                <option value="TP">Take Profit (TP)</option>
+                <option value="SL">Stop Loss (SL)</option>
+                <option value="TRAILING">Trailing Stop</option>
+                <option value="MANUAL">Manual Close</option>
+                <option value="SIGNAL">AI Signal / Timeout</option>
+              </select>
+            </div>
+            <div class="tt-field" style="margin:0;">
+              <label class="tt-field__label" for="hist-filter-style">Trading Style</label>
+              <select class="tt-select" id="hist-filter-style">
+                <option value="ALL" selected>All Styles</option>
+                <option value="SCALP">Scalp</option>
+                <option value="INTRADAY">Intraday</option>
+                <option value="SWING">Swing</option>
+              </select>
+            </div>
+            <div class="tt-field" style="margin:0;">
+              <label class="tt-field__label" for="hist-date-preset">Date Range</label>
+              <select class="tt-select" id="hist-date-preset">
+                <option value="ALL" selected>All Time</option>
+                <option value="TODAY">Today</option>
+                <option value="THIS_WEEK">This Week</option>
+                <option value="CUSTOM">Custom Range</option>
+              </select>
+            </div>
+            <div class="tt-field" style="margin:0;">
               <label class="tt-field__label" for="hist-filter-days">Window</label>
               <select class="tt-select" id="hist-filter-days">
                 <option value="7">7 days</option>
                 <option value="30">30 days</option>
                 <option value="60" selected>60 days</option>
                 <option value="365">1 year</option>
+                <option value="3650">Max History</option>
               </select>
             </div>
           </div>
-          <span class="tt-hint" id="hist-summary">—</span>
+
+          <!-- Custom Date Range Row (Hidden by default, shown when Custom Range is selected) -->
+          <div id="hist-custom-date-container" style="display:none;margin-top:var(--hm-space-2);gap:var(--hm-space-2);align-items:center;flex-wrap:wrap;">
+            <div class="tt-field" style="margin:0;min-width:140px;">
+              <label class="tt-field__label" for="hist-date-from">From Date</label>
+              <input type="date" class="tt-input" id="hist-date-from">
+            </div>
+            <div class="tt-field" style="margin:0;min-width:140px;">
+              <label class="tt-field__label" for="hist-date-to">To Date</label>
+              <input type="date" class="tt-input" id="hist-date-to">
+            </div>
+            <button type="button" class="tt-btn tt-btn--sm" id="hist-date-apply" style="margin-top:16px;">Apply Date Range</button>
+            <button type="button" class="tt-btn tt-btn--ghost tt-btn--sm" id="hist-filter-reset" style="margin-top:16px;">Reset All Filters</button>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:var(--hm-space-2);flex-wrap:wrap;gap:8px;">
+            <span class="tt-hint" id="hist-summary">—</span>
+            <button type="button" class="tt-btn tt-btn--ghost tt-btn--xs" id="hist-quick-reset" style="font-size:0.75rem;">Clear Filters</button>
+          </div>
 
           <!-- Phase D: P&L Performance Breakdown by Symbol / Side / Executor -->
           <div class="tt-pnl-breakdown" id="hist-pnl-breakdown" style="margin-top:var(--hm-space-3);display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:var(--hm-space-3);">
@@ -837,8 +880,9 @@
             <tr>
               <th scope="col">Ticket</th>
               <th scope="col">Symbol</th>
-              <th scope="col">Action</th>
-              <th scope="col">Executor</th>
+              <th scope="col">Direction</th>
+              <th scope="col">Strategy / Style</th>
+              <th scope="col">Executor / Exit</th>
               <th scope="col" class="tt-num">Lots</th>
               <th scope="col" class="tt-num">Entry</th>
               <th scope="col" class="tt-num">SL</th>
@@ -850,6 +894,29 @@
           </thead>
           <tbody id="hist-body" data-state="loading"></tbody>
         </table>
+
+        <!-- Pagination Controls Toolbar -->
+        <div class="hist-pagination-bar" id="hist-pagination-bar">
+          <div class="hist-pagination-info">
+            <span id="hist-page-info">Showing 0–0 of 0 trades</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label for="hist-page-size" style="font-size:0.75rem;color:var(--liquid-metal);">Per page:</label>
+              <select id="hist-page-size" class="tt-select" style="padding:2px 8px;font-size:0.75rem;min-height:28px;width:auto;">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+          </div>
+          <div class="hist-pagination-controls">
+            <button type="button" class="hist-page-btn" id="hist-page-first" title="First Page">⏮</button>
+            <button type="button" class="hist-page-btn" id="hist-page-prev" title="Previous Page">◀</button>
+            <span id="hist-page-numbers" style="display:flex;align-items:center;gap:4px;"></span>
+            <button type="button" class="hist-page-btn" id="hist-page-next" title="Next Page">▶</button>
+            <button type="button" class="hist-page-btn" id="hist-page-last" title="Last Page">⏭</button>
+          </div>
+        </div>
       </div>
     </div>
 

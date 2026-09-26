@@ -63,6 +63,8 @@
     positions: [],
     history: [],
     account: null,
+    histPage: 1,
+    histPageSize: 25,
     services: {},
     executionMode: null,
     safeMode: null,
@@ -422,15 +424,6 @@
     flash(pf, profit);
 
     setText(mg, num(acc.free_margin, 2));
-
-    // Sync Universal Bugatti Navbar Telemetry Pods
-    var navEq = $('nav-equity'), navPf = $('nav-profit'), navMg = $('nav-margin');
-    if (navEq) setText(navEq, num(acc.equity, 2) + ' ' + (acc.currency || ''));
-    if (navPf) {
-      setText(navPf, (profit > 0 ? '+' : '') + num(profit, 2));
-      navPf.style.color = profit > 0 ? 'var(--emerald-velocity)' : (profit < 0 ? 'var(--hyper-crimson)' : '#ffffff');
-    }
-    if (navMg) setText(navMg, num(acc.free_margin, 2));
 
     // Margin level is only meaningful with open exposure; 0 means "no positions".
     var ml = Number(acc.margin_level || 0);
@@ -4077,22 +4070,70 @@
     return {
       symbol: String(($('hist-filter-symbol') || {}).value || '').trim().toUpperCase(),
       side: String(($('hist-filter-side') || {}).value || 'ALL').toUpperCase(),
-      source: String(($('hist-filter-source') || {}).value || 'ALL').toUpperCase(),
-      outcome: String(($('hist-filter-outcome') || {}).value || 'ALL').toUpperCase()
+      strategy: String(($('hist-filter-strategy') || {}).value || 'ALL').toUpperCase(),
+      regime: String(($('hist-filter-regime') || {}).value || 'ALL').toUpperCase(),
+      outcome: String(($('hist-filter-outcome') || {}).value || 'ALL').toUpperCase(),
+      exitReason: String(($('hist-filter-exit') || {}).value || 'ALL').toUpperCase(),
+      style: String(($('hist-filter-style') || {}).value || 'ALL').toUpperCase(),
+      datePreset: String(($('hist-date-preset') || {}).value || 'ALL').toUpperCase(),
+      dateFrom: String(($('hist-date-from') || {}).value || '').trim(),
+      dateTo: String(($('hist-date-to') || {}).value || '').trim()
     };
   }
 
   function filterHistory(rows) {
     var f = historyFilters();
+    var now = new Date();
+    var todayStr = now.toISOString().slice(0, 10);
+    var dayOfWeek = now.getDay(); // 0 is Sunday
+    var diffToMonday = (dayOfWeek === 0 ? -6 : 1) - dayOfWeek;
+    var monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday, 0, 0, 0);
+
     return (rows || []).filter(function (t) {
+      // 1. Symbol Filter
       if (f.symbol && String(t.symbol || '').toUpperCase().indexOf(f.symbol) < 0) return false;
+
+      // 2. Direction Filter (BUY / SELL)
       if (f.side !== 'ALL' && String(t.action || t.type || t.side || '').toUpperCase() !== f.side) return false;
-      if (f.source !== 'ALL') {
-        var exec = String(t.executor || '').toUpperCase();
-        var isManual = /MANUAL|SL EXIT|TP EXIT|BROKER/.test(exec) || String(t.regime || '').toUpperCase() === 'MANUAL_EXECUTION';
-        if (f.source === 'MANUAL' && !isManual) return false;
-        if (f.source === 'AI' && isManual) return false;
+
+      // 3. Strategy Filter
+      if (f.strategy !== 'ALL') {
+        var strat = '';
+        if (t.strategy) strat = String(t.strategy);
+        else if (t.features_json) {
+          try {
+            var feat = typeof t.features_json === 'string' ? JSON.parse(t.features_json) : t.features_json;
+            strat = String(feat.strategy || feat.setup_type || '');
+          } catch(e){}
+        }
+        if (!strat) strat = String(t.regime_strategy || t.executor || '');
+        strat = strat.toUpperCase();
+
+        if (f.strategy === 'TREND' && !/TREND/.test(strat)) return false;
+        if (f.strategy === 'MEAN_REV' && !/MEAN|REVER|BOUNCE/.test(strat)) return false;
+        if (f.strategy === 'BREAKOUT' && !/BREAK/.test(strat)) return false;
+        if (f.strategy === 'SCALP' && !/SCALP|MOMENTUM/.test(strat)) return false;
+        if (f.strategy === 'ADAPTIVE' && !/ADAPTIVE|DISSECTION|AI/.test(strat)) return false;
       }
+
+      // 4. Market Regime Filter
+      if (f.regime !== 'ALL') {
+        var reg = String(t.regime || '');
+        if (!reg && t.features_json) {
+          try {
+            var featR = typeof t.features_json === 'string' ? JSON.parse(t.features_json) : t.features_json;
+            reg = String(featR.regime || '');
+          } catch(e){}
+        }
+        reg = reg.toUpperCase();
+        if (f.regime === 'TRENDING' && !/TREND/.test(reg)) return false;
+        if (f.regime === 'RANGING' && !/RANG/.test(reg)) return false;
+        if (f.regime === 'BREAKOUT' && !/BREAK/.test(reg)) return false;
+        if (f.regime === 'VOLATILE' && !/VOLATIL/.test(reg)) return false;
+        if (f.regime === 'CONSOLIDATION' && !/CONSOLIDAT|COMPRESS/.test(reg)) return false;
+      }
+
+      // 5. Outcome (Win / Loss) Filter
       if (f.outcome !== 'ALL') {
         var pnl = historyPnl(t);
         if (f.outcome === 'OPEN') { if (pnl !== null) return false; }
@@ -4101,6 +4142,56 @@
         else if (f.outcome === 'LOSS' && pnl >= 0) return false;
         else if (f.outcome === 'FLAT' && pnl !== 0) return false;
       }
+
+      // 6. Exit Reason Filter
+      if (f.exitReason !== 'ALL') {
+        var exitTag = String(t.exit_reason || t.comment || t.executor || '').toUpperCase();
+        if (f.exitReason === 'TP' && !/TP|TAKE PROFIT/.test(exitTag)) return false;
+        if (f.exitReason === 'SL' && !/SL|STOP LOSS/.test(exitTag)) return false;
+        if (f.exitReason === 'TRAILING' && !/TRAIL/.test(exitTag)) return false;
+        if (f.exitReason === 'MANUAL' && !/MANUAL/.test(exitTag)) return false;
+        if (f.exitReason === 'SIGNAL' && !/SIGNAL|TIMEOUT|BOT/.test(exitTag)) return false;
+      }
+
+      // 7. Trading Style Filter
+      if (f.style !== 'ALL') {
+        var st = '';
+        if (t.style || t.trading_style) st = String(t.style || t.trading_style);
+        else if (t.features_json) {
+          try {
+            var featS = typeof t.features_json === 'string' ? JSON.parse(t.features_json) : t.features_json;
+            st = String(featS.style || featS.trading_style || '');
+          } catch(e){}
+        }
+        st = st.toUpperCase();
+        if (f.style === 'SCALP' && !/SCALP/.test(st)) return false;
+        if (f.style === 'INTRADAY' && !/INTRA|DAY/.test(st)) return false;
+        if (f.style === 'SWING' && !/SWING/.test(st)) return false;
+      }
+
+      // 8. Date Range Filter
+      var stamp = t.closed_at || t.timestamp || t.time;
+      if (stamp) {
+        var tDate = new Date(typeof stamp === 'number' ? stamp * 1000 : stamp);
+        if (!isNaN(tDate.getTime())) {
+          if (f.datePreset === 'TODAY') {
+            var dateStr = tDate.toISOString().slice(0, 10);
+            if (dateStr !== todayStr) return false;
+          } else if (f.datePreset === 'THIS_WEEK') {
+            if (tDate < monday) return false;
+          } else if (f.datePreset === 'CUSTOM') {
+            if (f.dateFrom) {
+              var fromD = new Date(f.dateFrom + 'T00:00:00');
+              if (tDate < fromD) return false;
+            }
+            if (f.dateTo) {
+              var toD = new Date(f.dateTo + 'T23:59:59');
+              if (tDate > toD) return false;
+            }
+          }
+        }
+      }
+
       return true;
     });
   }
@@ -4344,20 +4435,77 @@
 
     renderPnlBreakdown(rows);
 
-    if (!rows.length) {
+    var totalRows = rows.length;
+    var pageSize = state.histPageSize || 25;
+    var totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+    if (state.histPage > totalPages) state.histPage = totalPages;
+    if (state.histPage < 1) state.histPage = 1;
+    var page = state.histPage;
+
+    var start = totalRows ? (page - 1) * pageSize : 0;
+    var end = Math.min(start + pageSize, totalRows);
+    var pageRows = rows.slice(start, end);
+
+    // Update pagination controls
+    var pageInfo = $('hist-page-info');
+    if (pageInfo) {
+      setText(pageInfo, 'Showing ' + (totalRows ? (start + 1) : 0) + '–' + end + ' of ' + totalRows + ' trades (Page ' + page + ' of ' + totalPages + ')');
+    }
+
+    var btnFirst = $('hist-page-first');
+    var btnPrev = $('hist-page-prev');
+    var btnNext = $('hist-page-next');
+    var btnLast = $('hist-page-last');
+    if (btnFirst) btnFirst.disabled = page <= 1;
+    if (btnPrev) btnPrev.disabled = page <= 1;
+    if (btnNext) btnNext.disabled = page >= totalPages;
+    if (btnLast) btnLast.disabled = page >= totalPages;
+
+    var numbersContainer = $('hist-page-numbers');
+    if (numbersContainer) {
+      numbersContainer.innerHTML = '';
+      var maxButtons = 5;
+      var startPage = Math.max(1, page - Math.floor(maxButtons / 2));
+      var endPage = Math.min(totalPages, startPage + maxButtons - 1);
+      if (endPage - startPage + 1 < maxButtons) {
+        startPage = Math.max(1, endPage - maxButtons + 1);
+      }
+      for (var p = startPage; p <= endPage; p++) {
+        var pBtn = document.createElement('button');
+        pBtn.type = 'button';
+        pBtn.className = 'hist-page-btn' + (p === page ? ' active' : '');
+        pBtn.textContent = String(p);
+        pBtn.setAttribute('data-hist-goto-page', String(p));
+        numbersContainer.appendChild(pBtn);
+      }
+    }
+
+    if (!totalRows) {
       setState(body, 'empty', all.length ? 'No trades match these filters' : 'No closed trades',
-        all.length ? 'Widen the filters above.' : 'Nothing has been closed in this window yet.');
+        all.length ? 'Adjust or reset the filters above.' : 'Nothing has been closed in this window yet.');
       return;
     }
 
     body.removeAttribute('data-state');
-    body.innerHTML = rows.map(function (t) {
+    body.innerHTML = pageRows.map(function (t) {
       var sym = t.symbol || '';
       var side = String(t.action || t.type || t.side || '').toUpperCase();
       var dirCls = /BUY|LONG/.test(side) ? 'tt-dir--buy' : 'tt-dir--sell';
       var pnl = historyPnl(t);
       var exec = String(t.executor || '—');
       var manual = /MANUAL|SL EXIT|TP EXIT|BROKER/.test(exec.toUpperCase());
+
+      // Extract strategy and style
+      var feat = {};
+      if (t.features_json) {
+        try { feat = typeof t.features_json === 'string' ? JSON.parse(t.features_json) : t.features_json; } catch(e){}
+      }
+      var stratName = t.strategy || feat.strategy || 'Adaptive Dissection';
+      var styleName = t.style || feat.style || (t.timeframe === 'M1' || t.timeframe === 'M5' ? 'Scalp' : 'Intraday');
+      var stratStyle = esc(stratName) + ' <span class="tt-muted">(' + esc(styleName) + ')</span>';
+
+      var exitReason = t.exit_reason || (exec.indexOf('EXIT') !== -1 ? exec : (manual ? 'MANUAL' : 'SIGNAL'));
+
       var closedAt = t.closed_at || null;
       var stamp = closedAt || t.timestamp;
       var when = stamp ? String(stamp).replace('T', ' ').replace(/\.\d+.*$/, '').slice(0, 19) : '—';
@@ -4369,7 +4517,8 @@
         '<td class="tt-muted">' + ticketId + '</td>' +
         '<td><span class="tt-symbol">' + esc(sym) + '</span></td>' +
         '<td><span class="tt-dir ' + dirCls + '">' + esc(side || '—') + '</span></td>' +
-        '<td class="' + (manual ? 'tt-muted' : '') + '">' + esc(exec) + '</td>' +
+        '<td>' + stratStyle + '</td>' +
+        '<td class="' + (manual ? 'tt-muted' : '') + '">' + esc(exitReason) + '</td>' +
         '<td class="tt-num">' + num(t.volume, 2) + '</td>' +
         '<td class="tt-num">' + formatPrice(t.entry_price, sym) + '</td>' +
         '<td class="tt-num tt-down">' + (Number(t.sl) > 0 ? formatPrice(t.sl, sym) : '—') + '</td>' +
@@ -5506,14 +5655,95 @@
     if (place) place.addEventListener('click', submitPendingOrder);
     syncTicketMode();
 
-    // History filters re-render locally; only a window change refetches.
-    ['hist-filter-symbol', 'hist-filter-side', 'hist-filter-source', 'hist-filter-outcome']
-      .forEach(function (id) {
-        var el = $(id);
-        if (!el) return;
-        el.addEventListener('input', renderHistory);
-        el.addEventListener('change', renderHistory);
+    // History multi-dimensional filters re-render locally; window change refetches
+    [
+      'hist-filter-symbol', 'hist-filter-side', 'hist-filter-strategy',
+      'hist-filter-regime', 'hist-filter-outcome', 'hist-filter-exit',
+      'hist-filter-style'
+    ].forEach(function (id) {
+      var el = $(id);
+      if (!el) return;
+      var onFilterChange = function () {
+        state.histPage = 1;
+        renderHistory();
+      };
+      el.addEventListener('input', onFilterChange);
+      el.addEventListener('change', onFilterChange);
+    });
+
+    var datePreset = $('hist-date-preset');
+    var customDateBox = $('hist-custom-date-container');
+    if (datePreset) {
+      datePreset.addEventListener('change', function () {
+        if (customDateBox) {
+          customDateBox.style.display = datePreset.value === 'CUSTOM' ? 'flex' : 'none';
+        }
+        state.histPage = 1;
+        renderHistory();
       });
+    }
+
+    var btnDateApply = $('hist-date-apply');
+    if (btnDateApply) {
+      btnDateApply.addEventListener('click', function () {
+        state.histPage = 1;
+        renderHistory();
+      });
+    }
+
+    var resetAllFilters = function () {
+      ['hist-filter-symbol', 'hist-date-from', 'hist-date-to'].forEach(function (id) {
+        var el = $(id); if (el) el.value = '';
+      });
+      [
+        'hist-filter-side', 'hist-filter-strategy', 'hist-filter-regime',
+        'hist-filter-outcome', 'hist-filter-exit', 'hist-filter-style', 'hist-date-preset'
+      ].forEach(function (id) {
+        var el = $(id); if (el) el.value = 'ALL';
+      });
+      if (customDateBox) customDateBox.style.display = 'none';
+      state.histPage = 1;
+      renderHistory();
+    };
+
+    var btnReset = $('hist-filter-reset');
+    if (btnReset) btnReset.addEventListener('click', resetAllFilters);
+    var btnQuickReset = $('hist-quick-reset');
+    if (btnQuickReset) btnQuickReset.addEventListener('click', resetAllFilters);
+
+    // Pagination controls event listeners
+    var pageSizeSelect = $('hist-page-size');
+    if (pageSizeSelect) {
+      pageSizeSelect.addEventListener('change', function () {
+        state.histPageSize = parseInt(pageSizeSelect.value, 10) || 25;
+        state.histPage = 1;
+        renderHistory();
+      });
+    }
+
+    var btnFirst = $('hist-page-first');
+    if (btnFirst) btnFirst.addEventListener('click', function () { state.histPage = 1; renderHistory(); });
+    var btnPrev = $('hist-page-prev');
+    if (btnPrev) btnPrev.addEventListener('click', function () { if (state.histPage > 1) { state.histPage--; renderHistory(); } });
+    var btnNext = $('hist-page-next');
+    if (btnNext) btnNext.addEventListener('click', function () { state.histPage++; renderHistory(); });
+    var btnLast = $('hist-page-last');
+    if (btnLast) btnLast.addEventListener('click', function () { state.histPage = 999999; renderHistory(); });
+
+    var numbersContainer = $('hist-page-numbers');
+    if (numbersContainer) {
+      numbersContainer.addEventListener('click', function (ev) {
+        var btn = ev.target.closest('[data-hist-goto-page]');
+        if (btn) {
+          var p = parseInt(btn.getAttribute('data-hist-goto-page'), 10);
+          if (p && p > 0) {
+            state.histPage = p;
+            renderHistory();
+          }
+        }
+      });
+    }
+
     var histDays = $('hist-filter-days');
     if (histDays) histDays.addEventListener('change', loadHistory);
     var histRefresh = $('hist-refresh');
@@ -5656,6 +5886,13 @@
 
   function boot() {
     bind();
+    try {
+      var urlParams = new URLSearchParams(window.location.search);
+      var viewParam = urlParams.get('view');
+      if (viewParam && VIEWS.indexOf(viewParam) !== -1) {
+        setView(viewParam);
+      }
+    } catch(e){}
     // Reparent the tab bar for the current width and keep it correct across
     // breakpoint changes (orientation flip, desktop↔phone resize).
     syncTabBarHost();

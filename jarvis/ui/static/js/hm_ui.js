@@ -654,6 +654,42 @@
     // script can capture a reference to the native function.
     installAlertShim();
 
+    function wireBugattiDropdowns() {
+        if (doc.querySelector('.tt-app')) return; // Dashboard handles its own dropdowns
+        doc.addEventListener('click', function (ev) {
+            var trigger = ev.target.closest('[data-dropdown-trigger]');
+            if (trigger) {
+                var panelId = trigger.getAttribute('aria-controls');
+                var panel = panelId ? doc.getElementById(panelId) : (trigger.parentElement ? trigger.parentElement.querySelector('[data-dropdown-panel]') : null);
+                if (panel) {
+                    ev.preventDefault();
+                    var willOpen = panel.hasAttribute('hidden');
+                    doc.querySelectorAll('.bugatti-dropdown__menu:not([hidden])').forEach(function (m) {
+                        m.setAttribute('hidden', '');
+                    });
+                    if (willOpen) {
+                        panel.removeAttribute('hidden');
+                        trigger.setAttribute('aria-expanded', 'true');
+                    } else {
+                        panel.setAttribute('hidden', '');
+                        trigger.setAttribute('aria-expanded', 'false');
+                    }
+                    return;
+                }
+            }
+            if (!ev.target.closest('[data-dropdown-panel]')) {
+                doc.querySelectorAll('.bugatti-dropdown__menu:not([hidden])').forEach(function (m) {
+                    m.setAttribute('hidden', '');
+                    var parent = m.closest('.bugatti-dropdown');
+                    if (parent) {
+                        var btn = parent.querySelector('[data-dropdown-trigger]');
+                        if (btn) btn.setAttribute('aria-expanded', 'false');
+                    }
+                });
+            }
+        });
+    }
+
     ready(function () {
         ensureLiveRegion();
         ensureSkipLink();
@@ -661,6 +697,7 @@
         enhanceTabs();
         watchModals();
         labelIconButtons();
+        wireBugattiDropdowns();
 
         // The page scripts mutate the DOM after their own async work resolves,
         // so re-run the cheap passes once the first paint settles.

@@ -37,14 +37,29 @@
       <span class="bugatti-brand__badge">CONSOLE</span>
     </a>
 
-    <!-- Desk switcher -->
-    <nav class="cx-desks bugatti-nav-links" aria-label="Trading desks">
+    <!-- Main Bugatti Navigation -->
+    <nav class="cx-desks bugatti-nav-links" aria-label="Primary navigation">
       <a href="/" class="cx-desk bugatti-desk-link">⚡ Cockpit</a>
-      <a href="/console" class="cx-desk bugatti-desk-link is-active active" aria-current="page">📟 Console</a>
-      <a href="/positions" class="cx-desk bugatti-desk-link">📋 Positions</a>
-      <a href="/stocks" class="cx-desk bugatti-desk-link">🇺🇸 US Stocks</a>
-      <a href="/india" class="cx-desk bugatti-desk-link">🇮🇳 India</a>
-      <a href="/options" class="cx-desk bugatti-desk-link">📊 Options</a>
+      <a href="/?view=trade" class="cx-desk bugatti-desk-link">Trade</a>
+      <a href="/?view=news" class="cx-desk bugatti-desk-link">News</a>
+      <a href="/?view=analyst" class="cx-desk bugatti-desk-link">Analyst</a>
+      <div class="bugatti-dropdown" data-dropdown>
+        <button type="button" class="cx-desk bugatti-desk-link active" id="markets-trigger"
+                data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
+                aria-controls="markets-menu">
+          <span>Markets ▼</span>
+        </button>
+        <div class="bugatti-dropdown__menu" id="markets-menu" data-dropdown-panel hidden aria-label="Market sections">
+          <a href="/stocks" class="bugatti-dropdown__item"><span>🇺🇸 US Market</span></a>
+          <a href="/india" class="bugatti-dropdown__item"><span>🇮🇳 Indian Market</span></a>
+          <a href="/options" class="bugatti-dropdown__item"><span>📊 Options</span></a>
+          <div class="bugatti-dropdown__divider"></div>
+          <a href="/console" class="bugatti-dropdown__item active" aria-current="page"><span>📟 Console</span></a>
+          <a href="/positions" class="bugatti-dropdown__item"><span>📋 Positions</span></a>
+        </div>
+      </div>
+      <a href="/?view=analytics" class="cx-desk bugatti-desk-link">Analytics</a>
+      <a href="/?view=backtest" class="cx-desk bugatti-desk-link">Backtest</a>
     </nav>
 
     <div class="cx-topbar__tools">
