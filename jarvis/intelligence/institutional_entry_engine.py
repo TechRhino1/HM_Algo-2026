@@ -51,11 +51,36 @@ class InstitutionalEntryEngine:
 
         style = (trade_style or getattr(context, "trade_style", "SWING") or "SWING").upper()
         if style in ("SCALP", "SCALPING"):
-            return self._execute_scalp_protocol(context, regime, norm_bias, mtf_data)
+            res = self._execute_scalp_protocol(context, regime, norm_bias, mtf_data)
         elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
-            return self._execute_day_trading_protocol(context, regime, norm_bias, mtf_data)
+            res = self._execute_day_trading_protocol(context, regime, norm_bias, mtf_data)
         else:  # SWING
-            return self._execute_swing_protocol(context, regime, norm_bias, mtf_data)
+            res = self._execute_swing_protocol(context, regime, norm_bias, mtf_data)
+
+        # Attach Avellaneda-Stoikov limit order pricing
+        try:
+            from jarvis.intelligence.as_pricing import compute_as_limit_entry
+            spec = resolve_symbol(context.symbol)
+            c_price = context.current_price
+            pip_size = spec.pip_size if spec.pip_size > 0 else 0.0001
+            sigma = (context.volatility.atr / c_price) if (context.volatility.atr > 0 and c_price > 0) else 0.001
+            as_calc = compute_as_limit_entry(
+                mid=c_price,
+                side=norm_bias,
+                inventory=0.0,
+                sigma=sigma,
+                spread_pips=context.volatility.current_spread_pips,
+                pip_size=pip_size,
+            )
+            res["as_limit_price"] = as_calc["optimal_limit_price"]
+            res["as_reservation_price"] = as_calc["reservation_price"]
+            if "protocol_details" in res and isinstance(res["protocol_details"], dict):
+                res["protocol_details"]["as_limit_price"] = as_calc["optimal_limit_price"]
+                res["protocol_details"]["as_savings"] = as_calc["expected_savings"]
+        except Exception as e:
+            logger.debug("Failed to calculate AS pricing: %s", e)
+
+        return res
 
     # ─── SCALP Protocol (M1 / M5) ──────────────────────────────────────────────
 

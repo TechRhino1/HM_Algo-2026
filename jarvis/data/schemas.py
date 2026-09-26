@@ -325,6 +325,8 @@ class DecisionObject:
     tp1_price: Optional[float] = None
     tp2_price: Optional[float] = None
     tp3_price: Optional[float] = None
+    as_limit_price: Optional[float] = None
+    fallback_rung: str = "RUN"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -345,6 +347,8 @@ class DecisionObject:
             "tp1_price": self.tp1_price if self.tp1_price is not None else self.first_target_price,
             "tp2_price": self.tp2_price if self.tp2_price is not None else self.take_profit,
             "tp3_price": self.tp3_price,
+            "as_limit_price": self.as_limit_price,
+            "fallback_rung": self.fallback_rung,
             "first_target_price": self.first_target_price,
             "first_target_volume_pct": self.first_target_volume_pct,
             "runner_trail_distance_atr": self.runner_trail_distance_atr,

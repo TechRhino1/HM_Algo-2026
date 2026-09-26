@@ -57,11 +57,11 @@ def _is_forex(symbol: str) -> bool:
 class LevelsResult(tuple):
     """An 8-tuple result containing (bias, entry, sl, tp, risk_dist, rr, first_target, volume_pct)
     preserving 100% backward compatibility with tuple unpacking, while exposing 3-tier milestone
-    attributes tp1_price, tp2_price, and tp3_price."""
-    def __new__(cls, tentative_bias, entry_price, sl_price, tp_price, risk_dist, rr_ratio, first_target_price, first_target_volume_pct, tp1_price=None, tp2_price=None, tp3_price=None):
+    attributes tp1_price, tp2_price, tp3_price, and as_limit_price."""
+    def __new__(cls, tentative_bias, entry_price, sl_price, tp_price, risk_dist, rr_ratio, first_target_price, first_target_volume_pct, tp1_price=None, tp2_price=None, tp3_price=None, as_limit_price=None):
         return super().__new__(cls, (tentative_bias, entry_price, sl_price, tp_price, risk_dist, rr_ratio, first_target_price, first_target_volume_pct))
 
-    def __init__(self, tentative_bias, entry_price, sl_price, tp_price, risk_dist, rr_ratio, first_target_price, first_target_volume_pct, tp1_price=None, tp2_price=None, tp3_price=None):
+    def __init__(self, tentative_bias, entry_price, sl_price, tp_price, risk_dist, rr_ratio, first_target_price, first_target_volume_pct, tp1_price=None, tp2_price=None, tp3_price=None, as_limit_price=None):
         self.tentative_bias = tentative_bias
         self.entry_price = entry_price
         self.sl_price = sl_price
@@ -73,6 +73,7 @@ class LevelsResult(tuple):
         self.tp1_price = tp1_price if tp1_price is not None else first_target_price
         self.tp2_price = tp2_price if tp2_price is not None else tp_price
         self.tp3_price = tp3_price
+        self.as_limit_price = as_limit_price
 
 
 class DecisionEngine:
@@ -199,7 +200,8 @@ class DecisionEngine:
             levels["first_target_volume_pct"],
             tp1_price=levels.get("tp1_price", levels["first_target_price"]),
             tp2_price=levels.get("tp2_price", levels["tp_price"]),
-            tp3_price=levels.get("tp3_price")
+            tp3_price=levels.get("tp3_price"),
+            as_limit_price=levels.get("as_limit_price")
         )
 
     def _compute_blended_probability(
@@ -766,6 +768,7 @@ class DecisionEngine:
         tp1_price = getattr(levels_res, "tp1_price", first_target_price)
         tp2_price = getattr(levels_res, "tp2_price", tp_price)
         tp3_price = getattr(levels_res, "tp3_price", None)
+        as_limit_price = getattr(levels_res, "as_limit_price", None)
 
         # §B-5: Devil's Advocate Threat Feedback Adjustment
         threat_lvl = getattr(devil_report, "threat_price_level", None) if devil_report else None
@@ -1315,6 +1318,8 @@ class DecisionEngine:
             tp1_price=tp1_price,
             tp2_price=tp2_price,
             tp3_price=tp3_price,
+            as_limit_price=as_limit_price,
+            fallback_rung=getattr(self, "current_fallback_rung", "RUN"),
             first_target_price=first_target_price,
             first_target_volume_pct=first_target_volume_pct,
             runner_trail_distance_atr=runner_trail_distance_atr,

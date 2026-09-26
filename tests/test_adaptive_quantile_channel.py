@@ -168,3 +168,6 @@ def test_institutional_entry_engine_records_channel_details():
     assert "channel_position_pct" in details
     assert "micro_r2" in details
     assert details["channel_quarter"] in ("LOWER_QUARTER", "MIDDLE", "UPPER_QUARTER")
+    assert "as_limit_price" in result
+    assert "as_reservation_price" in result
+    assert "as_limit_price" in details
