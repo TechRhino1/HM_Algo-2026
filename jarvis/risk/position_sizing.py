@@ -110,17 +110,13 @@ class PositionSizer:
         # keeps this function honest about its contract rather than silently
         # overriding an explicit argument with a hardcoded global.
         #
-        # Consequence worth knowing: the micro-account floor further down allows
-        # the broker minimum lot whenever the risk it forces is <= 2x the target,
-        # so tightening the target also tightens that floor. On a $762 account
-        # XAUUSD at a 0.01 minimum lot risks 1.31%, which is under 2x the old
-        # inflated 0.776% but over 2x the honest 0.575% -- so such a trade is now
-        # refused. That is the correct answer to "you cannot risk 0.5% here",
-        # but it does mean small accounts stop trading wide-stop symbols.
+        # If the broker minimum volume cannot fit inside the resulting monetary
+        # budget, the trade is refused rather than exceeding the configured cap.
         ceiling = risk_ceiling_pct
         scaled = risk_pct * max(0.0, min(1.0, float(invalidation_risk_coefficient))) * combined_scaler
         # Never create a floor above the configured maximum risk.
-        effective_risk_pct = min(ceiling, max(0.0, scaled))        if ceiling > 0 and scaled > ceiling + 1e-9:
+        effective_risk_pct = min(ceiling, max(0.0, scaled))
+        if ceiling > 0 and scaled > ceiling + 1e-9:
             logger.debug(
                 "[%s] risk clamped: multipliers wanted %.2f%%, ceiling is %.2f%% "
                 "(max_risk_per_trade_pct)", sym_name, scaled, ceiling,
