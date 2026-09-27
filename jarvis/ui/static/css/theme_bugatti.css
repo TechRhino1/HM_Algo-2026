@@ -641,21 +641,113 @@ body.tt-app, body.ios-app {
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
 }
 
-/* Force table thead to remain visible on tablets/laptops and override iOS mobile card hiding */
-@media (min-width: 576px) {
-  .tt-table > thead {
-    display: table-header-group !important;
-  }
-  .tt-table, .tt-table > tbody {
-    display: table !important;
-    width: 100% !important;
-  }
-  .tt-table > tbody > tr {
-    display: table-row !important;
-  }
-  .tt-table > tbody > tr > td {
-    display: table-cell !important;
-  }
+/* ── Unified High-Performance Institutional Table Engine ────────────────── */
+table.tt-table,
+.tt-table,
+.table-bugatti {
+  display: table !important;
+  width: 100% !important;
+  border-collapse: collapse !important;
+  border-spacing: 0 !important;
+  table-layout: auto !important;
+  margin: 0 !important;
+}
+
+table.tt-table > thead,
+.tt-table > thead {
+  display: table-header-group !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 5 !important;
+}
+
+table.tt-table > thead > tr,
+.tt-table > thead > tr {
+  display: table-row !important;
+  height: var(--tt-head-h, 28px) !important;
+}
+
+table.tt-table > thead > tr > th,
+.tt-table > thead > tr > th,
+.tt-table thead th {
+  display: table-cell !important;
+  vertical-align: middle !important;
+  padding: 6px 8px !important;
+  background: var(--tt-panel-head-bg, #0b0f17) !important;
+  border-bottom: 1px solid var(--titanium-border-strong, rgba(255,255,255,0.08)) !important;
+  font-size: 0.6875rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  color: var(--machined-silver, #94a3b8) !important;
+  white-space: nowrap !important;
+}
+
+table.tt-table > tbody,
+.tt-table > tbody {
+  display: table-row-group !important;
+}
+
+table.tt-table > tbody > tr,
+.tt-table > tbody > tr {
+  display: table-row !important;
+  height: var(--tt-row-h, 32px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+  transition: background 0.15s ease !important;
+}
+
+table.tt-table > tbody > tr:hover,
+.tt-table > tbody > tr:hover {
+  background: rgba(0, 102, 255, 0.08) !important;
+}
+
+table.tt-table > tbody > tr > td,
+.tt-table > tbody > tr > td,
+.tt-table tbody td {
+  display: table-cell !important;
+  vertical-align: middle !important;
+  padding: 6px 8px !important;
+  font-size: 0.8125rem !important;
+  white-space: nowrap !important;
+  border: none !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+}
+
+/* Eliminate all card ::before label pseudo-elements */
+table.tt-table > tbody > tr > td::before,
+.tt-table > tbody > tr > td::before {
+  content: none !important;
+  display: none !important;
+}
+
+/* Numeric columns right-aligned across header and rows */
+table.tt-table th.tt-num,
+table.tt-table td.tt-num,
+.tt-table th.tt-num,
+.tt-table td.tt-num {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+/* First column left-aligned */
+table.tt-table th:first-child,
+table.tt-table td:first-child,
+.tt-table th:first-child,
+.tt-table td:first-child {
+  text-align: left !important;
+  padding-left: 12px !important;
+}
+
+/* Actions column table-cell styling */
+.tt-table--positions th.tt-pos-actions-col,
+.tt-table--positions td.tt-pos-actions,
+td.tt-pos-actions,
+th.tt-pos-actions-col {
+  display: table-cell !important;
+  text-align: right !important;
+  padding-right: 12px !important;
+  white-space: nowrap !important;
+  width: 1% !important;
 }
 
 /* ── Forms, Inputs & Switchgear ──────────────────────────────────────────── */
@@ -1248,27 +1340,42 @@ button.bugatti-dropdown__item:focus {
 }
 
 .tt-panel--watchlist .tt-panel__body--flush {
-  overflow-x: hidden !important;
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  scrollbar-width: thin !important;
 }
 
 #watch-table th,
 #watch-table td {
-  padding: 6px 5px !important;
-  font-size: 0.78rem !important;
+  padding: 5px 4px !important;
+  font-size: 0.75rem !important;
   white-space: nowrap !important;
 }
 
 #watch-table th:first-child,
 #watch-table td:first-child {
-  padding-left: 10px !important;
-  min-width: 70px !important;
+  padding-left: 8px !important;
+  min-width: 62px !important;
   font-weight: 700 !important;
 }
 
 #watch-table .tt-dir {
-  font-size: 0.7rem !important;
-  padding: 2px 6px !important;
+  font-size: 0.6875rem !important;
+  padding: 1px 5px !important;
   border-radius: 4px !important;
+}
+
+#pos-table th,
+#pos-table td {
+  padding: 6px 8px !important;
+  font-size: 0.8125rem !important;
+  white-space: nowrap !important;
+}
+
+#pos-table th:first-child,
+#pos-table td:first-child {
+  padding-left: 12px !important;
+  font-weight: 700 !important;
 }
 
 

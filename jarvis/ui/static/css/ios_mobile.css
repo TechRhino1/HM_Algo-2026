@@ -270,110 +270,11 @@
      column name (dashboard.js copies the <th> text onto each <td> as
      `data-label`), and the whole card is a single tap target that opens the
      existing detail view. The table layout is untouched at >= 1025px. */
-  .tt-table,
-  .tt-table > tbody,
-  .tt-table > tbody > tr,
-  .tt-table > tbody > tr > td {
-    display: block;
-    width: auto;
+  /* Institutional data tables retain proper HTML table semantics */
+  .tt-table {
+    width: 100%;
+    border-collapse: collapse;
   }
-  /* The table fills the panel body and never wider; without `min-width: 0`
-     a wide descendant (the card grid below) would inflate it past the
-     panel. */
-  .tt-table { min-width: 0; max-width: 100%; }
-  /* The header row is gone visually but survives for screen readers: the
-     per-cell `data-label` is what the eye reads, and `aria` still gets the
-     real table semantics from the markup. */
-  .tt-table > thead { display: none; }
-
-  .tt-table > tbody > tr {
-    position: relative;
-    margin: 0 var(--ios-sp-2) var(--ios-sp-2);
-    padding: var(--ios-sp-3);
-    border-radius: var(--ios-r-card);
-    border: 0.5px solid var(--ios-sep);
-    background: var(--ios-fill);
-    /* Fields flow in a responsive grid rather than one full-width line each.
-       A 10-column journal stacked one field per line produced a 250px card
-       that could never fit the panel's scroll box on a phone; two columns
-       halve the height and keep every line short enough to read. */
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    column-gap: var(--ios-sp-4);
-    row-gap: 2px;
-    /* The grid's intrinsic min-width is the sum of its track minimums (2 x
-       140 = 280px). Setting `min-width: 0` lets the card itself shrink
-       inside a narrower panel. */
-    min-width: 0;
-  }
-  /* A clickable row is a button-sized target, not a 20px line of text. */
-  .tt-table > tbody > tr[data-clickable="true"] { min-height: var(--ios-tap); }
-  .tt-table > tbody > tr[aria-selected="true"] {
-    border-color: var(--ios-blue);
-    background: rgba(0, 122, 255, 0.10);
-  }
-
-  /* Key / value row: label left, value right, both on one line. */
-  .tt-table > tbody > tr > td {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--ios-sp-3);
-    padding: 2px 0;
-    border: 0;
-    text-align: left;
-    font-size: var(--ios-fs-foot);
-    /* Grid items default to `min-width: min-content`, so a single long word
-       ("Fed Chair Powell Speaks") in a cell can blow the whole card past the
-       panel width. `min-width: 0` lets the cell shrink below its content and
-       `overflow-wrap: anywhere` breaks the word at the edge. Without these
-       the cards scroll horizontally inside the panel even though there is no
-       horizontal scrollbar to grab. */
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  .tt-table > tbody > tr > td::before {
-    content: attr(data-label);
-    flex: 0 0 auto;
-    font-size: var(--ios-fs-caption);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--ios-label-2);
-  }
-  .tt-table > tbody > tr > td > * {
-    text-align: right;
-    /* Flex children default to `min-width: min-content`, so a single long
-       word inside a span prevents the cell from shrinking and wraps onto a
-       new grid track (or blows past the panel). `min-width: 0` lets the
-       child shrink and `overflow-wrap` actually does its job. */
-    min-width: 0;
-  }
-
-  /* Primary field: the card's title. Largest text in the block, no repeated
-     label, separated from the detail rows by a hairline. */
-  .tt-table > tbody > tr > td[data-primary="true"] {
-    grid-column: 1 / -1;
-    padding: 0 0 var(--ios-sp-2);
-    margin-bottom: var(--ios-sp-2);
-    border-bottom: 0.5px solid var(--ios-sep);
-  }
-  .tt-table > tbody > tr > td[data-primary="true"]::before { content: none; }
-  .tt-table > tbody > tr > td[data-primary="true"] .tt-symbol,
-  .tt-table > tbody > tr > td[data-primary="true"] {
-    font-size: var(--ios-fs-head);
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    color: var(--ios-label);
-  }
-  /* Actions keep full-width flow so a Close button stays thumb-sized. */
-  .tt-table > tbody > tr > td .tt-btn,
-  .tt-table > tbody > tr > td button {
-    min-height: 36px;
-    padding: 0 var(--ios-sp-3);
-  }
-  /* Numbers should not wrap mid-value. */
-  .tt-table > tbody > tr > td .tt-num { white-space: nowrap; }
 
   /* The economic-calendar row carries two values in the event cell (event name
      + currency pairs) and a `white-space: nowrap` time/countdown cell. In a

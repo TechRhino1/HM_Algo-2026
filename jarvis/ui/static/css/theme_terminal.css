@@ -1812,7 +1812,7 @@
   white-space: nowrap;
   width: 1%;
 }
-.tt-pos-actions { display: flex; justify-content: flex-end; gap: var(--hm-space-1); }
+.tt-pos-actions { text-align: right; }
 
 /* Positions tab bar — OPEN / HISTORY / PENDING. Lives in the panel head
    beside the total and Flatten all button. The active tab is unmistakable:

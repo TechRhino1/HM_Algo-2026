@@ -1126,7 +1126,7 @@
     var headCols = {
       open:    '<th>Symbol</th><th>Side</th><th class="tt-num">Vol</th><th class="tt-num">Entry</th>' +
                '<th class="tt-num">Now</th><th class="tt-num">SL</th><th class="tt-num">TP</th>' +
-               '<th class="tt-num">P&amp;L</th><th class="tt-pos-actions-col">Actions</th>',
+               '<th class="tt-num">MFE / MAE</th><th class="tt-num">P&amp;L (R)</th><th class="tt-pos-actions-col">Actions</th>',
       history: '<th>Symbol</th><th>Side</th><th class="tt-num">Vol</th><th class="tt-num">Entry</th>' +
                '<th class="tt-num">Exit</th><th class="tt-num">P&amp;L</th>' +
                '<th>Closed</th><th class="tt-pos-actions-col">Actions</th>',
