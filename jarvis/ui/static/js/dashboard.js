@@ -2637,42 +2637,56 @@
   function renderContextAnalyst() {
     var host = $('ctx-analyst');
     if (!host || host.hidden) return;
-    var d = state.symbol ? state.decisions[state.symbol] : null;
+    var sym = ($('ticket-symbol') && $('ticket-symbol').value ? $('ticket-symbol').value.trim().toUpperCase() : state.symbol) || state.symbol;
+    var d = sym ? (state.decisions[sym] || state.decisions[sym.toUpperCase()]) : null;
     if (!d) {
-      setState(host, 'empty', 'No setup selected', 'Pick an instrument to see the analyst view.');
+      setState(host, 'empty', 'No data for ' + (sym || 'symbol'), 'Select an instrument with active engine telemetry.');
       return;
     }
 
     var v = devilVerdict(d);
     var gate = d.quality_gate || null;
-    var gatePass = gate ? String(gate.passed === true ? 'pass' : (gate.passed === false ? 'block' : '—')) : '—';
+    var gatePass = gate ? String(gate.passed === true ? 'PASS' : (gate.passed === false ? 'BLOCK' : '—')) : '—';
+    var bias = String(d.bias || d.decision || 'HOLD').toUpperCase();
+    var isBuy = /BUY|LONG/.test(bias);
 
-    var threats = [];
-    ['risk_factors', 'bear_case', 'threats'].forEach(function (k) {
-      (d[k] || []).forEach(function (t) {
-        var text = typeof t === 'string' ? t : (t.text || t.reason || t.description || '');
-        if (text) threats.push(text);
+    var objections = [];
+    if (gate && Array.isArray(gate.failing_reasons)) {
+      gate.failing_reasons.forEach(function (r) { if (r && objections.indexOf(r) === -1) objections.push(r); });
+    }
+    if (Array.isArray(d.rejection_reasons)) {
+      d.rejection_reasons.forEach(function (r) { if (r && objections.indexOf(r) === -1) objections.push(r); });
+    }
+    if (Array.isArray(d.risk_factors)) {
+      d.risk_factors.forEach(function (r) { if (r && objections.indexOf(r) === -1) objections.push(r); });
+    }
+    var counterEvidence = isBuy ? (d.bear_case || []) : (d.bull_case || []);
+    if (Array.isArray(counterEvidence)) {
+      counterEvidence.forEach(function (e) {
+        var text = typeof e === 'string' ? e : (e.text || e.reason || '');
+        if (text && objections.indexOf(text) === -1) objections.push(text);
       });
-    });
+    }
 
     host.removeAttribute('data-state');
     host.innerHTML =
-      '<div class="tt-row" style="gap:var(--hm-space-2);margin-bottom:var(--hm-space-2)">' +
-        '<span class="tt-chip tt-chip--' + v.cls + '">' + esc(v.label) + '</span>' +
-        '<span class="tt-chip tt-chip--none">gate ' + esc(gatePass) + '</span>' +
+      '<div class="tt-row" style="gap:var(--hm-space-2);margin-bottom:var(--hm-space-2);align-items:center;flex-wrap:wrap">' +
+        '<span class="tt-symbol" style="font-weight:700;color:var(--electric-cyan)">' + esc(sym) + '</span>' +
+        '<span class="tt-chip tt-chip--' + (isBuy ? 'buy' : (/SELL|SHORT/.test(bias) ? 'sell' : 'none')) + '">' + esc(bias) + '</span>' +
+        '<span class="tt-chip tt-chip--' + (gatePass === 'PASS' ? 'buy' : 'sell') + '">GATE ' + esc(gatePass) + '</span>' +
         '<span class="tt-chip tt-chip--none">' +
           esc(d.master_confluence_tier || '—') + ' · ' +
           (d.master_confluence_score !== undefined ? d.master_confluence_score : '—') +
         '</span>' +
       '</div>' +
-      '<div class="tt-subhead"><span class="tt-panel__title">Case against</span></div>' +
-      (threats.length
-        ? '<ul class="tt-reasons">' + threats.slice(0, 6).map(function (t) {
+      '<div class="tt-subhead"><span class="tt-panel__title">Case against ' + esc(sym) + ' (' + esc(bias) + ')</span></div>' +
+      (objections.length
+        ? '<ul class="tt-reasons">' + objections.slice(0, 6).map(function (t) {
             return '<li><span>' + esc(t) + '</span></li>';
           }).join('') + '</ul>'
-        : '<p class="tt-hint">The engine reported no threats. That is not the same as the setup being safe.</p>') +
+        : '<p class="tt-hint">The engine reported no adverse threats against this setup.</p>') +
       '<p class="tt-hint" style="margin-top:var(--hm-space-2)">' +
-        'Full bull/bear cases, gate detail and objections are on the Analyst tab.' +
+        'Full multi-timeframe breakdown & adversarial audit on the Analyst tab.' +
       '</p>';
   }
 
@@ -5869,6 +5883,12 @@
       symInput.addEventListener('change', function () {
         var v = symInput.value.trim().toUpperCase();
         if (v) selectSymbol(v);
+      });
+      symInput.addEventListener('input', function () {
+        var v = symInput.value.trim().toUpperCase();
+        if (v && v.length >= 3 && v !== state.symbol && state.decisions && state.decisions[v]) {
+          selectSymbol(v);
+        }
       });
     }
 

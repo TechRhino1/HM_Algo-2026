@@ -19,49 +19,44 @@
 <body class="ios-app">
 
 <!-- Universal Bugatti Navigation Bar -->
-<header class="bugatti-navbar navbar navbar-expand-lg sticky-top" role="banner">
-  <div class="container-fluid px-2 px-md-3">
+<header class="bugatti-navbar" role="banner">
+  <div class="bugatti-navbar__inner">
     <a class="bugatti-brand" href="/" aria-label="HM Algo 2.0 home">
       <span class="bugatti-brand__mark" aria-hidden="true"></span>
-      <span class="bugatti-brand__text">HM Algo 2.0</span>
+      <span class="bugatti-brand__text">HM <span class="bugatti-brand__accent">Algo 2.0</span></span>
       <span class="bugatti-brand__badge">POSITIONS</span>
     </a>
 
-    <button class="navbar-toggler bugatti-toggler d-lg-none" type="button" data-bs-toggle="collapse" data-bs-target="#bugattiNavPositions" aria-controls="bugattiNavPositions" aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon" style="filter: invert(1);"></span>
-    </button>
-
-    <div class="collapse navbar-collapse" id="bugattiNavPositions">
-      <nav class="bugatti-nav-links me-auto my-2 my-lg-0" aria-label="Primary navigation">
-        <a href="/" class="bugatti-desk-link">⚡ Cockpit</a>
-        <a href="/?view=trade" class="bugatti-desk-link">Trade</a>
-        <a href="/?view=news" class="bugatti-desk-link">News</a>
-        <a href="/?view=analyst" class="bugatti-desk-link">Analyst</a>
-        <div class="bugatti-dropdown" data-dropdown>
-          <button type="button" class="bugatti-desk-link active" id="markets-trigger"
-                  data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
-                  aria-controls="markets-menu">
-            <span>Markets ▼</span>
-          </button>
-          <div class="bugatti-dropdown__menu" id="markets-menu" data-dropdown-panel hidden aria-label="Market sections">
-            <a href="/stocks" class="bugatti-dropdown__item"><span>🇺🇸 US Market</span></a>
-            <a href="/india" class="bugatti-dropdown__item"><span>🇮🇳 Indian Market</span></a>
-            <a href="/options" class="bugatti-dropdown__item"><span>📊 Options</span></a>
-            <div class="bugatti-dropdown__divider"></div>
-            <a href="/console" class="bugatti-dropdown__item"><span>📟 Console</span></a>
-            <a href="/positions" class="bugatti-dropdown__item active" aria-current="page"><span>📋 Positions</span></a>
-          </div>
-        </div>
-        <a href="/?view=analytics" class="bugatti-desk-link">Analytics</a>
-        <a href="/?view=backtest" class="bugatti-desk-link">Backtest</a>
-      </nav>
-
-      <div class="bugatti-telemetry my-2 my-lg-0">
-        <button class="ios-nav__action btn-bugatti-ghost p-2" id="search-toggle" aria-label="Search" style="border-radius:8px;">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    <nav class="bugatti-nav-links" aria-label="Primary navigation">
+      <a href="/" class="bugatti-desk-link"><span>⚡ Cockpit</span></a>
+      <a href="/?view=trade" class="bugatti-desk-link"><span>Trade</span></a>
+      <a href="/?view=news" class="bugatti-desk-link"><span>News</span></a>
+      <a href="/?view=analyst" class="bugatti-desk-link"><span>Analyst</span></a>
+      <div class="bugatti-dropdown" data-dropdown>
+        <button type="button" class="bugatti-desk-link active" id="markets-trigger"
+                data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
+                aria-controls="markets-menu">
+          <span>Markets</span>
+          <svg class="bugatti-caret" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
         </button>
-        <div id="auth-header-widget"></div>
+        <div class="bugatti-dropdown__menu" id="markets-menu" data-dropdown-panel hidden aria-label="Market sections">
+          <a href="/stocks" class="bugatti-dropdown__item"><span>🇺🇸 US Market</span></a>
+          <a href="/india" class="bugatti-dropdown__item"><span>🇮🇳 Indian Market</span></a>
+          <a href="/options" class="bugatti-dropdown__item"><span>📊 Options</span></a>
+          <div class="bugatti-dropdown__divider"></div>
+          <a href="/console" class="bugatti-dropdown__item"><span>📟 Console</span></a>
+          <a href="/positions" class="bugatti-dropdown__item active" aria-current="page"><span>📋 Positions</span></a>
+        </div>
       </div>
+      <a href="/?view=analytics" class="bugatti-desk-link"><span>Analytics</span></a>
+      <a href="/?view=backtest" class="bugatti-desk-link"><span>Backtest</span></a>
+    </nav>
+
+    <div class="bugatti-navbar__right">
+      <button class="ios-nav__action btn-bugatti-ghost p-2" id="search-toggle" aria-label="Search" style="border-radius:8px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+      <div id="auth-header-widget"></div>
     </div>
   </div>
 </header>
