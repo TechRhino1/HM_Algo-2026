@@ -9,13 +9,16 @@
       "EURUSD",
       "GBPUSD",
       "USDJPY",
-      "BTCUSD"
+      "BTCUSD",
+      "ETHUSD",
+      "SOLUSD",
+      "ETHBTC"
     ]
   },
   "risk": {
     "max_risk_per_trade_pct": 0.5,
     "max_daily_loss_pct": 5.0,
-    "max_open_positions": 2,
+    "max_open_positions": 3,
     "max_symbol_exposure_count": 1,
     "min_rr_ratio": 2.0,
     "min_trade_score": 80.0,

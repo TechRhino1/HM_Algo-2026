@@ -117,6 +117,12 @@ _REGISTRY: Dict[str, SymbolSpec] = {
         typical_spread_pips=35.0, max_spread_pips=105.0,
         typical_atr_pct=4.0, margin_pct=0.5, digits=2, is_crypto=True
     ),
+    "ETHBTC": SymbolSpec(
+        canonical="ETHBTC", asset_class="CRYPTO",
+        contract_size=100_000.0, pip_size=0.0001, pip_value_per_lot=10.0,
+        typical_spread_pips=2.0, max_spread_pips=8.0,
+        typical_atr_pct=3.0, margin_pct=0.5, digits=5, is_crypto=True
+    ),
     "US500": SymbolSpec(
         canonical="US500", asset_class="INDEX",
         contract_size=1.0, pip_size=1.0, pip_value_per_lot=1.0,
@@ -160,6 +166,7 @@ _ALIAS_MAP: Dict[str, str] = {
     "BTCUSD#": "BTCUSD", "BTCUSD.I#": "BTCUSD", "BTCUSD.I": "BTCUSD", "BITCOIN": "BTCUSD",
     "ETHUSD#": "ETHUSD", "ETHUSD.I#": "ETHUSD", "ETHEREUM": "ETHUSD", "ETH": "ETHUSD",
     "SOLUSD#": "SOLUSD", "SOLUSD.I#": "SOLUSD", "SOLANA": "SOLUSD", "SOL": "SOLUSD",
+    "ETHBTC#": "ETHBTC", "ETHBTC.I#": "ETHBTC", "ETHBTC": "ETHBTC",
     "US500#": "US500", "SPX500": "US500", "SP500": "US500", "US500.I#": "US500", "US500Cash#": "US500",
     "US30#": "US30", "DJ30": "US30", "WALLSTREET": "US30", "US30.I#": "US30", "US30Cash#": "US30",
     "NAS100#": "NAS100", "USTECH": "NAS100", "NDX100": "NAS100", "US100": "NAS100",

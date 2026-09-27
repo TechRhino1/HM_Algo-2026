@@ -219,6 +219,28 @@
     "session_restriction": false,
     "allowed_sessions": ["Asian", "London", "New York"]
   },
+  "ETHBTC": {
+    "symbol": "ETHBTC",
+    "digits": 5,
+    "typical_spread_pips": 2.0,
+    "max_allowed_spread_pips": 8.0,
+    "atr_period": 14,
+    "sl_atr_multiplier": 2.2,
+    "tp_atr_multiplier": 3.2,
+    "session_restriction": false,
+    "allowed_sessions": ["Asian", "London", "New York"]
+  },
+  "ETHBTC#": {
+    "symbol": "ETHBTC#",
+    "digits": 5,
+    "typical_spread_pips": 2.0,
+    "max_allowed_spread_pips": 8.0,
+    "atr_period": 14,
+    "sl_atr_multiplier": 2.2,
+    "tp_atr_multiplier": 3.2,
+    "session_restriction": false,
+    "allowed_sessions": ["Asian", "London", "New York"]
+  },
   "US30": {
     "symbol": "US30",
     "digits": 2,

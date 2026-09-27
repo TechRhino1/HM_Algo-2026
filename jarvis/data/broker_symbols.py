@@ -66,6 +66,7 @@ BROKER_ALIASES: Dict[str, List[str]] = {
     "BTCUSD": ["BTCUSD#", "BTCUSD"],
     "ETHUSD": ["ETHUSD#", "ETHUSD"],
     "SOLUSD": ["SOLUSD#", "SOLUSD"],
+    "ETHBTC": ["ETHBTC#", "ETHBTC"],
 }
 
 # cache: canonical -> broker name confirmed to exist

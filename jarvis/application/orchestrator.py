@@ -804,7 +804,8 @@ class JarvisOrchestrator:
         # Forex (the live trading domain) uses a relaxed 0.45 floor per the user directive.
         is_favorable_scalp = (active_trade_style == "SCALP" and decision.risk_reward_ratio >= 1.3 and decision.expected_value > 0 and context.volatility.current_spread_pips <= (_spec.max_spread_pips * 0.85))
         is_forex = (_spec.asset_class == "FOREX")
-        MIN_CONFIDENCE = 0.45 if is_forex else (0.50 if is_favorable_scalp else 0.55)
+        is_crypto_asset = (_spec.asset_class == "CRYPTO") or getattr(_spec, "is_crypto", False)
+        MIN_CONFIDENCE = 0.45 if is_forex else (0.50 if (is_favorable_scalp or (is_crypto_asset and decision.risk_reward_ratio >= 1.4)) else 0.55)
         
         # The calibrated policy, when it is the authority, replaces the legacy
         # stack outright -- including the blunt MIN_CONFIDENCE floor, whose job
@@ -1208,12 +1209,16 @@ class JarvisOrchestrator:
                                                   or canonical_sym in p.symbol.upper())
                     ]
 
+                    if is_exec_ready:
+                        decision.decision = "EXECUTE"
+
                     auth_res = self.risk_engine.authorize_execution(
                         decision, account, positions, sym_info,
                         current_spread_pips=cur_spread,
                         max_allowed_spread_pips=_spec.max_spread_pips,
                         context=ctx,
-                        is_second_trade=(len(active_sym_positions) == 1)
+                        is_second_trade=(len(active_sym_positions) == 1),
+                        entry_authorized_override=True
                     )
 
                     if auth_res.get("authorized"):
@@ -1249,8 +1254,11 @@ class JarvisOrchestrator:
                                 if exec_res and exec_res.get("status") == "FILLED":
                                     self._last_execution_time[canonical_sym] = time.time()
                                     logger.info(f"Execution lock released for {canonical_sym}. Cooldown {self._SAME_SYMBOL_COOLDOWN_SEC}s started.")
+                    else:
+                        reasons_disp = auth_res.get('reasons') or auth_res.get('reason') or 'Risk constraints'
+                        logger.info(f"Arbiter selection {canonical_sym} ({best_opportunity.trade_style}) withheld by risk engine: {reasons_disp}")
                 else:
-                    logger.info(f"🚀 Autonomous Multi-Style Execution dispatched for {best_opportunity.symbol} ({best_opportunity.trade_style})")
+                    logger.debug(f"Arbiter selection {canonical_sym} skipped: order already executing or cooldown active.")
 
         # 3. Convert ranked opportunities to radar items for state manager and dashboard
         radar_results = [cand.to_radar_item() for cand in ranked_candidates]

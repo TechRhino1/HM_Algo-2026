@@ -162,6 +162,40 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         margin_pct=0.5
     ),
 
+    "ETHBTC": SymbolProfileConfig(
+        symbol="ETHBTC",
+        canonical="ETHBTC",
+        asset_class="CRYPTO",
+        strategy_weights={
+            "TREND_FOLLOWING": 3.5,
+            "RANGE_MEAN_REVERSION": 2.5,
+            "BREAKOUT_EXPANSION": 1.5,
+            "CHOCH_STRUCTURAL_REVERSAL": 1.0,
+            "TREND_PULLBACK": 0.0,
+            "LIQUIDITY_SWEEP_REVERSAL": 0.0,
+        },
+        banned_strategies=["LIQUIDITY_SWEEP_REVERSAL"],
+        sl_atr_multiplier=2.20,
+        min_target_rr=1.50,
+        asym_rr=3.0,
+        anti_wick_buffer_atr=0.35,
+        fast_cash_r=1.50,
+        fast_cash_volume_pct=0.40,
+        be_trigger_r=1.20,
+        runner_trail_atr=2.00,
+        session_restriction=False,
+        contract_size=100000.0,
+        pip_size=0.0001,
+        pip_value_per_lot=10.0,
+        digits=5,
+        typical_spread_pips=2.0,
+        max_allowed_spread_pips=8.0,
+        commission_per_lot=0.0,
+        min_volume=0.01,
+        volume_step=0.01,
+        margin_pct=0.5
+    ),
+
     # =========================================================================
     # 2. EQUITY INDICES (XM Ultra Low Standard Specs: $0 Commission, 14:00-19:00 UTC)
     # =========================================================================
