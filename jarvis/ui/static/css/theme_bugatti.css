@@ -941,6 +941,92 @@ body.tt-app, body.ios-app {
   opacity: 0.6;
 }
 
+.bugatti-dropdown__menu--right {
+  left: auto !important;
+  right: 0 !important;
+}
+
+.bugatti-dropdown__header {
+  font-size: 0.65rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: var(--machined-silver) !important;
+  padding: 6px 10px 2px 10px !important;
+  opacity: 0.7 !important;
+}
+
+button.bugatti-dropdown__item {
+  width: 100% !important;
+  text-align: left !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  cursor: pointer !important;
+}
+
+button.bugatti-dropdown__item:hover,
+button.bugatti-dropdown__item:focus {
+  color: #ffffff !important;
+  background: rgba(0, 102, 255, 0.22) !important;
+  border-color: rgba(0, 102, 255, 0.45) !important;
+}
+
+.bugatti-acc-panel {
+  min-width: 280px !important;
+  max-width: 340px !important;
+}
+
+.bugatti-acc-auth-widget {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 10px !important;
+  padding: 8px 12px !important;
+  background: rgba(0, 240, 255, 0.04) !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(0, 240, 255, 0.12) !important;
+  margin: 4px 6px 6px 6px !important;
+}
+
+.bugatti-acc-auth-widget .auth-user-pill {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  color: #ffffff !important;
+  font-size: 0.8125rem !important;
+}
+
+.bugatti-acc-auth-widget .auth-logout-btn {
+  margin-left: auto !important;
+  flex-shrink: 0 !important;
+}
+
+.bugatti-acc-trigger {
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+}
+
+/* ── Enforce navigation is NEVER in footer / pinned to bottom ──────────────── */
+.tt-tabs,
+.bugatti-nav-links {
+  position: static !important;
+  bottom: auto !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  z-index: auto !important;
+}
+
+.mobile-nav-bar,
+.ios-tabbar {
+  display: none !important;
+}
+
 /* ── Trade History Pagination & Multi-Filter Bar ─────────────────────────── */
 .hist-pagination-bar {
   display: flex;

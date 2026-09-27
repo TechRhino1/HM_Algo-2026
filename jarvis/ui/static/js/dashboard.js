@@ -563,7 +563,13 @@
         return;
       }
 
-      // A click inside an open panel is real use - usually a link. Only a click
+      // If clicking a view button or dropdown item inside an open dropdown, close the dropdown
+      if (openDropdown && target.closest('[data-view-btn], [data-pane-btn], .bugatti-dropdown__item, a')) {
+        closeDropdown(false);
+        return;
+      }
+
+      // A click inside an open panel is real use - usually a form input. Only a click
       // somewhere else dismisses it.
       if (openDropdown && !target.closest('[data-dropdown-panel]')) closeDropdown(false);
     });
@@ -5923,12 +5929,9 @@
   function syncTabBarHost() {
     var tabs = document.querySelector('.tt-tabs');
     var rail = document.querySelector('.tt-rail');
-    var app = document.querySelector('.tt-app');
-    if (!tabs || !rail || !app) return;
-    var phone = window.matchMedia('(max-width: 599px)').matches;
-    if (phone) {
-      if (tabs.parentElement !== app) app.appendChild(tabs);
-    } else if (tabs.parentElement !== rail) {
+    if (!tabs || !rail) return;
+    // Always keep navigation tabs strictly inside .tt-rail at the top header; never dock to footer/body
+    if (tabs.parentElement !== rail) {
       var drop = rail.querySelector('.tt-dropdown');
       if (drop) rail.insertBefore(tabs, drop);
       else rail.appendChild(tabs);

@@ -508,22 +508,11 @@
   .tt-drawer__only-views { display: none; }
   .tt-rail__group--secondary { display: none; }
 
-  /* ── Bottom tab bar. dashboard.js re-parents .tt-tabs onto <body> here,
-        because .tt-rail's backdrop-filter would otherwise be its containing
-        block and pin the bar underneath the nav bar. ───────────────────── */
+  /* ── Tab bar stays in rail header at the top ───────────────────── */
   .tt-tabs {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 40;
+    position: static;
     display: flex;
-    height: calc(var(--ios-tab-h) + var(--ios-safe-b));
-    padding-bottom: var(--ios-safe-b);
-    background-image: var(--hm-glass-sheen),
-      linear-gradient(180deg, var(--ios-bg-2), var(--ios-bg-2));
-    backdrop-filter: saturate(180%) blur(20px);
-    border-top: 0.5px solid var(--ios-sep);
+    gap: 2px;
   }
 
   .tt-tab {

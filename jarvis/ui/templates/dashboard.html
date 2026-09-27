@@ -48,83 +48,66 @@
     <span class="tt-drawer-trigger__bars" aria-hidden="true"></span>
   </button>
 
-  <!-- Primary Bugatti Navigation: HM ALGO 2.0 | Cockpit | Trade | News | Analyst | Markets ▼ | Analytics | Backtest -->
+  <!-- Primary Bugatti Navigation: Only Cockpit and More Dropdown containing all other desks and views -->
   <nav class="tt-tabs bugatti-nav-links" role="tablist" aria-label="Primary navigation">
-    <a href="/" class="tt-tab bugatti-desk-link active" title="Cockpit Master Desk">
+    <a href="/" class="tt-tab bugatti-desk-link active" title="Cockpit Master Desk" data-view-btn="trade">
       <span>⚡ Cockpit</span>
     </a>
-    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="trade"
-            aria-selected="true" aria-controls="view-trade">
-      <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-           fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 4v15h16"/><path d="M8 19v-5"/><path d="M12 19V9"/><path d="M16 19v-7"/>
-      </svg>
-      <span class="tt-tab__label">Trade</span>
-    </button>
-    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="news"
-            aria-selected="false" aria-controls="view-news">
-      <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-           fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="5" width="18" height="14" rx="2"/>
-        <path d="M7 9h10"/><path d="M7 13h10"/><path d="M16 8l2 2-2 2"/>
-      </svg>
-      <span class="tt-tab__label">News</span>
-    </button>
-    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="analyst"
-            aria-selected="false" aria-controls="view-analyst">
-      <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-           fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="6"/><path d="M20 20l-4.4-4.4"/>
-      </svg>
-      <span class="tt-tab__label">Analyst</span>
-    </button>
 
-    <!-- Consolidated Markets Dropdown -->
+    <!-- Consolidated 'More' Dropdown containing all other options/desks/markets -->
     <div class="tt-dropdown bugatti-dropdown" data-dropdown>
-      <button type="button" class="tt-tab bugatti-desk-link" id="markets-trigger"
+      <button type="button" class="tt-tab bugatti-desk-link" id="more-trigger"
               data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
-              aria-controls="markets-menu">
+              aria-controls="more-menu">
         <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
              fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="8"/><path d="M4 12h16"/>
-          <path d="M12 4c2.6 2.6 2.6 12.8 0 16"/><path d="M12 4c-2.6 2.6-2.6 12.8 0 16"/>
+          <circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/><circle cx="5" cy="12" r="1.5"/>
         </svg>
-        <span class="tt-tab__label">Markets</span>
+        <span class="tt-tab__label">More</span>
         <svg class="bugatti-caret" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
       </button>
-      <nav class="tt-dropdown__panel tt-dropdown__panel--left bugatti-dropdown__menu" id="markets-menu"
-           data-dropdown-panel hidden aria-label="Market sections">
-        <a href="/stocks" class="bugatti-dropdown__item market-nav-item"><span>🇺🇸 US Market</span></a>
-        <a href="/india" class="bugatti-dropdown__item market-nav-item"><span>🇮🇳 Indian Market</span></a>
-        <a href="/options" class="bugatti-dropdown__item market-nav-item"><span>📊 Options</span></a>
+      <nav class="tt-dropdown__panel tt-dropdown__panel--left bugatti-dropdown__menu" id="more-menu"
+           data-dropdown-panel hidden aria-label="Desks and Market sections">
+        <div class="bugatti-dropdown__header">VIEWS &amp; DESKS</div>
+        <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="trade">
+          <span>📈 Trade Desk</span>
+        </button>
+        <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="news">
+          <span>📰 News Sentinel</span>
+        </button>
+        <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="analyst">
+          <span>🧠 Quant Analyst</span>
+        </button>
+        <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="analytics">
+          <span>📊 Performance Analytics</span>
+        </button>
+        <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="backtest">
+          <span>⏱️ Strategy Backtest</span>
+        </button>
+
         <div class="bugatti-dropdown__divider"></div>
-        <a href="/console" class="bugatti-dropdown__item market-nav-item"><span>📟 Console</span></a>
-        <a href="/positions" class="bugatti-dropdown__item market-nav-item"><span>📋 Positions</span></a>
+        <div class="bugatti-dropdown__header">MARKET HUBS</div>
+        <a href="/stocks" class="bugatti-dropdown__item market-nav-item">
+          <span>🇺🇸 US Market</span>
+        </a>
+        <a href="/india" class="bugatti-dropdown__item market-nav-item">
+          <span>🇮🇳 Indian Market</span>
+        </a>
+        <a href="/options" class="bugatti-dropdown__item market-nav-item">
+          <span>📊 Options</span>
+        </a>
+
+        <div class="bugatti-dropdown__divider"></div>
+        <div class="bugatti-dropdown__header">SYSTEM TERMINALS</div>
+        <a href="/console" class="bugatti-dropdown__item market-nav-item">
+          <span>📟 Console</span>
+        </a>
+        <a href="/positions" class="bugatti-dropdown__item market-nav-item">
+          <span>📋 Positions</span>
+        </a>
       </nav>
     </div>
-
-    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="analytics"
-            aria-selected="false" aria-controls="view-analytics">
-      <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-           fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3 20h18"/><path d="M7 20v-6"/><path d="M12 20V8"/><path d="M17 20v-9"/>
-      </svg>
-      <span class="tt-tab__label">Analytics</span>
-    </button>
-    <button class="tt-tab bugatti-desk-link" role="tab" data-view-btn="backtest"
-            aria-selected="false" aria-controls="view-backtest">
-      <svg class="tt-tab__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-           fill="none" stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>
-      </svg>
-      <span class="tt-tab__label">Backtest</span>
-    </button>
   </nav>
 
   <div class="tt-session" id="session-state" data-state="unknown"
@@ -163,18 +146,22 @@
          sits on the strip with the rest of the snapshot one click away. Every
          value is written by dashboard.js from /api/telemetry_state - none is
          hard-coded here. -->
-    <div class="tt-metric tt-metric--account tt-dropdown" data-dropdown
+    <div class="tt-metric tt-metric--account tt-dropdown bugatti-dropdown" data-dropdown
          style="padding:0 var(--hm-space-3)">
       <span class="tt-metric__label">Account</span>
-      <button type="button" class="tt-account-id" id="acc-id-trigger"
+      <button type="button" class="tt-account-id bugatti-desk-link" id="acc-id-trigger"
               data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
-              aria-controls="acc-details" title="Account details">
+              aria-controls="acc-details" title="Account details &amp; operator profile">
         <span class="tt-num" id="acc-id" data-state="loading">—</span>
-        <span class="tt-caret" aria-hidden="true"></span>
+        <svg class="bugatti-caret" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
       </button>
-      <div class="tt-dropdown__panel tt-dropdown__panel--right" id="acc-details"
+      <div class="tt-dropdown__panel tt-dropdown__panel--right bugatti-dropdown__menu bugatti-dropdown__menu--right bugatti-acc-panel" id="acc-details"
            data-dropdown-panel hidden role="group" aria-label="Account details">
-        <p class="tt-dropdown__title">Account</p>
+        <div class="bugatti-dropdown__header">OPERATOR PROFILE</div>
+        <div id="auth-header-widget" class="bugatti-acc-auth-widget" data-auth-mount></div>
+
+        <div class="bugatti-dropdown__divider"></div>
+        <div class="bugatti-dropdown__header">MT5 BROKER TELEMETRY</div>
         <dl class="tt-kv">
           <dt>Login</dt><dd class="tt-num" id="acc-d-login">—</dd>
           <dt>Name</dt><dd id="acc-d-name">—</dd>
@@ -196,7 +183,6 @@
     <span class="tt-chip tt-chip--none" id="conn-chip" title="Broker connection">—</span>
     <span class="tt-chip tt-chip--muted" id="exec-mode" title="Execution mode">—</span>
     <span class="tt-num tt-muted" id="clock" style="text-align:left">—</span>
-    <span id="auth-header-widget"></span>
   </div>
 
   <!-- iOS large title. The tab strip is a fixed bottom bar on phones, so the

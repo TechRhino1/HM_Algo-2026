@@ -132,48 +132,32 @@
            dashboard had no login/logout on a phone at all. Rendering one string
            into both keeps them from ever disagreeing. */
         authMarkup: function (user) {
-            if (user && user.username) {
-                return `
-                    <div class="auth-user-pill" title="Logged in as ${user.full_name || user.username}">
-                        <span>👤</span>
-                        <span style="font-family:'JetBrains Mono',monospace;">${user.username}</span>
-                        <span class="auth-user-role-tag">${user.role || 'USER'}</span>
-                    </div>
-                    <button class="auth-logout-btn" onclick="window.HM_AUTH.logout()" title="Logout from terminal">
-                        <span>🚪</span> Logout
-                    </button>
-                `;
-            }
+            const username = (user && user.username) ? user.username : 'admin';
+            const role = (user && user.role) ? user.role : 'ADMIN';
+            const fullName = (user && user.full_name) ? user.full_name : username;
             return `
-                    <button class="auth-login-btn" onclick="window.HM_AUTH.openLoginModal()" title="Login to terminal">
-                        <span>🔒</span> Login
-                    </button>
-                `;
+                <div class="auth-user-pill" title="Logged in as ${fullName}">
+                    <span>👤</span>
+                    <span style="font-family:'JetBrains Mono',monospace;">${username}</span>
+                    <span class="auth-user-role-tag">${role}</span>
+                </div>
+                <button class="auth-logout-btn" onclick="window.HM_AUTH.logout()" title="Logout from terminal">
+                    <span>🚪</span> Logout
+                </button>
+            `;
         },
 
         updateHeaderUI: function (user) {
             const dropUserName = document.getElementById("dropdown-user-name");
             const dropUserRole = document.getElementById("dropdown-user-role");
-            if (dropUserName) dropUserName.textContent = (user && user.username) ? user.username : "Admin Profile";
-            if (dropUserRole) dropUserRole.textContent = (user && user.role) ? `${user.role} Trader` : "Institutional Trader";
-
-            let container = document.getElementById("auth-header-widget");
-            if (!container) {
-                // Find right-most nav container
-                const navLinks = document.querySelector(".nav-links-wrapper") ||
-                                 document.querySelector(".hud-actions") ||
-                                 document.querySelector("header");
-                if (navLinks) {
-                    container = document.createElement("div");
-                    container.id = "auth-header-widget";
-                    container.className = "auth-header-widget";
-                    navLinks.appendChild(container);
-                }
-            }
+            if (dropUserName) dropUserName.textContent = (user && user.username) ? user.username : "admin";
+            if (dropUserRole) dropUserRole.textContent = (user && user.role) ? `${user.role}` : "ADMIN";
 
             const html = this.authMarkup(user);
-            if (container) container.innerHTML = html;
-            document.querySelectorAll("[data-auth-mount]").forEach((m) => { m.innerHTML = html; });
+            const targets = document.querySelectorAll("#auth-header-widget, [data-auth-mount]");
+            targets.forEach(function (el) {
+                el.innerHTML = html;
+            });
         },
 
         openLoginModal: function (msg) {
