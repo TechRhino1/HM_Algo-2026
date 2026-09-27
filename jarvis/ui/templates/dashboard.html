@@ -422,6 +422,32 @@
           <tbody id="pos-body" data-state="loading"></tbody>
         </table>
       </div>
+      <!-- Positions Panel History Pagination Bar (Visible only when History tab is active) -->
+      <div class="pos-hist-pagination-bar" id="pos-hist-pagination" hidden aria-label="Positions History Pagination">
+        <div class="pos-hist-pagination__info">
+          <span class="tt-muted">Showing</span>
+          <span class="tt-num" id="pos-hist-range">0–0</span>
+          <span class="tt-muted">of</span>
+          <span class="tt-num" id="pos-hist-total">0</span>
+          <span class="tt-muted">closed trades</span>
+        </div>
+        <div class="pos-hist-pagination__controls">
+          <label class="pos-hist-pagination__size-label" for="pos-hist-page-size">Rows:</label>
+          <select class="tt-select tt-select--compact pos-hist-page-size-select" id="pos-hist-page-size">
+            <option value="10" selected>10</option>
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          <div class="tt-btn-group" style="display:inline-flex;gap:4px;align-items:center;">
+            <button class="tt-btn tt-btn--sm" id="pos-hist-first" title="First page" disabled>&laquo;</button>
+            <button class="tt-btn tt-btn--sm" id="pos-hist-prev" title="Previous page" disabled>&lsaquo; Prev</button>
+            <span class="pos-hist-page-indicator tt-num" id="pos-hist-page-indicator">1 / 1</span>
+            <button class="tt-btn tt-btn--sm" id="pos-hist-next" title="Next page" disabled>Next &rsaquo;</button>
+            <button class="tt-btn tt-btn--sm" id="pos-hist-last" title="Last page" disabled>&raquo;</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Order ticket + reasoning -->

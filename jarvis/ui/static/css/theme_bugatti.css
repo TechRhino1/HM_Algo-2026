@@ -777,26 +777,51 @@ body.tt-app, body.ios-app {
   }
 }
 
+/* ── Bugatti Top Navbar Single-Row Layout & Overflow Override ────────────── */
+@media (min-width: 900px) {
+  .tt-rail,
+  .bugatti-navbar {
+    flex-wrap: nowrap !important;
+    overflow: visible !important;
+    gap: 8px !important;
+  }
+  .tt-tabs {
+    flex-wrap: nowrap !important;
+    overflow: visible !important;
+    flex-shrink: 0 !important;
+    gap: 2px !important;
+  }
+  .bugatti-desk-link {
+    padding: 5px 8px !important;
+    font-size: 0.78rem !important;
+    gap: 5px !important;
+  }
+  .tt-metric {
+    padding: 0 4px !important;
+  }
+}
+
 /* ── Bugatti Dropdown Menu Architecture ──────────────────────────────────── */
 .bugatti-dropdown {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
+  position: relative !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  z-index: 2100 !important;
 }
 
 .bugatti-dropdown__menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  min-width: 210px;
-  background: rgba(11, 15, 23, 0.96) !important;
-  backdrop-filter: blur(24px) !important;
-  -webkit-backdrop-filter: blur(24px) !important;
+  position: absolute !important;
+  top: calc(100% + 4px) !important;
+  left: 0 !important;
+  min-width: 210px !important;
+  background: rgba(11, 15, 23, 0.98) !important;
+  backdrop-filter: blur(28px) !important;
+  -webkit-backdrop-filter: blur(28px) !important;
   border: 1px solid var(--titanium-border-strong) !important;
   border-radius: 8px !important;
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 102, 255, 0.2) !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), 0 0 24px rgba(0, 102, 255, 0.25) !important;
   padding: 6px !important;
-  z-index: 1060 !important;
+  z-index: 2200 !important;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -804,6 +829,12 @@ body.tt-app, body.ios-app {
 
 .bugatti-dropdown__menu[hidden] {
   display: none !important;
+}
+
+@media (min-width: 768px) {
+  .bugatti-dropdown:hover > .bugatti-dropdown__menu {
+    display: flex !important;
+  }
 }
 
 .bugatti-dropdown__item {
@@ -825,13 +856,13 @@ body.tt-app, body.ios-app {
 .bugatti-dropdown__item:hover,
 .bugatti-dropdown__item:focus {
   color: #ffffff !important;
-  background: rgba(0, 102, 255, 0.18) !important;
-  border-color: rgba(0, 102, 255, 0.35) !important;
+  background: rgba(0, 102, 255, 0.22) !important;
+  border-color: rgba(0, 102, 255, 0.45) !important;
 }
 
 .bugatti-dropdown__item.active {
   color: #ffffff !important;
-  background: linear-gradient(135deg, rgba(0, 102, 255, 0.32), rgba(0, 240, 255, 0.18)) !important;
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.35), rgba(0, 240, 255, 0.2)) !important;
   border-color: var(--bugatti-blue) !important;
   font-weight: 600;
 }
@@ -909,6 +940,177 @@ body.tt-app, body.ios-app {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: var(--hm-space-2);
+}
+
+/* ── Bugatti Positions Tab Ergonomics & Redesign ─────────────────────────── */
+.tt-pos-tabs {
+  display: inline-flex !important;
+  align-items: center !important;
+  background: rgba(11, 15, 23, 0.92) !important;
+  border: 1px solid var(--titanium-border) !important;
+  border-radius: 20px !important;
+  padding: 3px !important;
+  gap: 3px !important;
+}
+
+.tt-pos-tab {
+  appearance: none !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--liquid-metal) !important;
+  font-family: var(--font-cockpit) !important;
+  font-size: 0.75rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  padding: 4px 12px !important;
+  border-radius: 16px !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  white-space: nowrap !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  min-height: 28px !important;
+}
+
+.tt-pos-tab:hover {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.tt-pos-tab[aria-selected="true"] {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.38), rgba(0, 240, 255, 0.2)) !important;
+  border-color: var(--bugatti-blue) !important;
+  box-shadow: 0 0 14px rgba(0, 102, 255, 0.4) !important;
+}
+
+.tt-pos-tab__count {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums !important;
+  font-size: 0.6875rem !important;
+  font-weight: 700 !important;
+  padding: 1px 7px !important;
+  border-radius: 10px !important;
+  background: rgba(0, 0, 0, 0.5) !important;
+  color: var(--liquid-metal) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  min-width: 22px !important;
+  text-align: center !important;
+}
+
+.tt-pos-tab[aria-selected="true"] .tt-pos-tab__count {
+  background: var(--bugatti-blue) !important;
+  color: #ffffff !important;
+  border-color: var(--electric-cyan) !important;
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.45) !important;
+}
+
+/* ── Positions Panel History Pagination Bar ──────────────────────────────── */
+.pos-hist-pagination-bar {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  padding: 8px 16px !important;
+  background: rgba(11, 15, 23, 0.95) !important;
+  border-top: 1px solid var(--titanium-border) !important;
+  gap: 12px !important;
+  flex-wrap: wrap !important;
+  font-size: 0.8125rem !important;
+}
+
+.pos-hist-pagination-bar[hidden] {
+  display: none !important;
+}
+
+.pos-hist-pagination__info {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-family: var(--font-cockpit) !important;
+  color: var(--liquid-metal) !important;
+  font-size: 0.78rem !important;
+}
+
+.pos-hist-pagination__controls {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.pos-hist-pagination__size-label {
+  font-size: 0.75rem !important;
+  color: var(--liquid-metal) !important;
+  font-weight: 500 !important;
+}
+
+.pos-hist-page-size-select {
+  height: 28px !important;
+  padding: 2px 20px 2px 8px !important;
+  font-size: 0.75rem !important;
+  background: rgba(14, 20, 32, 0.95) !important;
+  border: 1px solid var(--titanium-border) !important;
+  border-radius: 6px !important;
+  color: #ffffff !important;
+  cursor: pointer;
+}
+
+.pos-hist-page-indicator {
+  padding: 0 8px !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.75rem !important;
+  font-weight: 600 !important;
+  color: var(--electric-cyan) !important;
+  white-space: nowrap !important;
+}
+
+/* ── Increased Sidebar Widths for Watchlist & Order Ticket ───────────────── */
+@media (min-width: 1280px) {
+  #view-trade.tt-view[data-active="true"] {
+    grid-template-columns: minmax(340px, 390px) minmax(0, 1fr) minmax(330px, 380px) !important;
+    gap: 14px !important;
+  }
+}
+
+@media (min-width: 1600px) {
+  #view-trade.tt-view[data-active="true"] {
+    grid-template-columns: minmax(380px, 440px) minmax(0, 1fr) minmax(360px, 420px) !important;
+    gap: 16px !important;
+  }
+}
+
+@media (min-width: 900px) and (max-width: 1279px) {
+  #view-trade.tt-view[data-active="true"] {
+    grid-template-columns: minmax(320px, 360px) minmax(0, 1fr) !important;
+  }
+}
+
+/* Watchlist Table Column Spacing & Precision Ergonomics */
+#watch-table {
+  width: 100% !important;
+  table-layout: auto !important;
+}
+
+#watch-table th,
+#watch-table td {
+  padding: 6px 6px !important;
+  font-size: 0.78rem !important;
+  white-space: nowrap !important;
+}
+
+#watch-table th:first-child,
+#watch-table td:first-child {
+  padding-left: 12px !important;
+  min-width: 75px !important;
+  font-weight: 700 !important;
+}
+
+#watch-table .tt-dir {
+  font-size: 0.7rem !important;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
 }
 
 

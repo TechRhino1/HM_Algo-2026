@@ -663,6 +663,7 @@
                 var panel = panelId ? doc.getElementById(panelId) : (trigger.parentElement ? trigger.parentElement.querySelector('[data-dropdown-panel]') : null);
                 if (panel) {
                     ev.preventDefault();
+                    ev.stopPropagation();
                     var willOpen = panel.hasAttribute('hidden');
                     doc.querySelectorAll('.bugatti-dropdown__menu:not([hidden])').forEach(function (m) {
                         m.setAttribute('hidden', '');

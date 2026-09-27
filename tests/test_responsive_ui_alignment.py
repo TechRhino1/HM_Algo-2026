@@ -130,7 +130,33 @@ class TestResponsiveBugattiCockpit(unittest.TestCase):
         self.assertIn('id="hist-page-last"', html)
         self.assertIn('id="hist-page-numbers"', html)
 
+    def test_positions_panel_redesign_and_history_pagination(self):
+        """Verify Positions panel contains redesigned tabs and history pagination controls."""
+        html = self.templates["dashboard"]
+        self.assertIn('id="pos-tab-count-open"', html)
+        self.assertIn('id="pos-tab-count-history"', html)
+        self.assertIn('id="pos-tab-count-pending"', html)
+        self.assertIn('id="pos-hist-pagination"', html)
+        self.assertIn('id="pos-hist-page-size"', html)
+        self.assertIn('id="pos-hist-first"', html)
+        self.assertIn('id="pos-hist-prev"', html)
+        self.assertIn('id="pos-hist-next"', html)
+        self.assertIn('id="pos-hist-last"', html)
+        self.assertIn('id="pos-hist-range"', html)
+        self.assertIn('id="pos-hist-total"', html)
+        self.assertIn('id="pos-hist-page-indicator"', html)
+
+    def test_expanded_sidebar_widths_and_dropdown_hover(self):
+        """Verify Bugatti theme contains expanded sidebar widths, dropdown hover rules, and positions tab styles."""
+        css = self.theme_bugatti
+        self.assertIn(".bugatti-dropdown:hover > .bugatti-dropdown__menu", css)
+        self.assertIn(".pos-hist-pagination-bar", css)
+        self.assertIn(".tt-pos-tabs", css)
+        self.assertIn(".tt-pos-tab", css)
+        self.assertIn("minmax(340px, 390px)", css)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -65,6 +65,8 @@
     account: null,
     histPage: 1,
     histPageSize: 25,
+    posHistPage: 1,
+    posHistPageSize: 10,
     services: {},
     executionMode: null,
     safeMode: null,
@@ -554,6 +556,7 @@
       var trigger = target.closest('[data-dropdown-trigger]');
       if (trigger) {
         ev.preventDefault();
+        ev.stopPropagation();
         var willOpen = openDropdown !== trigger;
         closeDropdown(false);
         if (willOpen) { setDropdown(trigger, true); openDropdown = trigger; }
@@ -951,9 +954,13 @@
   function renderHistoryInPosPanel() {
     var body = $('pos-body');
     var rows = state.history || [];
-    setText($('pos-tab-count-history'), String(rows.length));
+    var total = rows.length;
+    setText($('pos-tab-count-history'), String(total));
 
-    if (!rows.length) {
+    var histPag = $('pos-hist-pagination');
+
+    if (!total) {
+      if (histPag) histPag.hidden = true;
       if (state.historyLoading) {
         setState(body, 'loading', 'Loading closed trades…', null);
       } else {
@@ -962,8 +969,33 @@
       return;
     }
 
+    if (state.posTab === 'history' && histPag) histPag.hidden = false;
+
+    var pageSize = Number(state.posHistPageSize) || 10;
+    var totalPages = Math.max(1, Math.ceil(total / pageSize));
+    if (state.posHistPage > totalPages) state.posHistPage = totalPages;
+    if (state.posHistPage < 1) state.posHistPage = 1;
+
+    var start = (state.posHistPage - 1) * pageSize;
+    var end = Math.min(start + pageSize, total);
+    var pagedRows = rows.slice(start, end);
+
+    // Update pagination controls
+    setText($('pos-hist-range'), total === 0 ? '0–0' : (start + 1) + '–' + end);
+    setText($('pos-hist-total'), String(total));
+    setText($('pos-hist-page-indicator'), state.posHistPage + ' / ' + totalPages);
+
+    var btnFirst = $('pos-hist-first');
+    var btnPrev = $('pos-hist-prev');
+    var btnNext = $('pos-hist-next');
+    var btnLast = $('pos-hist-last');
+    if (btnFirst) btnFirst.disabled = (state.posHistPage <= 1);
+    if (btnPrev) btnPrev.disabled = (state.posHistPage <= 1);
+    if (btnNext) btnNext.disabled = (state.posHistPage >= totalPages);
+    if (btnLast) btnLast.disabled = (state.posHistPage >= totalPages);
+
     body.removeAttribute('data-state');
-    body.innerHTML = rows.map(function (t) {
+    body.innerHTML = pagedRows.map(function (t) {
       var sym = t.symbol || '';
       var side = String(t.action || t.type || t.side || '').toUpperCase();
       var dirCls = /BUY|LONG/.test(side) ? 'tt-dir--buy' : 'tt-dir--sell';
@@ -1111,6 +1143,10 @@
     if (tot) tot.parentNode.style.display = showOpenOnly ? '' : 'none';
     var flatten = $('flatten-all');
     if (flatten) flatten.hidden = !showOpenOnly;
+
+    /* Positions History Pagination bar: shown only on History tab */
+    var histPag = $('pos-hist-pagination');
+    if (histPag) histPag.hidden = (name !== 'history' || !(state.history && state.history.length));
 
     if (name === 'open') renderPositions();
     else if (name === 'history') renderHistoryInPosPanel();
@@ -5470,6 +5506,58 @@
         if (name === 'pending') loadPendingForTab();
       });
     });
+
+    /* Positions Panel History Pagination Wiring */
+    var posHistSize = $('pos-hist-page-size');
+    if (posHistSize) {
+      posHistSize.addEventListener('change', function () {
+        state.posHistPageSize = Number(this.value) || 10;
+        state.posHistPage = 1;
+        renderHistoryInPosPanel();
+      });
+    }
+    var posHistFirst = $('pos-hist-first');
+    if (posHistFirst) {
+      posHistFirst.addEventListener('click', function () {
+        if (state.posHistPage > 1) {
+          state.posHistPage = 1;
+          renderHistoryInPosPanel();
+        }
+      });
+    }
+    var posHistPrev = $('pos-hist-prev');
+    if (posHistPrev) {
+      posHistPrev.addEventListener('click', function () {
+        if (state.posHistPage > 1) {
+          state.posHistPage--;
+          renderHistoryInPosPanel();
+        }
+      });
+    }
+    var posHistNext = $('pos-hist-next');
+    if (posHistNext) {
+      posHistNext.addEventListener('click', function () {
+        var total = (state.history || []).length;
+        var pageSize = Number(state.posHistPageSize) || 10;
+        var totalPages = Math.max(1, Math.ceil(total / pageSize));
+        if (state.posHistPage < totalPages) {
+          state.posHistPage++;
+          renderHistoryInPosPanel();
+        }
+      });
+    }
+    var posHistLast = $('pos-hist-last');
+    if (posHistLast) {
+      posHistLast.addEventListener('click', function () {
+        var total = (state.history || []).length;
+        var pageSize = Number(state.posHistPageSize) || 10;
+        var totalPages = Math.max(1, Math.ceil(total / pageSize));
+        if (state.posHistPage < totalPages) {
+          state.posHistPage = totalPages;
+          renderHistoryInPosPanel();
+        }
+      });
+    }
 
   /* ── Bugatti Cockpit Confirmation Modal ─────────────────────────────── */
   function showCockpitConfirm(title, message, isDanger, onConfirm) {
