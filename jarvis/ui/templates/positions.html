@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="dark light">
-<title>Open Positions — HM Algo 2.0</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a84ff'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark">
+<title>Live Book &amp; Trade History — HM Algo 2.0</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070b12'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%2300f0ff'/%3E%3C/svg%3E">
 
 <!-- Bootstrap 5: responsive grid + breakpoints -->
 <link rel="stylesheet" href="/static/css/bootstrap.min.css">
@@ -15,8 +15,80 @@
 <link rel="stylesheet" href="/static/css/hm_ui.css">
 <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
 <link rel="stylesheet" href="/static/css/theme_bugatti.css">
+<style>
+  .positions-container {
+    max-width: 1720px;
+    margin: 0 auto;
+    padding: 24px 20px 60px 20px;
+  }
+  .positions-page-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .positions-page-title h1 {
+    font-family: var(--font-hud);
+    font-size: 1.75rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    color: #ffffff;
+    margin: 0;
+  }
+  .positions-page-title p {
+    font-family: var(--font-cockpit);
+    font-size: 0.8125rem;
+    color: var(--machined-silver);
+    margin: 2px 0 0 0;
+  }
+  .positions-table-card {
+    background: rgba(11, 15, 23, 0.85);
+    border: 1px solid var(--titanium-border);
+    border-radius: 14px;
+    overflow: hidden;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  }
+  .positions-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .positions-search-input {
+    background: rgba(14, 20, 32, 0.9);
+    border: 1px solid var(--titanium-border);
+    border-radius: 8px;
+    color: #ffffff;
+    font-family: var(--font-hud);
+    font-size: 0.8125rem;
+    padding: 6px 12px 6px 32px;
+    width: 220px;
+    transition: all 0.2s;
+  }
+  .positions-search-input:focus {
+    border-color: var(--bugatti-blue);
+    box-shadow: var(--bugatti-blue-glow);
+    outline: none;
+    width: 260px;
+  }
+  .positions-search-box {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .positions-search-box .search-ico {
+    position: absolute;
+    left: 10px;
+    color: var(--machined-silver);
+    font-size: 0.8125rem;
+    pointer-events: none;
+  }
+</style>
 </head>
-<body class="ios-app">
+<body class="bugatti-theme">
 
 <!-- Universal Bugatti Navigation Bar -->
 <header class="bugatti-navbar" role="banner">
@@ -59,9 +131,6 @@
     </nav>
 
     <div class="bugatti-navbar__right">
-      <button class="ios-nav__action btn-bugatti-ghost p-2" id="search-toggle" aria-label="Search" style="border-radius:8px;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-      </button>
       <div class="tt-dropdown bugatti-dropdown" data-dropdown>
         <button type="button" class="bugatti-desk-link bugatti-acc-trigger" id="acc-trigger"
                 data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
@@ -79,170 +148,157 @@
   </div>
 </header>
 
-<main class="ios-shell">
+<main class="positions-container">
 
-  <!-- ═══ Large title (iOS-style) ═════════════════════════════════════ -->
-  <div class="ios-large-title">
-    <h1>Positions</h1>
-    <div class="ios-large-title__sub">HM Algo 2.0 · Live Book</div>
-  </div>
-
-  <!-- ═══ Search (collapsed by default; toggled by the nav icon) ═══════ -->
-  <div class="container-fluid px-0" id="search-row" hidden>
-    <div class="px-3 pb-2">
-      <input type="search" class="ios-search" id="symbol-search" placeholder="Filter by symbol" aria-label="Filter positions by symbol">
+  <!-- Header Title Row -->
+  <div class="positions-page-title-row">
+    <div class="positions-page-title">
+      <h1>PORTFOLIO &amp; LIVE BOOK</h1>
+      <p>Institutional Execution Telemetry · Real-Time Order Management</p>
     </div>
-  </div>
-
-  <!-- ═══ Segmented control: OPEN / HISTORY / PENDING ═════════════════ -->
-  <div class="ios-segmented" role="tablist" aria-label="Position view">
-    <button class="ios-segmented__btn" role="tab" data-tab="open" aria-selected="true" aria-controls="positions-view">
-      Open
-      <span class="ios-segmented__count" id="count-open">3</span>
-    </button>
-    <button class="ios-segmented__btn" role="tab" data-tab="history" aria-selected="false" aria-controls="positions-view">
-      History
-      <span class="ios-segmented__count" id="count-history">474</span>
-    </button>
-    <button class="ios-segmented__btn" role="tab" data-tab="pending" aria-selected="false" aria-controls="positions-view">
-      Pending
-      <span class="ios-segmented__count" id="count-pending">0</span>
-    </button>
-  </div>
-
-  <!-- ═══ Action bar: FLATTEN ALL + total P&L ═════════════════════════ -->
-  <div class="ios-action-bar">
-    <span class="ios-action-bar__label" id="action-label">Open P&amp;L</span>
-    <span class="ios-action-bar__total is-down" id="total-pnl">-1.16</span>
-    <button class="ios-btn ios-btn--destructive ios-btn--small" id="flatten-all" type="button">
-      Flatten All
-    </button>
-  </div>
-
-  <!-- ═══ Positions view (id controls) ═══════════════════════════════ -->
-  <section id="positions-view" aria-live="polite">
-
-    <!-- Empty state -->
-    <div class="ios-empty" id="empty-state" hidden>
-      <div class="ios-empty__title">Nothing to show</div>
-      <div>No open positions yet.</div>
-    </div>
-
-    <!-- Phone: stacked position cards -->
-    <div id="position-cards" class="row g-0"></div>
-
-    <!-- Tablet / desktop: dense row table -->
-    <div class="ios-card">
-      <div class="ios-list-header" id="list-header">
-        <div>Symbol</div><div>Side</div><div class="num">Vol</div><div class="num">Entry</div>
-        <div class="num">Now</div><div class="num">SL</div><div class="num">TP</div>
-        <div class="num">P&amp;L</div><div class="actions">Actions</div>
+    <div class="d-flex align-items-center gap-2">
+      <div class="positions-search-box">
+        <span class="search-ico">🔍</span>
+        <input type="search" class="positions-search-input" id="pos-search" placeholder="Search symbol..." aria-label="Filter positions by symbol">
       </div>
-      <div id="position-rows"></div>
+      <button class="tt-btn tt-btn--sm" id="btn-refresh-positions" type="button" title="Refresh Live Data">
+        <span>↻ Refresh</span>
+      </button>
+      <button class="tt-btn tt-btn--danger tt-btn--sm" id="btn-flatten-positions" type="button" title="Close all active open positions">
+        <span>✕ Flatten All</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- KPI Metrics Ribbon -->
+  <div class="positions-kpi-grid">
+    <div class="positions-kpi-card">
+      <span class="positions-kpi-lbl">Open Positions</span>
+      <span class="positions-kpi-val text-cyan" id="kpi-open-count">0</span>
+      <span class="positions-kpi-sub">Active live book trades</span>
+    </div>
+    <div class="positions-kpi-card">
+      <span class="positions-kpi-lbl">Unrealized P&amp;L</span>
+      <span class="positions-kpi-val" id="kpi-floating-pnl">$0.00</span>
+      <span class="positions-kpi-sub">Net floating returns</span>
+    </div>
+    <div class="positions-kpi-card">
+      <span class="positions-kpi-lbl">Account Balance</span>
+      <span class="positions-kpi-val" id="kpi-balance">$0.00</span>
+      <span class="positions-kpi-sub">Settled broker cash</span>
+    </div>
+    <div class="positions-kpi-card">
+      <span class="positions-kpi-lbl">Live Equity</span>
+      <span class="positions-kpi-val text-bull" id="kpi-equity">$0.00</span>
+      <span class="positions-kpi-sub">Total account value</span>
+    </div>
+    <div class="positions-kpi-card">
+      <span class="positions-kpi-lbl">Margin Level</span>
+      <span class="positions-kpi-val text-cyan" id="kpi-margin">--%</span>
+      <span class="positions-kpi-sub">Equity / Used margin</span>
+    </div>
+  </div>
+
+  <!-- Segmented View Tabs: OPEN / HISTORY / PENDING -->
+  <div class="positions-segmented-wrap">
+    <div class="positions-segmented" role="tablist" aria-label="Position views">
+      <button class="positions-seg-btn active" role="tab" data-pos-tab="open" id="tab-open" aria-selected="true">
+        <span>💼 Open Positions</span>
+        <span class="positions-seg-badge" id="badge-open-count">0</span>
+      </button>
+      <button class="positions-seg-btn" role="tab" data-pos-tab="history" id="tab-history" aria-selected="false">
+        <span>📜 Trade History</span>
+        <span class="positions-seg-badge" id="badge-history-count">0</span>
+      </button>
+      <button class="positions-seg-btn" role="tab" data-pos-tab="pending" id="tab-pending" aria-selected="false">
+        <span>⏳ Pending Orders</span>
+        <span class="positions-seg-badge" id="badge-pending-count">0</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Table Card -->
+  <div class="positions-table-card">
+    <div class="positions-table-wrap">
+      <table class="tt-table table-bugatti" id="positions-live-table">
+        <thead id="positions-live-thead">
+          <tr>
+            <th scope="col">Symbol</th>
+            <th scope="col">Side</th>
+            <th scope="col" class="tt-num">Vol</th>
+            <th scope="col" class="tt-num">Entry</th>
+            <th scope="col" class="tt-num">Now</th>
+            <th scope="col" class="tt-num">SL</th>
+            <th scope="col" class="tt-num">TP</th>
+            <th scope="col" class="tt-num">Floating P&amp;L</th>
+            <th scope="col" class="tt-pos-actions-col">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="positions-live-tbody">
+          <tr><td colspan="9" style="text-align:center; padding:32px; color:var(--machined-silver);">Connecting to broker telemetry...</td></tr>
+        </tbody>
+      </table>
     </div>
 
-  </section>
+    <!-- History Pagination Bar -->
+    <div class="pos-hist-pagination-bar" id="pos-hist-pagination" hidden aria-label="Positions History Pagination">
+      <div class="pos-hist-pagination__info">
+        <span class="tt-muted">Showing</span>
+        <span class="tt-num" id="pos-hist-range">0–0</span>
+        <span class="tt-muted">of</span>
+        <span class="tt-num" id="pos-hist-total">0</span>
+        <span class="tt-muted">closed trades</span>
+      </div>
+      <div class="pos-hist-pagination__controls">
+        <label class="tt-muted" for="pos-hist-page-size" style="font-size:0.75rem;">Rows:</label>
+        <select class="pos-hist-page-size-select" id="pos-hist-page-size" aria-label="Rows per page">
+          <option value="10" selected>10</option>
+          <option value="25">25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        <button class="pos-hist-nav-btn" id="pos-hist-first" type="button" title="First page" disabled>&laquo;</button>
+        <button class="pos-hist-nav-btn" id="pos-hist-prev" type="button" title="Previous page" disabled>&lsaquo; Prev</button>
+        <span class="pos-hist-page-indicator" id="pos-hist-page-indicator">1 / 1</span>
+        <button class="pos-hist-nav-btn" id="pos-hist-next" type="button" title="Next page" disabled>Next &rsaquo;</button>
+        <button class="pos-hist-nav-btn" id="pos-hist-last" type="button" title="Last page" disabled>&raquo;</button>
+      </div>
+    </div>
+  </div>
 
 </main>
 
-<!-- ═══ iOS-style tab bar (phone only) ═══════════════════════════════ -->
-<nav class="ios-tabbar" aria-label="Primary">
-  <button class="ios-tabbar__btn" data-tabbar-btn="open" aria-selected="true" type="button">
-    <span class="ios-tabbar__icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
-    </span>
-    Open
-  </button>
-  <button class="ios-tabbar__btn" data-tabbar-btn="history" aria-selected="false" type="button">
-    <span class="ios-tabbar__icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
-    </span>
-    History
-  </button>
-  <button class="ios-tabbar__btn" data-tabbar-btn="pending" aria-selected="false" type="button">
-    <span class="ios-tabbar__icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-9 11-4-4h2.5V7h3v3H14l-4 4z"/></svg>
-    </span>
-    Pending
-  </button>
-  <button class="ios-tabbar__btn" type="button" aria-label="Flatten">
-    <span class="ios-tabbar__icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v14H7V13zm4 4h6v-2h-6v2z"/></svg>
-    </span>
-    Flatten
-  </button>
-</nav>
-
-<!-- ═══ Modify action sheet (iOS-style) ══════════════════════════════ -->
-<div class="ios-modal" id="modify-sheet" role="dialog" aria-labelledby="modify-title" aria-modal="true">
-  <div class="ios-modal__sheet" role="document">
-    <div class="ios-modal__grabber" aria-hidden="true"></div>
-    <h2 class="ios-modal__title" id="modify-title">Modify Order</h2>
-    <p class="text-center is-muted mb-3" id="modify-symbol" style="font-size:13px;">—</p>
-
-    <div class="ios-form-group">
-      <div class="ios-form-row">
-        <label class="ios-form-row__label" for="modify-sl">Stop Loss</label>
-      </div>
-      <input class="ios-input" id="modify-sl" type="number" inputmode="decimal" step="0.00001" placeholder="0.00000">
+<!-- Modify Modal (Bugatti Dark Glass) -->
+<div class="cockpit-modal-backdrop" id="modify-modal" hidden>
+  <div class="cockpit-modal">
+    <div class="cockpit-modal-header">
+      <h3 class="cockpit-modal-title">Modify Position Order</h3>
+      <button class="cockpit-modal-close" id="modify-close-btn" type="button">&times;</button>
     </div>
-
-    <div class="ios-form-group">
-      <div class="ios-form-row">
-        <label class="ios-form-row__label" for="modify-tp">Take Profit</label>
+    <div class="cockpit-modal-body">
+      <p style="color:var(--machined-silver); font-size:0.8125rem; margin-bottom:16px;" id="modify-modal-sub">Updating stop loss &amp; take profit</p>
+      <input type="hidden" id="modify-ticket-val">
+      <div class="mb-3">
+        <label class="form-label" for="modify-sl-input">Stop Loss Price</label>
+        <input type="number" step="any" class="form-control" id="modify-sl-input" placeholder="0.00000">
       </div>
-      <input class="ios-input" id="modify-tp" type="number" inputmode="decimal" step="0.00001" placeholder="0.00000">
-    </div>
-
-    <div class="ios-form-group">
-      <div class="ios-form-row">
-        <label class="ios-form-row__label" for="modify-trailing">Trailing stop</label>
-        <input type="checkbox" class="ios-switch" id="modify-trailing" aria-label="Enable trailing stop">
-      </div>
-      <div class="ios-form-row">
-        <label class="ios-form-row__label" for="modify-trail-pts">Trail (pips)</label>
-        <input class="ios-input" id="modify-trail-pts" type="number" inputmode="decimal" step="0.1" style="max-width:120px">
+      <div class="mb-3">
+        <label class="form-label" for="modify-tp-input">Take Profit Price</label>
+        <input type="number" step="any" class="form-control" id="modify-tp-input" placeholder="0.00000">
       </div>
     </div>
-
-    <div class="ios-modal__actions">
-      <button class="ios-btn ios-btn--filled" id="modify-save" type="button">Save Changes</button>
-      <button class="ios-btn ios-btn--plain" id="modify-cancel" type="button">Cancel</button>
+    <div class="cockpit-modal-footer">
+      <button class="tt-btn" id="modify-cancel-btn" type="button">Cancel</button>
+      <button class="tt-btn tt-btn--buy" id="modify-confirm-btn" type="button">Save Protection</button>
     </div>
   </div>
 </div>
 
-<!-- ═══ Toast host ═══════════════════════════════════════════════════ -->
 <div class="ios-toast-host" id="toast-host" aria-live="polite"></div>
 
 <script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
 <script src="/static/js/auth.js"></script>
 <script src="/static/js/hm_ui.js"></script>
-<script src="/static/js/positions.js" defer></script>
-
-<script>
-  /* Toggle the search row when the nav icon is tapped. Bootstrap's collapse
-     utility handles the show/hide animation; positions.css owns the visual. */
-  document.addEventListener('DOMContentLoaded', function () {
-    var btn = document.getElementById('search-toggle');
-    var row = document.getElementById('search-row');
-    if (!btn || !row) return;
-    btn.addEventListener('click', function () {
-      row.hidden = !row.hidden;
-      var inp = document.getElementById('symbol-search');
-      if (!row.hidden && inp) inp.focus();
-    });
-    /* Wire the Flatten tab-bar button to the same control */
-    var tabbarBtns = document.querySelectorAll('.ios-tabbar__btn');
-    Array.prototype.forEach.call(tabbarBtns, function (b, i) {
-      if (i === 3) {
-        b.addEventListener('click', function () {
-          var flatten = document.getElementById('flatten-all');
-          if (flatten) flatten.click();
-        });
-      }
-    });
-  });
-</script>
+<script src="/static/js/positions.js"></script>
 </body>
 </html>

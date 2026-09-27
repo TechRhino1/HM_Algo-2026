@@ -1176,11 +1176,42 @@
     });
   }
 
+  /* ── Universal Decision Resolver (Checks decisions map and radar opportunities) ── */
+  function findDecisionForSymbol(sym) {
+    if (!sym) return null;
+    var s = String(sym).trim().toUpperCase();
+    var sClean = s.replace(/[#]/g, '').replace(/\.M$/, '');
+
+    // 1. Exact match in state.decisions
+    if (state.decisions) {
+      if (state.decisions[sym]) return state.decisions[sym];
+      if (state.decisions[s]) return state.decisions[s];
+      if (state.decisions[sClean]) return state.decisions[sClean];
+      var dKeys = Object.keys(state.decisions);
+      for (var k = 0; k < dKeys.length; k++) {
+        var kClean = dKeys[k].trim().toUpperCase().replace(/[#]/g, '').replace(/\.M$/, '');
+        if (kClean === sClean) return state.decisions[dKeys[k]];
+      }
+    }
+
+    // 2. Search in radar_opportunities
+    if (state.radar && state.radar.length) {
+      for (var i = 0; i < state.radar.length; i++) {
+        var item = state.radar[i];
+        if (item && item.symbol) {
+          var itemClean = String(item.symbol).trim().toUpperCase().replace(/[#]/g, '').replace(/\.M$/, '');
+          if (itemClean === sClean) return item;
+        }
+      }
+    }
+    return null;
+  }
+
   /* ── Reasoning ("why this trade") ─────────────────────────────────────── */
   function renderReasoning() {
     var host = $('reason-body');
     var sym = state.symbol;
-    var d = sym ? state.decisions[sym] : null;
+    var d = findDecisionForSymbol(sym);
 
     if (!d) {
       setText($('reason-tier'), '—');
@@ -1189,32 +1220,37 @@
       return;
     }
 
-    var tier = String(d.master_confluence_tier || '').toLowerCase();
-    var tierCls = ['high', 'medium', 'low'].indexOf(tier) >= 0 ? tier : 'none';
+    var tierStr = String(d.master_confluence_tier || d.confluence_tier || '').toLowerCase();
+    var tierCls = ['high', 'medium', 'low'].indexOf(tierStr) >= 0 ? tierStr : 'none';
     var chip = $('reason-tier');
     if (chip) {
       chip.className = 'tt-chip tt-chip--' + tierCls;
-      chip.textContent = (d.master_confluence_tier || '—') + ' · ' + (d.master_confluence_score !== undefined ? d.master_confluence_score : '—');
+      var confTier = d.master_confluence_tier || d.confluence_tier || '—';
+      var confScore = d.master_confluence_score !== undefined ? d.master_confluence_score : (d.confluence_score !== undefined ? d.confluence_score : '—');
+      chip.textContent = confTier + ' · ' + confScore;
     }
 
+    var regPrimary = (d.regime && (typeof d.regime === 'object' ? (d.regime.primary || d.regime.primary_regime) : d.regime)) || '—';
+    var regConf = (d.regime && d.regime.confidence !== undefined) ? pct(d.regime.confidence, 0) : '—';
+
     var rows = [
-      ['Decision', String(d.decision || '—') + ' · ' + String(d.bias || '—')],
-      ['Strategy', d.strategy || '—'],
-      ['Regime', (d.regime && d.regime.primary) || '—'],
-      ['Regime conf', d.regime && d.regime.confidence !== undefined ? pct(d.regime.confidence, 0) : '—'],
-      ['Entry', d.entry_price !== undefined ? num(d.entry_price, 5) : '—'],
-      ['Stop', d.stop_loss !== undefined ? num(d.stop_loss, 5) : '—'],
-      ['Target', d.take_profit !== undefined ? num(d.take_profit, 5) : '—'],
+      ['Decision', String(d.decision || d.action || '—') + ' · ' + String(d.bias || '—')],
+      ['Strategy', d.strategy || 'STRUCTURE'],
+      ['Regime', regPrimary],
+      ['Regime conf', regConf],
+      ['Entry', d.entry_price !== undefined ? formatPrice(d.entry_price, sym) : '—'],
+      ['Stop', d.stop_loss !== undefined ? formatPrice(d.stop_loss, sym) : '—'],
+      ['Target', d.take_profit !== undefined ? formatPrice(d.take_profit, sym) : '—'],
       ['R:R', d.risk_reward_ratio !== undefined ? num(d.risk_reward_ratio, 2) + 'R' : '—'],
       ['Risk', d.calculated_risk_percent !== undefined ? num(d.calculated_risk_percent, 2) + '%' : '—'],
-      ['Expected value', d.expected_value !== undefined ? num(d.expected_value, 2) : '—'],
-      ['Model confidence', d.model_confidence !== undefined ? pct(d.model_confidence, 1) : '—'],
+      ['Expected value', d.expected_value !== undefined ? num(d.expected_value, 2) : (d.ev !== undefined ? num(d.ev, 2) : '—')],
+      ['Model confidence', d.model_confidence !== undefined ? pct(d.model_confidence, 1) : (d.win_prob !== undefined ? num(d.win_prob, 0) + '%' : '—')],
       ['Dissection', String(d.dissection_tier || '—') + ' (' + (d.dissection_score !== undefined ? d.dissection_score : '—') + ')'],
       ['Adversarial penalty', d.adversarial_penalty !== undefined ? num(d.adversarial_penalty, 1) : '—'],
-      ['Gate policy', d.gate_policy_decision || '—'],
+      ['Gate policy', d.gate_policy_decision || (d.gate_passed ? 'PASS' : 'WAIT')],
       ['Authorised', d.execution_authorized ? 'yes' : 'no'],
       ['Sample size', d.pattern_sample_size !== undefined ? d.pattern_sample_size : '—'],
-      ['Updated', d.timestamp || '—']
+      ['Updated', d.timestamp || 'Live']
     ];
 
     host.removeAttribute('data-state');
@@ -1257,7 +1293,7 @@
   /* ── Trade Lifecycle Stepper ─────────────────────────────────────────── */
   function renderLifecycleStepper() {
     var sym = state.symbol;
-    var d = sym ? state.decisions[sym] : null;
+    var d = findDecisionForSymbol(sym);
     var positions = state.positions || [];
     var symPos = null;
     for (var i = 0; i < positions.length; i++) {
@@ -2594,7 +2630,7 @@
   }
 
   function renderDevilAdvocate() {
-    var d = state.symbol ? state.decisions[state.symbol] : null;
+    var d = findDecisionForSymbol(state.symbol);
 
     setText($('da-symbol'), state.symbol || '—');
     var v = devilVerdict(d);
@@ -2644,7 +2680,7 @@
     var host = $('ctx-analyst');
     if (!host || host.hidden) return;
     var sym = ($('ticket-symbol') && $('ticket-symbol').value ? $('ticket-symbol').value.trim().toUpperCase() : state.symbol) || state.symbol;
-    var d = sym ? (state.decisions[sym] || state.decisions[sym.toUpperCase()]) : null;
+    var d = findDecisionForSymbol(sym);
     if (!d) {
       setState(host, 'empty', 'No data for ' + (sym || 'symbol'), 'Select an instrument with active engine telemetry.');
       return;
@@ -2652,7 +2688,7 @@
 
     var v = devilVerdict(d);
     var gate = d.quality_gate || null;
-    var gatePass = gate ? String(gate.passed === true ? 'PASS' : (gate.passed === false ? 'BLOCK' : '—')) : '—';
+    var gatePass = gate ? String(gate.passed === true ? 'PASS' : (gate.passed === false ? 'BLOCK' : '—')) : (d.gate_passed ? 'PASS' : 'WAIT');
     var bias = String(d.bias || d.decision || 'HOLD').toUpperCase();
     var isBuy = /BUY|LONG/.test(bias);
 
@@ -2660,11 +2696,26 @@
     if (gate && Array.isArray(gate.failing_reasons)) {
       gate.failing_reasons.forEach(function (r) { if (r && objections.indexOf(r) === -1) objections.push(r); });
     }
+    if (Array.isArray(d.failing_reasons)) {
+      d.failing_reasons.forEach(function (r) { if (r && objections.indexOf(r) === -1) objections.push(r); });
+    }
+    if (Array.isArray(d.waiting_reasons)) {
+      d.waiting_reasons.forEach(function (r) { if (r && objections.indexOf(r) === -1) objections.push(r); });
+    }
     if (Array.isArray(d.rejection_reasons)) {
       d.rejection_reasons.forEach(function (r) { if (r && objections.indexOf(r) === -1) objections.push(r); });
     }
     if (Array.isArray(d.risk_factors)) {
       d.risk_factors.forEach(function (r) { if (r && objections.indexOf(r) === -1) objections.push(r); });
+    }
+    if (Array.isArray(d.invalidation_levels) && d.invalidation_levels.length) {
+      d.invalidation_levels.forEach(function (inv) {
+        var str = 'Invalidation level: ' + (typeof inv === 'string' ? inv : JSON.stringify(inv));
+        if (objections.indexOf(str) === -1) objections.push(str);
+      });
+    }
+    if (d.adversarial_penalty && Number(d.adversarial_penalty) > 15) {
+      objections.push('Adversarial penalty: ' + Number(d.adversarial_penalty).toFixed(1) + ' / 50.0');
     }
     var counterEvidence = isBuy ? (d.bear_case || []) : (d.bull_case || []);
     if (Array.isArray(counterEvidence)) {
@@ -2681,8 +2732,8 @@
         '<span class="tt-chip tt-chip--' + (isBuy ? 'buy' : (/SELL|SHORT/.test(bias) ? 'sell' : 'none')) + '">' + esc(bias) + '</span>' +
         '<span class="tt-chip tt-chip--' + (gatePass === 'PASS' ? 'buy' : 'sell') + '">GATE ' + esc(gatePass) + '</span>' +
         '<span class="tt-chip tt-chip--none">' +
-          esc(d.master_confluence_tier || '—') + ' · ' +
-          (d.master_confluence_score !== undefined ? d.master_confluence_score : '—') +
+          esc(d.master_confluence_tier || d.confluence_tier || '—') + ' · ' +
+          (d.master_confluence_score !== undefined ? d.master_confluence_score : (d.confluence_score !== undefined ? d.confluence_score : '—')) +
         '</span>' +
       '</div>' +
       '<div class="tt-subhead"><span class="tt-panel__title">Case against ' + esc(sym) + ' (' + esc(bias) + ')</span></div>' +
@@ -2690,9 +2741,9 @@
         ? '<ul class="tt-reasons">' + objections.slice(0, 6).map(function (t) {
             return '<li><span>' + esc(t) + '</span></li>';
           }).join('') + '</ul>'
-        : '<p class="tt-hint">The engine reported no adverse threats against this setup.</p>') +
+        : '<p class="tt-hint" style="color:var(--emerald-profit)">✓ Zero adverse threats reported. Setup aligns with ' + esc(bias) + ' thesis.</p>') +
       '<p class="tt-hint" style="margin-top:var(--hm-space-2)">' +
-        'Full multi-timeframe breakdown & adversarial audit on the Analyst tab.' +
+        'Full multi-timeframe breakdown & adversarial audit on the Quant Analyst tab.' +
       '</p>';
   }
 
@@ -2736,8 +2787,8 @@
 
   function renderQualityGate() {
     var host = $('gate-body');
-    var d = state.symbol ? state.decisions[state.symbol] : null;
-    var gate = d && d.quality_gate;
+    var d = findDecisionForSymbol(state.symbol);
+    var gate = (d && d.quality_gate) || (d && d.checks ? { checks: d.checks, passed: d.gate_passed, failing_reasons: d.failing_reasons } : null);
     var chip = $('gate-verdict');
 
     if (!gate) {
@@ -2799,7 +2850,7 @@
 
   function renderObjections() {
     var host = $('da-objections');
-    var d = state.symbol ? state.decisions[state.symbol] : null;
+    var d = findDecisionForSymbol(state.symbol);
     if (!d) {
       setState(host, 'empty', 'No setup selected',
         'Pick an instrument to see the engine\u2019s recorded objections.');

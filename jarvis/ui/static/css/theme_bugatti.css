@@ -758,8 +758,46 @@ th.tt-pos-actions-col {
   border-radius: 8px !important;
   font-family: var(--font-hud) !important;
   font-size: 0.875rem !important;
-  min-height: 40px;
+  min-height: 38px;
   transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+/* Eliminate native OS select arrow and inject single sleek Bugatti cyan caret */
+select,
+.form-select,
+.tt-select {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='none' stroke='%2300f0ff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 10px center !important;
+  background-size: 10px 6px !important;
+  padding-right: 28px !important;
+  cursor: pointer;
+}
+
+select::-ms-expand,
+.form-select::-ms-expand,
+.tt-select::-ms-expand {
+  display: none !important;
+}
+
+/* Eliminate all pseudo-element double-carets on dropdown triggers */
+.dropdown-toggle::after,
+.bugatti-desk-link::after,
+.tt-tab::after {
+  display: none !important;
+  content: none !important;
+}
+
+.tt-select--compact {
+  min-height: 28px !important;
+  height: 28px !important;
+  font-size: 0.75rem !important;
+  padding: 2px 24px 2px 8px !important;
+  background-position: right 8px center !important;
+  background-size: 8px 5px !important;
 }
 
 .form-control:focus, .form-select:focus, .tt-input:focus, .tt-select:focus {
@@ -1314,22 +1352,31 @@ button.bugatti-dropdown__item:focus {
 /* ── Increased Sidebar Widths for Watchlist & Order Ticket ───────────────── */
 @media (min-width: 1280px) {
   #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(340px, 390px) minmax(0, 1fr) minmax(330px, 380px) !important;
+    grid-template-columns: minmax(360px, 420px) minmax(0, 1fr) minmax(350px, 410px) !important;
     gap: 14px !important;
   }
 }
 
 @media (min-width: 1600px) {
   #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(380px, 440px) minmax(0, 1fr) minmax(360px, 420px) !important;
+    grid-template-columns: minmax(400px, 470px) minmax(0, 1fr) minmax(380px, 450px) !important;
     gap: 16px !important;
   }
 }
 
 @media (min-width: 900px) and (max-width: 1279px) {
   #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(320px, 360px) minmax(0, 1fr) !important;
+    grid-template-columns: minmax(340px, 390px) minmax(0, 1fr) !important;
   }
+}
+
+/* Prevent radar-filter and compact selects from squishing or clipping */
+#radar-filter,
+#chart-timeframe,
+.tt-panel__head select.tt-select--compact {
+  flex-shrink: 0 !important;
+  min-width: 105px !important;
+  max-width: 130px !important;
 }
 
 /* Watchlist Table Column Spacing & Precision Ergonomics */
@@ -1365,17 +1412,141 @@ button.bugatti-dropdown__item:focus {
   border-radius: 4px !important;
 }
 
+/* Positions Table Layout & Cell Alignment */
+#pos-table {
+  width: 100% !important;
+  table-layout: auto !important;
+}
+
 #pos-table th,
 #pos-table td {
-  padding: 6px 8px !important;
+  padding: 6px 10px !important;
   font-size: 0.8125rem !important;
   white-space: nowrap !important;
+  box-sizing: border-box !important;
 }
 
 #pos-table th:first-child,
 #pos-table td:first-child {
   padding-left: 12px !important;
   font-weight: 700 !important;
+  text-align: left !important;
+}
+
+#pos-table th.tt-num,
+#pos-table td.tt-num {
+  text-align: right !important;
+}
+
+#pos-table th.tt-pos-actions-col,
+#pos-table td.tt-pos-actions {
+  text-align: right !important;
+  padding-right: 12px !important;
+}
+
+/* ── Positions Surface (positions.html) Institutional Bugatti Theme ──────── */
+.positions-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.positions-kpi-card {
+  background: rgba(11, 15, 23, 0.85);
+  border: 1px solid var(--titanium-border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  transition: transform 0.2s, border-color 0.2s;
+}
+
+.positions-kpi-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(0, 102, 255, 0.4);
+}
+
+.positions-kpi-lbl {
+  font-family: var(--font-hud);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--machined-silver);
+}
+
+.positions-kpi-val {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.positions-kpi-sub {
+  font-family: var(--font-cockpit);
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.positions-segmented-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.positions-segmented {
+  display: inline-flex;
+  background: rgba(9, 13, 21, 0.9);
+  border: 1px solid var(--titanium-border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.positions-seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--machined-silver);
+  font-family: var(--font-cockpit);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.positions-seg-btn.active {
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.4), rgba(0, 240, 255, 0.25));
+  color: #ffffff;
+  border: 1px solid rgba(0, 240, 255, 0.5);
+  box-shadow: 0 0 12px rgba(0, 102, 255, 0.35);
+}
+
+.positions-seg-badge {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.positions-seg-btn.active .positions-seg-badge {
+  background: rgba(0, 240, 255, 0.3);
+  color: #ffffff;
 }
 
 
