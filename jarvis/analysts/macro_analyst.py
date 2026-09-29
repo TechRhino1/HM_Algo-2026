@@ -105,6 +105,27 @@ class MacroAnalyst(BaseAnalyst):
                     score -= 5.0
                     continue
 
+                # ── Recency filter ───────────────────────────────────────────
+                # Only events within the last 6 hours should influence
+                # directional shock scoring.  Without this, a USD beat from
+                # Monday keeps usd_bull_shock=True all week, permanently
+                # biasing Gold SELL even when the market has reversed.
+                _event_time_str = item.get("datetime") or item.get("time") or ""
+                _event_stale = False
+                if _event_time_str:
+                    try:
+                        from datetime import datetime, timezone, timedelta
+                        _evt_dt = datetime.fromisoformat(str(_event_time_str).replace("Z", "+00:00"))
+                        if _evt_dt.tzinfo is None:
+                            _evt_dt = _evt_dt.replace(tzinfo=timezone.utc)
+                        _age_hours = (datetime.now(timezone.utc) - _evt_dt).total_seconds() / 3600.0
+                        if _age_hours > 6.0:
+                            _event_stale = True
+                    except Exception:
+                        pass  # unparseable timestamp — treat as recent
+                if _event_stale:
+                    continue
+
                 try:
                     act = _parse_metric(actual_str)
                     fcst = _parse_metric(fcst_str)
@@ -158,13 +179,10 @@ class MacroAnalyst(BaseAnalyst):
                 score += 20.0
                 evidence.append(f"Macro Directional Forecast: Weaker USD triggers SELL bias on {sym}.")
 
-        # 3b. Fallback: No macro shock — align with structure bias
-        # "No news is good news" — absence of macro headwinds supports trend continuation.
+        # 3b. No macro shock: remain NEUTRAL
+        # Macro analyst only provides directional vote when genuine economic shocks or events occur.
         if bias == "NEUTRAL" and not usd_bull_shock and not usd_bear_shock:
-            structure_bias = context.structure.bias
-            if structure_bias in ("BULLISH", "BEARISH"):
-                bias = structure_bias
-                evidence.append(f"Macro: No active macro headwinds — aligning with {structure_bias} structure bias.")
+            evidence.append("Macro: No active macro news shocks detected — remaining NEUTRAL.")
 
         # 4. Check regime event risk / blackout window
         if regime.primary_regime.value == "EVENT_RISK":

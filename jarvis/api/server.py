@@ -507,9 +507,14 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 from jarvis.market.sessions import SessionEngine
                 sym = query.get("symbol", ["XAUUSD"])[0]
                 snap["active_market_status"] = SessionEngine.get_market_trading_status(sym)
+                configured_syms = [str(s).strip() for s in (SETTINGS.trading.symbols or []) if str(s).strip()]
+                if not configured_syms:
+                    configured_syms = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD", "ETHUSD", "SOLUSD", "ETHBTC"]
+                elif "ETHBTC" not in configured_syms:
+                    configured_syms.append("ETHBTC")
                 snap["market_statuses"] = {
                     s: SessionEngine.get_market_trading_status(s)
-                    for s in ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD", "ETHUSD"]
+                    for s in configured_syms
                 }
                 self._send_json(snap)
             elif path == "/api/market-status":
@@ -1086,7 +1091,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     fresh_acc = self.mt5_client.get_account_snapshot()
                     self.state_manager.sync_broker_state(fresh_acc, fresh_pos)
                 self._send_json(res)
-            elif path == "/api/action/resume_trading":
+            elif path in ("/api/action/resume_trading", "/api/action/reset_drawdown"):
                 if hasattr(self, "orchestrator") and self.orchestrator:
                     res = self.orchestrator.resume_trading()
                 else:

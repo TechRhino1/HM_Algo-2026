@@ -104,11 +104,21 @@ def test_drawdown_tier_multiplier_scaling():
     lots_tier2 = res_tier2["lots"]
     assert lots_tier2 < lots_tier1
 
-    # Case 4: Equity 9150 -> 8.5% DD -> multiplier 0.0 -> Halt
+    # Case 4: Equity 9150 -> 8.5% DD -> now tier 3 (dd_pct / max_dd = 8.5/15 = 57%)
+    # The drawdown guard no longer hard-halts at 8%; it scales sizing down.
+    # The true hard halt comes from check_limits at >= max_drawdown_pct (15%).
     acc_tier3 = _mock_account(balance=10000.0, equity=9150.0)
     res_tier3 = re.authorize_execution(dec, acc_tier3, [], sym_info, entry_authorized_override=True)
-    assert res_tier3["authorized"] is False
-    assert any("DRAWDOWN_TIER_HALT" in r for r in res_tier3["reasons"])
+    assert res_tier3["authorized"] is True
+    lots_tier3 = res_tier3["lots"]
+    assert lots_tier3 < lots_tier2  # Still reduced sizing
+
+    # Case 5: Equity 8400 -> 16% DD -> exceeds max_drawdown_pct (15%) -> Circuit breaker halt
+    re.drawdown_guard.daily_start_equity = 8500.0
+    acc_halt = _mock_account(balance=8400.0, equity=8400.0)
+    res_halt = re.authorize_execution(dec, acc_halt, [], sym_info, entry_authorized_override=True)
+    assert res_halt["authorized"] is False
+    assert any("Max Portfolio Drawdown breached" in r for r in res_halt["reasons"])
 
 
 def test_get_risk_status_diagnostics():

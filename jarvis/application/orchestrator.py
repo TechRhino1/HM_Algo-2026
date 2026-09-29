@@ -32,7 +32,7 @@ from jarvis.learning.trade_memory import TradeMemory
 from jarvis.learning.online_ml_predictor import OnlineMLPredictor
 from jarvis.learning.strategy_bandit import StrategyBandit
 from jarvis.learning.strategy_memory import StrategyRegimeMemory
-from jarvis.data.schemas import ExecutionMode
+from jarvis.data.schemas import ExecutionMode, MarketRegime
 from jarvis.data.symbol_registry import is_crypto
 from jarvis.data.symbol_registry import resolve as _resolve_sym
 from jarvis.risk.circuit_breaker import CircuitBreaker
@@ -731,8 +731,16 @@ class JarvisOrchestrator:
                 "persist": regime.regime_persistence
             }
 
-        # 4. Dispatch Parallel Analysts + Devil's Advocate
-        tentative_bias = "BUY" if context.structure.bias == "BULLISH" else ("SELL" if context.structure.bias == "BEARISH" else ("SELL" if getattr(context.momentum, "trend_score", 0.0) < 0 else "BUY"))
+        # 4. Dispatch Parallel Analysts + Devil's Advocate (Regime & Momentum aligned)
+        ts_val = getattr(context.momentum, "trend_score", 0.0) if hasattr(context, "momentum") else 0.0
+        if regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL):
+            tentative_bias = "BUY"
+        elif regime.primary_regime in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR):
+            tentative_bias = "SELL"
+        elif context.structure.bias in ("BULLISH", "BEARISH"):
+            tentative_bias = "BUY" if context.structure.bias == "BULLISH" else "SELL"
+        else:
+            tentative_bias = "SELL" if ts_val < 0 else "BUY"
         analyst_reports, devil_report = self.analyst_cluster.run_all_parallel(context, regime, tentative_bias)
 
         # 5. Evaluate Decision with Expected Value & Quality Gate
@@ -800,12 +808,26 @@ class JarvisOrchestrator:
             }
 
         # ── Hard Quality Gate: min model_confidence ────────────────────────
-        # Adaptive Confidence Gate: 0.50 for favorable asymmetric R:R (>=1.8) scalps, 0.55 standard.
-        # Forex (the live trading domain) uses a relaxed 0.45 floor per the user directive.
-        is_favorable_scalp = (active_trade_style == "SCALP" and decision.risk_reward_ratio >= 1.3 and decision.expected_value > 0 and context.volatility.current_spread_pips <= (_spec.max_spread_pips * 0.85))
-        is_forex = (_spec.asset_class == "FOREX")
+        # Adaptive Confidence Gate across styles:
+        # Forex & Metals (XAUUSD/XAGUSD) use a realistic 0.45 floor.
+        # Scalps with favorable R:R (>=1.3) and EV > 0 use 0.45 floor.
+        # Day trades with EV >= 0.3 use 0.48 floor.
+        # Setups with all 30 checks passed and EV > 0 use 0.48 floor.
+        is_metals = _spec.canonical in ("XAUUSD", "XAGUSD") or _spec.asset_class == "COMMODITY"
+        is_forex_or_metals = (_spec.asset_class == "FOREX") or is_metals
         is_crypto_asset = (_spec.asset_class == "CRYPTO") or getattr(_spec, "is_crypto", False)
-        MIN_CONFIDENCE = 0.45 if is_forex else (0.50 if (is_favorable_scalp or (is_crypto_asset and decision.risk_reward_ratio >= 1.4)) else 0.55)
+        is_favorable_scalp = (active_trade_style == "SCALP" and decision.risk_reward_ratio >= 1.3 and decision.expected_value > 0)
+        is_favorable_day = (active_trade_style == "DAY_TRADING" and decision.expected_value >= 0.30 and decision.risk_reward_ratio >= 1.4)
+        gate_passed = bool(getattr(getattr(decision, "quality_gate", None), "passed", False))
+
+        if is_forex_or_metals or is_favorable_scalp:
+            MIN_CONFIDENCE = 0.45
+        elif is_favorable_day or (gate_passed and decision.expected_value > 0):
+            MIN_CONFIDENCE = 0.48
+        elif is_crypto_asset and decision.risk_reward_ratio >= 1.4:
+            MIN_CONFIDENCE = 0.50
+        else:
+            MIN_CONFIDENCE = 0.52
         
         # The calibrated policy, when it is the authority, replaces the legacy
         # stack outright -- including the blunt MIN_CONFIDENCE floor, whose job
@@ -1156,6 +1178,12 @@ class JarvisOrchestrator:
                         and best_opportunity.risk_reward_ratio >= 1.4
                         and failing_cnt <= 1
                     )
+                    or (
+                        best_opportunity.setup_grade == "GRADE B"
+                        and best_opportunity.expected_value >= 0.40
+                        and best_opportunity.risk_reward_ratio >= 1.4
+                        and failing_cnt == 0
+                    )
                 )
             )
 
@@ -1314,7 +1342,15 @@ class JarvisOrchestrator:
         self.circuit_breaker.reset()
         if hasattr(self, "risk_engine") and hasattr(self.risk_engine, "circuit_breaker"):
             self.risk_engine.circuit_breaker.reset()
-        logger.info("✅ TRADING RESUMED: Circuit breaker manually reset by operator.")
+        if hasattr(self, "risk_engine") and hasattr(self.risk_engine, "drawdown_guard"):
+            account = None
+            if self.mt5_client and hasattr(self.mt5_client, "get_account_snapshot"):
+                account = self.mt5_client.get_account_snapshot()
+            eq = getattr(account, "equity", 0.0) or (self.state_manager.account.equity if self.state_manager and self.state_manager.account else 0.0)
+            if eq > 0:
+                self.risk_engine.drawdown_guard.reset_baselines(eq)
+                logger.info(f"✅ DRAWDOWN BASELINES RE-ANCHORED to ${eq:,.2f}")
+        logger.info("✅ TRADING RESUMED: Circuit breaker and drawdown baselines reset by operator.")
         return {
             "status": "SUCCESS",
             "circuit_breaker": "RESET"

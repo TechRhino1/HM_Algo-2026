@@ -44,31 +44,41 @@
         <!-- Global Cross-Market Navigation Switches -->
         <nav class="bugatti-nav-links" role="navigation" aria-label="Primary navigation">
           <a href="/" class="bugatti-desk-link" title="Cockpit Master Desk"><span>⚡ Cockpit</span></a>
+
+          <!-- Consolidated Markets Dropdown -->
           <div class="tt-dropdown bugatti-dropdown" data-dropdown>
-            <button type="button" class="bugatti-desk-link active" id="more-trigger"
+            <button type="button" class="bugatti-desk-link active" id="markets-trigger"
                     data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
-                    aria-controls="more-menu">
-              <span>More</span>
+                    aria-controls="markets-menu">
+              <span>🌐 Markets</span>
               <svg class="bugatti-caret" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
             </button>
-            <div class="tt-dropdown__panel tt-dropdown__panel--left bugatti-dropdown__menu" id="more-menu" data-dropdown-panel hidden aria-label="Market sections">
-              <div class="bugatti-dropdown__header">VIEWS &amp; DESKS</div>
-              <a href="/?view=trade" class="bugatti-dropdown__item"><span>📈 Trade Desk</span></a>
+            <div class="tt-dropdown__panel tt-dropdown__panel--left bugatti-dropdown__menu" id="markets-menu" data-dropdown-panel hidden aria-label="Global Markets">
+              <div class="bugatti-dropdown__header">GLOBAL MARKETS</div>
+              <a href="/stocks" class="bugatti-dropdown__item"><span>🇺🇸 US Market</span></a>
+              <a href="/india" class="bugatti-dropdown__item active" aria-current="page"><span>🇮🇳 Indian Market</span></a>
+              <a href="/options" class="bugatti-dropdown__item"><span>📊 Options Chain</span></a>
+            </div>
+          </div>
+
+          <!-- Consolidated Desks Dropdown -->
+          <div class="tt-dropdown bugatti-dropdown" data-dropdown>
+            <button type="button" class="bugatti-desk-link" id="desks-trigger"
+                    data-dropdown-trigger aria-haspopup="true" aria-expanded="false"
+                    aria-controls="desks-menu">
+              <span>⚙️ Desks</span>
+              <svg class="bugatti-caret" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
+            </button>
+            <div class="tt-dropdown__panel tt-dropdown__panel--left bugatti-dropdown__menu" id="desks-menu" data-dropdown-panel hidden aria-label="Intelligence Desks">
+              <div class="bugatti-dropdown__header">INTELLIGENCE DESKS</div>
               <a href="/?view=news" class="bugatti-dropdown__item"><span>📰 News Sentinel</span></a>
               <a href="/?view=analyst" class="bugatti-dropdown__item"><span>🧠 Quant Analyst</span></a>
               <a href="/?view=analytics" class="bugatti-dropdown__item"><span>📊 Performance Analytics</span></a>
               <a href="/?view=backtest" class="bugatti-dropdown__item"><span>⏱️ Strategy Backtest</span></a>
-
               <div class="bugatti-dropdown__divider"></div>
-              <div class="bugatti-dropdown__header">MARKET HUBS</div>
-              <a href="/stocks" class="bugatti-dropdown__item"><span>🇺🇸 US Market</span></a>
-              <a href="/india" class="bugatti-dropdown__item active" aria-current="page"><span>🇮🇳 Indian Market</span></a>
-              <a href="/options" class="bugatti-dropdown__item"><span>📊 Options</span></a>
-
-              <div class="bugatti-dropdown__divider"></div>
-              <div class="bugatti-dropdown__header">SYSTEM TERMINALS</div>
-              <a href="/console" class="bugatti-dropdown__item"><span>📟 Console</span></a>
-              <a href="/positions" class="bugatti-dropdown__item"><span>📋 Positions</span></a>
+              <div class="bugatti-dropdown__header">OPERATIONS</div>
+              <a href="/positions" class="bugatti-dropdown__item"><span>📋 Positions Desk</span></a>
+              <a href="/console" class="bugatti-dropdown__item"><span>📟 Terminal Console</span></a>
             </div>
           </div>
         </nav>

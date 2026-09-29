@@ -18,7 +18,8 @@ class RiskAnalyst(BaseAnalyst):
         risk_factors = []
 
         score = 65.0
-        bias = st.bias
+        # Risk analyst evaluates structural geometry feasibility, remaining direction-agnostic
+        bias = "NEUTRAL"
 
         # Determine structural R:R distance
         c_price = context.current_price

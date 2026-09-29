@@ -157,7 +157,7 @@ _REGISTRY: Dict[str, SymbolSpec] = {
 
 # ─── Broker Alias Resolution ─────────────────────────────────────────────────
 _ALIAS_MAP: Dict[str, str] = {
-    "GOLD.I#": "XAUUSD", "GOLD": "XAUUSD", "GOLD.I": "XAUUSD", "XAUUSD#": "XAUUSD", "XAUUSD.I#": "XAUUSD", "XAUUSD.I": "XAUUSD",
+    "GOLD.I#": "XAUUSD", "GOLD": "XAUUSD", "GOLD#": "XAUUSD", "GOLD.I": "XAUUSD", "XAUUSD#": "XAUUSD", "XAUUSD.I#": "XAUUSD", "XAUUSD.I": "XAUUSD",
     "EURUSD#": "EURUSD", "EURUSD.I#": "EURUSD", "EURUSD.I": "EURUSD",
     "GBPUSD#": "GBPUSD", "GBPUSD.I#": "GBPUSD", "GBPUSD.I": "GBPUSD",
     "USDJPY#": "USDJPY", "USDJPY.I#": "USDJPY", "USDJPY.I": "USDJPY",

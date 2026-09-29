@@ -71,7 +71,7 @@ data/manifests/
 data/metadata/
 
 # Canonical runtime database directory (see jarvis/config/paths.py)
-data/*.db
+!data/*.db
 data/*.db-shm
 data/*.db-wal
 # Timestamped snapshots taken before a repair (tools/repair_forecast_column.py).

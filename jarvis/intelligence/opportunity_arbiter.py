@@ -317,10 +317,55 @@ class UniversalOpportunityArbiter:
         if not strat_compat:
             utility_score = 0.0
 
+        # Spread-to-Risk Friction Filter: Mode-adaptive friction handling
+        if context is not None and abs(entry_price - stop_loss) > 1e-9:
+            from jarvis.data.symbol_registry import resolve as resolve_symbol
+            try:
+                sym_spec = resolve_symbol(symbol)
+                pip_sz = getattr(sym_spec, "pip_size", 0.0001) or 0.0001
+                spread_pips_val = float(getattr(getattr(context, "volatility", None), "current_spread_pips", 0.0) or 0.0)
+                spread_dist_val = spread_pips_val * pip_sz
+                risk_dist_val = abs(entry_price - stop_loss)
+                friction_ratio = spread_dist_val / risk_dist_val
+                is_crypto = any(c in symbol.upper() for c in ("BTC", "ETH", "SOL", "CRYPTO"))
+                # SCALP and Crypto naturally encounter higher friction on tight stops
+                max_friction = 0.35 if (style_norm == "SCALP" or is_crypto) else (0.25 if style_norm == "DAY_TRADING" else 0.18)
+                if friction_ratio > max_friction:
+                    if friction_ratio > 0.50:  # Excessive: spread consumes >50% of the stop loss
+                        logger.info(f"🛡️ Arbiter: Disqualifying {symbol} setup: spread eats {friction_ratio*100:.1f}% (>50%) of risk distance.")
+                        utility_score = 0.0
+                    else:  # Moderate friction: apply proportional penalty rather than killing the trade outright
+                        penalty_mult = max(0.20, 1.0 - (friction_ratio - max_friction) * 2.0)
+                        utility_score = round(utility_score * penalty_mult, 4)
+                        logger.debug(f"🛡️ Arbiter: Penalizing {symbol} utility by {penalty_mult:.2f}x: friction {friction_ratio*100:.1f}% > {max_friction*100:.0f}%")
+            except Exception as e:
+                logger.debug(f"Arbiter spread friction check: {e}")
+
+        # Session Quality Filter: Prohibit new entries in OFF_HOURS on non-crypto assets
+        from jarvis.market.sessions import SessionEngine
+        try:
+            sess_info = SessionEngine.get_current_session()
+            is_crypto_asset = any(c in symbol.upper() for c in ("BTC", "ETH", "SOL", "CRYPTO"))
+            if sess_info.current_session == "OFF_HOURS" and not is_crypto_asset:
+                logger.debug(f"🛡️ Arbiter: OFF_HOURS session active -- suppressing new non-crypto entry for {symbol}")
+                utility_score = 0.0
+        except Exception as e:
+            logger.debug(f"Arbiter session check: {e}")
+
+        # Multi-Timeframe Alignment Check: Penalize counter-macro trades
+        mtf_data = getattr(context, "mtf_alignment", {}) if context else {}
+        if isinstance(mtf_data, dict):
+            macro_d1 = str(mtf_data.get("D1", "")).upper()
+            macro_h4 = str(mtf_data.get("H4", "")).upper()
+            if bias == "BUY" and ("BEAR" in macro_d1 or "BEAR" in macro_h4):
+                utility_score = round(utility_score * 0.65, 4)
+            elif bias == "SELL" and ("BULL" in macro_d1 or "BULL" in macro_h4):
+                utility_score = round(utility_score * 0.65, 4)
+
         # Setup Grade Assignment:
         # GRADE A+ if Utility >= 1.80, Win Prob >= 70%, Confluence >= 75, EV >= 0.85R
         # GRADE A if Utility >= 1.35, Win Prob >= 60%, Confluence >= 65, EV >= 0.50R
-        # GRADE B if Utility >= 1.00
+        # GRADE B if Utility >= 0.95
         # GRADE C otherwise
         if utility_score >= 1.80 and (win_prob_pct >= 62.0 or ml_prob >= 0.70) and confluence_score >= 28.0 and expected_value >= 0.80:
             setup_grade = "GRADE A+"
@@ -331,21 +376,19 @@ class UniversalOpportunityArbiter:
         else:
             setup_grade = "GRADE C"
 
-        # Actionability Determination
-        gate_passed = decision_obj.quality_gate.passed if (decision_obj and getattr(decision_obj, "quality_gate", None)) else True
+        # Actionability Determination: Require Grade A/A+ or solid Grade B with positive EV and passed/acceptable quality gate
+        failing_reasons = getattr(decision_obj.quality_gate, "failing_reasons", []) if (decision_obj and getattr(decision_obj, "quality_gate", None)) else []
+        critical_failures = [r for r in failing_reasons if any(c in r for c in ("Drawdown", "Spread", "Regime Viability", "Circuit Breaker"))]
+        gate_acceptable = (len(failing_reasons) <= 1 and len(critical_failures) == 0)
         decision_val = getattr(decision_obj, "decision", "")
 
         is_actionable = bool(
             bias in ("BUY", "SELL") and
             utility_score >= 0.95 and
             expected_value > 0 and
-            (
-                decision_val == "EXECUTE"
-                or (
-                    setup_grade in ("GRADE A+", "GRADE A", "GRADE B")
-                    and (gate_passed or (decision_val == "WAIT" and len(getattr(decision_obj.quality_gate, "failing_reasons", [])) <= 1))
-                )
-            )
+            gate_acceptable and
+            setup_grade in ("GRADE A+", "GRADE A", "GRADE B") and
+            decision_val in ("EXECUTE", "READY", "WAIT")
         )
 
         risk_factors = getattr(decision_obj, "risk_factors", []) or []
@@ -382,7 +425,7 @@ class UniversalOpportunityArbiter:
     ) -> Tuple[Optional[CandidateOpportunity], List[CandidateOpportunity]]:
         """
         Ranks all candidate opportunities by utility score descending.
-        Selects the best actionable Grade A/A+/B opportunity.
+        Selects the best actionable Grade A/A+ opportunity.
         Returns (best_actionable_opportunity, ranked_list).
         """
         if not candidates:
@@ -401,8 +444,14 @@ class UniversalOpportunityArbiter:
 
         best_actionable = None
         for cand in ranked:
-            if cand.is_actionable and cand.setup_grade in ("GRADE A+", "GRADE A", "GRADE B"):
+            if cand.is_actionable and cand.setup_grade in ("GRADE A+", "GRADE A"):
                 best_actionable = cand
                 break
+
+        if not best_actionable:
+            for cand in ranked:
+                if cand.is_actionable and cand.setup_grade == "GRADE B":
+                    best_actionable = cand
+                    break
 
         return best_actionable, ranked

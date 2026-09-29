@@ -31,8 +31,8 @@ class VolatilityAnalyst(BaseAnalyst):
         if vol.state == "NORMAL":
             score += 15.0
             evidence.append("Optimal volatility conditions for systematic execution.")
-            # Normal volatility: align with structure bias
-            bias = st.bias if st.bias in ("BULLISH", "BEARISH") else "NEUTRAL"
+            # Normal volatility has no directional bias
+            bias = "NEUTRAL"
         elif vol.state == "EXPANSION":
             score += 10.0
             evidence.append("Volatility expanding — favorable for breakout/trend setups.")

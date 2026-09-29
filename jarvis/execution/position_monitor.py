@@ -336,21 +336,15 @@ class PositionMonitorEngine:
         # ── Manual Trade Isolation & Trailing (Spec v2.1 Refinement 4) ──────
         effective_manual_mode = getattr(self, "manual_mode", MANUAL_MANAGEMENT_MODE)
         if is_manual:
+            # Always ensure manual trades are protected against missing SL or dangerously wide blowout SL
+            new_sl, act = self._handle_manual_sl(pos, c_price, atr, new_sl)
+            if new_sl != pos.sl and new_sl > 0:
+                logger.info(f"🛡️ MANUAL SAFETY ({effective_manual_mode}): Stop Loss set/tightened on #{pos.ticket}: {new_sl:.4f} | {act}")
+                self.mt5_client.modify_position(ticket=pos.ticket, sl=new_sl, tp=pos.tp)
+
             if effective_manual_mode == "PROTECT_ONLY":
-                # Emergency SL only if missing
-                if pos.sl <= 0:
-                    new_sl, act = self._handle_manual_sl(pos, c_price, atr, new_sl)
-                    if new_sl != pos.sl and new_sl > 0:
-                        logger.info(f"🛡️ MANUAL PROTECT_ONLY: Emergency SL set on #{pos.ticket}: {new_sl:.4f}")
-                        self.mt5_client.modify_position(ticket=pos.ticket, sl=new_sl, tp=pos.tp)
-                # NEVER trail, partial close, or discretionary close manual trades in PROTECT_ONLY mode!
+                # In PROTECT_ONLY mode, do not trail or apply discretionary algorithmic exits
                 return
-            elif pos.sl <= 0:
-                # In TRAIL/FULL modes, place emergency SL if missing before trailing
-                new_sl, act = self._handle_manual_sl(pos, c_price, atr, new_sl)
-                if new_sl != pos.sl and new_sl > 0:
-                    logger.info(f"🛡️ MANUAL {effective_manual_mode}: Emergency SL set on #{pos.ticket}: {new_sl:.4f}")
-                    self.mt5_client.modify_position(ticket=pos.ticket, sl=new_sl, tp=pos.tp)
 
         # ── 180s Post-Entry Discretionary Grace Period (Spec v2.1 Refinement 3) ──
         open_dur_sec = self._get_position_duration_sec(pos)
@@ -637,6 +631,25 @@ class PositionMonitorEngine:
                     elif pos.type == "SELL" and (new_tp == 0 or extended_tp < new_tp):
                         new_tp = extended_tp
                         actions.append(f"ML_TP_EXTEND_{extension_r:.1f}R(p={ml_prob:.2f})")
+
+                # Micro Indivisible Lot Runner Mode (volume <= 0.01):
+                # Positions <= 0.01 cannot split partials at TP1. Once Breakeven or profit is locked,
+                # extend TP to macro runner targets (up to 8R) so the trailing stop ratchets behind large multi-point trends!
+                elif pos.volume <= 0.01 and current_r >= 1.4:
+                    is_be = (pos.ticket in self._be_locked) or (new_sl >= pos.open_price if pos.type == "BUY" else (new_sl <= pos.open_price and new_sl > 0))
+                    if is_be:
+                        macro_runner_r = max(init_tp_r, min(8.0, current_r + 3.5))
+                        extended_tp = round(
+                            pos.open_price + (risk_dist * macro_runner_r) if pos.type == "BUY"
+                            else pos.open_price - (risk_dist * macro_runner_r),
+                            digits,
+                        )
+                        if pos.type == "BUY" and (new_tp == 0 or extended_tp > new_tp):
+                            new_tp = extended_tp
+                            actions.append(f"MICRO_RUNNER_TP_{macro_runner_r:.1f}R")
+                        elif pos.type == "SELL" and (new_tp == 0 or extended_tp < new_tp):
+                            new_tp = extended_tp
+                            actions.append(f"MICRO_RUNNER_TP_{macro_runner_r:.1f}R")
 
                 # Low ML Confidence (<=0.45) or Divergence Detected: Contract TP to bank profit early
                 elif (ml_prob <= 0.45 or getattr(ctx.momentum, "divergence", "NONE") not in ("NONE", None, "")) and current_r >= 0.75:
@@ -1257,8 +1270,9 @@ class PositionMonitorEngine:
                 cand_sl = round(ask_price + (0.15 * atr), digits)
                 return True, cand_sl
         else:
-            # Underwater or flat -> close position
-            return True, "CLOSE"
+            # Underwater or flat: Never panic-close on 3-candle tick delta.
+            # Allow the trade room to breathe towards its planned structural SL.
+            return False, None
 
     def _get_context(self, symbol: str) -> Optional[MarketContext]:
         """Returns cached context or fetches fresh context if TTL expired."""

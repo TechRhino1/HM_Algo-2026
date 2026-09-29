@@ -43,12 +43,11 @@ class PositionSizer:
         vol_scalar = max(0.40, min(1.25, 1.0 / atr_ratio_safe))
         risk_pct *= vol_scalar
 
-        if current_drawdown_pct > 5.0:
-            # Graduated drawdown penalty instead of binary 50% at >5%
-            if current_drawdown_pct > 8.0:
-                risk_pct *= 0.50
-            else:
-                risk_pct *= 0.75
+        # NOTE: Drawdown-based sizing reduction is handled by DrawdownGuard's
+        # tier multiplier, which flows in through ``portfolio_heat_multiplier``
+        # (combined with portfolio heat).  Do NOT apply a second drawdown penalty
+        # here — that caused triple-counting (guard × sizer × heat) and reduced
+        # effective risk by ~97%, making all trades impossible on micro accounts.
 
         # Adaptive Second-Trade position discount: scale to 75% to prevent overconcentration
         if is_second_trade:
@@ -138,22 +137,45 @@ class PositionSizer:
         # Precise lot sizing formula across all asset classes & currency quote conventions
         raw_lots = risk_amount_dollars / dollar_risk_per_lot
 
-        # Option B: Micro Account / Small Balance Handling with Strict Risk Ceiling (P0)
+        # ── Micro Account / Small Balance Handling ───────────────────────────
+        # On micro accounts the broker minimum lot (0.01) forces risk above the
+        # base 0.5%.  The tiered caps below reflect industry-standard micro-
+        # account risk management:
+        #   $0   – $250  → up to 5.0% per trade (unavoidable on Gold/BTC at 0.01)
+        #   $250 – $1000 → up to 4.0% per trade
+        #   $1000– $2500 → up to 3.5% per trade
+        #   $2500+       → strict 2× target (typically ≤ 1.0%)
         if raw_lots < min_vol:
             actual_risk_dollars = min_vol * dollar_risk_per_lot
             actual_risk_pct = (actual_risk_dollars / (account_balance + 1e-9)) * 100.0
-            max_acceptable_risk_pct = min(3.0, 2.0 * effective_risk_pct)
-            if actual_risk_pct > max_acceptable_risk_pct:
+
+            # Adaptive micro cap by account size tier
+            if account_balance < 250.0:
+                tier_cap = 5.0   # $100 account: 0.01 Gold = $10 = 10% → tight SL needed
+            elif account_balance < 1000.0:
+                tier_cap = 4.0
+            elif account_balance < 2500.0:
+                tier_cap = 3.5
+            else:
+                tier_cap = 2.0 * effective_risk_pct  # large accounts: strict
+
+            # For very small accounts, also allow by dollar amount:
+            # If the actual dollar risk is small in absolute terms (≤ $15),
+            # it's acceptable even if the percentage looks high.
+            dollar_floor_ok = (actual_risk_dollars <= 15.0 and account_balance < 500.0)
+
+            max_acceptable_risk_pct = max(tier_cap, 2.0 * effective_risk_pct)
+            if actual_risk_pct > max_acceptable_risk_pct and not dollar_floor_ok:
                 logger.error(
                     f"REJECTED [{sym_key}]: Minimum lot size ({min_vol}) would force "
-                    f"{actual_risk_pct:.2f}% risk (target was {effective_risk_pct:.2f}%). "
+                    f"{actual_risk_pct:.2f}% risk (target was {effective_risk_pct:.2f}%, cap was {max_acceptable_risk_pct:.2f}%). "
                     f"Account balance too small for this symbol/stop-distance combination."
                 )
                 return 0.0
-            logger.warning(
-                f"MICRO ACCOUNT RISK WARNING [{sym_key}]: Raw lot size ({raw_lots:.5f}) is below broker minimum ({min_vol}). "
-                f"Executing at minimum volume floor {min_vol} lots (Actual risk: {actual_risk_pct:.2f}% / ${actual_risk_dollars:.2f} "
-                f"on ${account_balance:.2f} equity; target planned risk was {effective_risk_pct:.2f}% / ${risk_amount_dollars:.2f})."
+            logger.info(
+                f"MICRO ACCOUNT [{sym_key}]: Using minimum lot {min_vol} "
+                f"(risk: {actual_risk_pct:.1f}% / ${actual_risk_dollars:.2f} on "
+                f"${account_balance:.0f} equity; target was {effective_risk_pct:.2f}%)."
             )
             final_lots = min_vol
         else:

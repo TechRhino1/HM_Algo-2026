@@ -754,6 +754,7 @@
         if (s.includes("WTI") || s.includes("OIL") || s.includes("CRUDE")) return "TVC:USOIL";
 
         // Crypto
+        if (s.startsWith("ETHBTC")) return "BINANCE:ETHBTC";
         if (s.startsWith("BTC") || s.includes("BITCOIN")) return "BINANCE:BTCUSDT";
         if (s.startsWith("ETH") || s.includes("ETHEREUM")) return "BINANCE:ETHUSDT";
         if (s.startsWith("SOL")) return "BINANCE:SOLUSDT";
@@ -1075,7 +1076,9 @@
         if (val === null || val === undefined || isNaN(val) || val === "" || val === 0) return "--";
         const num = Number(val);
         const s = (symbol || state.symbol || "").toUpperCase();
-        if (s.includes("JPY")) {
+        if (s.includes("ETHBTC")) {
+            return num.toFixed(5);
+        } else if (s.includes("JPY")) {
             return num.toFixed(3);
         } else if (s.includes("XAU") || s.includes("GOLD") || s.includes("BTC") || s.includes("USDT") || num >= 500) {
             return num.toFixed(2);
@@ -2670,7 +2673,7 @@
     // QUICK WATCHLIST RIBBON CONTROLLER
     // =========================================================================
     function renderWatchlistDOM() {
-        const symbols = ["XAUUSD", "BTCUSD", "ETHUSD", "SOLUSD", "EURUSD", "GBPUSD", "USDJPY", "US500", "NAS100", "WTI"];
+        const symbols = ["XAUUSD", "BTCUSD", "ETHUSD", "SOLUSD", "ETHBTC", "EURUSD", "GBPUSD", "USDJPY", "US500", "NAS100", "WTI"];
 
         // No fabricated fallback prices. This function used to seed every row
         // from a hard-coded table (gold at 4380.00, bitcoin at 77000.00) and

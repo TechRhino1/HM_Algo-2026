@@ -110,11 +110,151 @@ class DecisionEngine:
         self.fvg_engine = FairValueGapEngine()
         self.mean_reversion_engine = MeanReversionEngine()
         self.dynamic_levels_engine = dynamic_levels_engine or DynamicRiskAndLevelsEngine()
+        from jarvis.scalping.scalp_execution_engine import ScalpExecutionEngine
+        self.scalp_engine = ScalpExecutionEngine()
         # Symbols already warned about an unobserved price — this runs per symbol per
         # cycle, so an undeduplicated warning would flood the log during an outage.
         self._no_price_warned: set = set()
 
 
+
+    def _resolve_market_trend_and_bias(
+        self,
+        context: MarketContext,
+        regime: RegimeOutput,
+        analyst_reports: Dict[str, AnalystReport],
+        trade_style: str = "SWING"
+    ) -> str:
+        """
+        Hierarchical Market Direction Engine.
+        Synthesizes Macro MTF, Market Regime, Momentum Dynamics, and Micro Structure
+        into a definitive directional consensus (BUY, SELL, or HOLD).
+        Guarantees that minor intraday pullbacks in a bull trend are NOT mistaken for SELL signals,
+        and minor bounces in a bear trend are NOT mistaken for BUY signals.
+        """
+        st = context.structure
+        mom = getattr(context, "momentum", None)
+        trend_score = float(getattr(mom, "trend_score", 0.0) or 0.0) if mom else 0.0
+        adx_val = float(getattr(mom, "adx", 20.0) or 20.0) if mom else 20.0
+        
+        # 1. Resolve Higher-Timeframe (HTF) Direction based on trade style
+        mtf_align = getattr(context, "mtf_alignment", {}) or {}
+        style_upper = (trade_style or getattr(context, "trade_style", "SWING") or "SWING").upper()
+        if "SCALP" in style_upper:
+            htf_bias = mtf_align.get("H1", mtf_align.get("M15", "NEUTRAL"))
+            context_bias = mtf_align.get("M15", mtf_align.get("M5", "NEUTRAL"))
+        elif any(x in style_upper for x in ("DAY", "INTRADAY")):
+            htf_bias = mtf_align.get("H4", mtf_align.get("H1", "NEUTRAL"))
+            context_bias = mtf_align.get("H1", mtf_align.get("M15", "NEUTRAL"))
+        else:  # SWING
+            htf_bias = mtf_align.get("D1", mtf_align.get("H4", "NEUTRAL"))
+            context_bias = mtf_align.get("H4", mtf_align.get("H1", "NEUTRAL"))
+
+        mtf_score = float(getattr(context, "mtf_confluence_score", 0.0) or 0.0)
+
+        # 2. Market Regime Direction
+        reg_obj = regime.primary_regime if hasattr(regime, "primary_regime") else None
+        is_bull_regime = reg_obj in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL)
+        is_bear_regime = reg_obj in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR)
+        is_range_regime = reg_obj in (MarketRegime.RANGE, MarketRegime.CONSOLIDATION, MarketRegime.COMPRESSION)
+
+        # 3. Decoupled Analyst Votes (excluding NEUTRAL)
+        bull_votes = sum(1 for r in analyst_reports.values() if r.bias == "BULLISH")
+        bear_votes = sum(1 for r in analyst_reports.values() if r.bias == "BEARISH")
+
+        # 4. Authenticated Reversal Conditions
+        has_bull_sweep = bool(getattr(context.liquidity, "sweep_detected", False) and "BULLISH" in getattr(context.liquidity, "sweep_type", ""))
+        has_bear_sweep = bool(getattr(context.liquidity, "sweep_detected", False) and "BEARISH" in getattr(context.liquidity, "sweep_type", ""))
+        has_bull_div = bool(getattr(mom, "bullish_divergence", False)) if mom else False
+        has_bear_div = bool(getattr(mom, "bearish_divergence", False)) if mom else False
+        dp_zone = getattr(st, "discount_premium_zone", "EQUILIBRIUM")
+
+        authenticated_bull_reversal = (
+            (has_bull_sweep or st.choch_type == "BULLISH")
+            and (has_bull_div or dp_zone == "DISCOUNT")
+            and trend_score >= -35.0  # Not in an extreme free-fall without floor
+        )
+        authenticated_bear_reversal = (
+            (has_bear_sweep or st.choch_type == "BEARISH")
+            and (has_bear_div or dp_zone == "PREMIUM")
+            and trend_score <= 35.0   # Not in an extreme parabolic rally without ceiling
+        )
+
+        # 5. Hierarchical Resolution
+        # CASE A: Strong Bullish Macro / Regime
+        if is_bull_regime or (htf_bias == "BULLISH" and not is_bear_regime) or mtf_score >= 35.0:
+            # Authenticated reversal: allow SELL when lower TFs have flipped bearish
+            # even if overall MTF score can't reach -20 due to HTF bullish inertia.
+            if authenticated_bear_reversal and (
+                mtf_score <= -20.0
+                or (trend_score <= -25.0 and context_bias == "BEARISH")
+            ):
+                return "SELL"
+            # In a bull trend, look for BUY continuation or pullback completion
+            if st.bos and trend_score >= 10.0:
+                return "BUY"
+            if st.bias == "BULLISH" or trend_score >= 10.0 or bull_votes > bear_votes:
+                return "BUY"
+            if dp_zone in ("DISCOUNT", "EQUILIBRIUM") and (has_bull_sweep or bull_votes >= 1):
+                return "BUY"
+            return "BUY" if htf_bias == "BULLISH" else "HOLD"
+
+        # CASE B: Strong Bearish Macro / Regime
+        elif is_bear_regime or (htf_bias == "BEARISH" and not is_bull_regime) or mtf_score <= -35.0:
+            # Authenticated reversal: allow BUY when lower TFs have flipped bullish
+            # even if overall MTF score can't reach +20 due to HTF bearish inertia.
+            # The old threshold (mtf_score >= 20.0) was unreachable because D1+H4
+            # carry 70% of the MTF weight — a genuine intraday trend reversal on
+            # H1+M15 can't overcome that bias until the daily close confirms.
+            if authenticated_bull_reversal and (
+                mtf_score >= 20.0
+                or (trend_score >= 25.0 and context_bias == "BULLISH")
+            ):
+                return "BUY"
+            # Additional: strong momentum reversal on the primary timeframe
+            # with structural confirmation, even without a full authenticated reversal
+            if (
+                trend_score >= 30.0
+                and context_bias == "BULLISH"
+                and st.bias == "BULLISH"
+                and bull_votes > bear_votes
+                and adx_val >= 20.0
+            ):
+                return "BUY"
+            # In a bear trend, look for SELL continuation or rally completion
+            if st.bos and trend_score <= -10.0:
+                return "SELL"
+            if st.bias == "BEARISH" or trend_score <= -10.0 or bear_votes > bull_votes:
+                return "SELL"
+            if dp_zone in ("PREMIUM", "EQUILIBRIUM") and (has_bear_sweep or bear_votes >= 1):
+                return "SELL"
+            return "SELL" if htf_bias == "BEARISH" else "HOLD"
+
+        # CASE C: Ranging / Compression / Consolidation
+        elif is_range_regime or abs(trend_score) < 20.0:
+            if dp_zone == "DISCOUNT" and (has_bull_sweep or st.bias == "BULLISH" or bull_votes > bear_votes):
+                return "BUY"
+            elif dp_zone == "PREMIUM" and (has_bear_sweep or st.bias == "BEARISH" or bear_votes > bull_votes):
+                return "SELL"
+            elif st.bos and abs(trend_score) >= 20.0:
+                return "BUY" if trend_score > 0 else "SELL"
+            else:
+                return "HOLD"
+
+        # CASE D: Transitional / Neutral Market
+        else:
+            if bull_votes >= 2 and bull_votes > bear_votes and trend_score > 0:
+                return "BUY"
+            elif bear_votes >= 2 and bear_votes > bull_votes and trend_score < 0:
+                return "SELL"
+            elif st.bos and trend_score >= 25.0:
+                return "BUY"
+            elif st.bos and trend_score <= -25.0:
+                return "SELL"
+            elif st.bias in ("BULLISH", "BEARISH"):
+                return "BUY" if st.bias == "BULLISH" else "SELL"
+            else:
+                return "HOLD"
 
     def _compute_bias_and_levels(
         self,
@@ -129,12 +269,6 @@ class DecisionEngine:
         c_price = context.current_price
 
         # ── No observed price ⇒ no direction, no levels ────────────────────────
-        # `calculate_levels` refuses independently, but the *bias* is decided here and
-        # returned beside the levels. Returning a BUY/SELL verdict with a zero entry
-        # would let `decision_action` mark the setup EXECUTE (it only checks
-        # `gate_passed and bias in (BUY, SELL)`), so the direction must stand down in
-        # the same breath as the prices. Returns the same 8-tuple shape as the normal
-        # path with every price at 0.0 — a value no guard can mistake for a real one.
         if not (
             is_observed_price(c_price)
             and is_observed_price(context.bid)
@@ -152,28 +286,23 @@ class DecisionEngine:
         if self._no_price_warned:
             self._no_price_warned.clear()
 
-        bull_votes = sum(1 for r in analyst_reports.values() if r.bias == "BULLISH")
-        bear_votes = sum(1 for r in analyst_reports.values() if r.bias == "BEARISH")
-        trend_score = getattr(context.momentum, "trend_score", 0.0) if hasattr(context, "momentum") else 0.0
-        
-        if st.choch and st.choch_type == "BEARISH":
-            tentative_bias = "SELL"
-        elif st.choch and st.choch_type == "BULLISH":
-            tentative_bias = "BUY"
-        elif st.bos and trend_score <= -20.0:
-            tentative_bias = "SELL"
-        elif st.bos and trend_score >= 20.0:
-            tentative_bias = "BUY"
-        elif bear_votes >= 3 and bear_votes > bull_votes:
-            tentative_bias = "SELL"
-        elif bull_votes >= 3 and bull_votes > bear_votes:
-            tentative_bias = "BUY"
-        elif st.bias == "BEARISH" and trend_score <= -20.0:
-            tentative_bias = "SELL"
-        elif st.bias == "BULLISH" and trend_score >= 20.0:
-            tentative_bias = "BUY"
-        else:
-            tentative_bias = "HOLD"
+        style = trade_style or getattr(context, "trade_style", "SWING") or "SWING"
+        tentative_bias = self._resolve_market_trend_and_bias(
+            context=context,
+            regime=regime,
+            analyst_reports=analyst_reports,
+            trade_style=style
+        )
+
+        # Log the resolved direction so it's visible in daemon output.
+        _reg_label = getattr(regime, "primary_regime", "UNKNOWN")
+        _mtf_align = getattr(context, "mtf_alignment", {}) or {}
+        _ts = float(getattr(getattr(context, "momentum", None), "trend_score", 0.0) or 0.0) if getattr(context, "momentum", None) else 0.0
+        logger.info(
+            "[%s] Direction resolved: %s (%s) | regime=%s | trend_score=%.1f | mtf=%s",
+            context.symbol, tentative_bias, style, _reg_label, _ts,
+            {k: v for k, v in _mtf_align.items() if k in ("M5", "M15", "H1", "H4", "D1")},
+        )
 
         style = trade_style or getattr(context, "trade_style", "SWING") or "SWING"
         levels = self.dynamic_levels_engine.calculate_levels(
@@ -460,44 +589,52 @@ class DecisionEngine:
         elif "BTC" in sym_name:
             min_score = max(min_score, 72.0)
 
-        # 4. Macro MTF Confluence Guard
-        mtf_align = getattr(context, "mtf_alignment", {})
-        h4_bias = mtf_align.get("H4", "NEUTRAL") if isinstance(mtf_align, dict) else "NEUTRAL"
-        d1_bias = mtf_align.get("D1", "NEUTRAL") if isinstance(mtf_align, dict) else "NEUTRAL"
+        # 4. Adaptive Macro MTF Confluence Guard (Zero Unvalidated Counter-Trend Trades)
+        mtf_align = getattr(context, "mtf_alignment", {}) if isinstance(getattr(context, "mtf_alignment", {}), dict) else {}
         mom_ts = float(getattr(context.momentum, "trend_score", 0.0)) if hasattr(context, "momentum") else 0.0
+        t_style_upper = (getattr(context, "trade_style", None) or getattr(context, "style", "SWING") or "SWING").upper()
         
-        is_index_sym = getattr(spec, "asset_class", "") == "INDEX" or any(k in context.symbol.upper() for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ"])
-        is_crypto_sym = getattr(spec, "is_crypto", False) or (getattr(spec, "asset_class", "").upper() == "CRYPTO") or any(k in context.symbol.upper() for k in ["BTC", "ETH", "SOL"])
+        # Resolve governing macro timeframe per style:
+        if "SCALP" in t_style_upper:
+            macro_bias = mtf_align.get("H1", mtf_align.get("M15", "NEUTRAL"))
+            context_bias = mtf_align.get("M15", "NEUTRAL")
+        elif any(x in t_style_upper for x in ("DAY", "INTRADAY")):
+            macro_bias = mtf_align.get("H4", mtf_align.get("H1", "NEUTRAL"))
+            context_bias = mtf_align.get("H1", "NEUTRAL")
+        else: # SWING
+            macro_bias = mtf_align.get("D1", mtf_align.get("H4", "NEUTRAL"))
+            context_bias = mtf_align.get("H4", "NEUTRAL")
+
+        # Authenticated Institutional Reversal Setup
+        is_validated_reversal = (
+            strategy in ("LIQUIDITY_SWEEP_REVERSAL", "CHOCH_STRUCTURAL_REVERSAL")
+            and bool(getattr(context.liquidity, "sweep_detected", False))
+            and bool(getattr(context.structure, "choch", False))
+            and (
+                (tentative_bias == "BUY" and (getattr(context.momentum, "bullish_divergence", False) or getattr(context.structure, "discount_premium_zone", "") == "DISCOUNT")) or
+                (tentative_bias == "SELL" and (getattr(context.momentum, "bearish_divergence", False) or getattr(context.structure, "discount_premium_zone", "") == "PREMIUM"))
+            )
+            and ai_score >= 74.0
+            and rr_ratio >= 1.8
+        )
 
         mtf_counter_trend = False
-        if is_index_sym:
-            # Indices: Strictly follow H4/D1 institutional macro flow
-            if tentative_bias == "BUY" and (h4_bias == "BEARISH" or d1_bias == "BEARISH" or mom_ts <= -25.0):
-                mtf_counter_trend = True
-            elif tentative_bias == "SELL" and (h4_bias == "BULLISH" or d1_bias == "BULLISH" or mom_ts >= 15.0):
-                mtf_counter_trend = True
-        elif is_crypto_sym:
-            # Relax crypto - allow trades against H4 if D1 aligns
-            if tentative_bias == "BUY" and d1_bias == "BEARISH" and mom_ts <= -30.0:
-                mtf_counter_trend = True
-            elif tentative_bias == "SELL" and d1_bias == "BULLISH" and mom_ts >= 25.0:
-                mtf_counter_trend = True
-        elif is_jpy:
-            # JPY: Block buying falling knives when macro momentum is negative
-            if tentative_bias == "BUY" and (h4_bias == "BEARISH" or d1_bias == "BEARISH" or mom_ts <= -10.0):
-                mtf_counter_trend = True
-            elif tentative_bias == "SELL" and (h4_bias == "BULLISH" or d1_bias == "BULLISH" or mom_ts >= 15.0):
-                mtf_counter_trend = True
-        else:
-            # Relax Forex - Only block if D1 is strongly against AND no CHoCH
-            if tentative_bias == "BUY" and d1_bias == "BEARISH":
-                has_choch = bool(getattr(context.structure, "choch", False) and getattr(context.structure, "choch_type", "") == "BULLISH")
-                if not has_choch and mom_ts <= -20.0:
+        if not is_validated_reversal:
+            if tentative_bias == "BUY":
+                if macro_bias == "BEARISH" or (context_bias == "BEARISH" and mom_ts <= -15.0):
                     mtf_counter_trend = True
-            elif tentative_bias == "SELL" and d1_bias == "BULLISH":
-                has_choch = bool(getattr(context.structure, "choch", False) and getattr(context.structure, "choch_type", "") == "BEARISH")
-                if not has_choch and mom_ts >= 15.0:
+            elif tentative_bias == "SELL":
+                if macro_bias == "BULLISH" or (context_bias == "BULLISH" and mom_ts >= 15.0):
                     mtf_counter_trend = True
+
+        # Regime Trend Consistency Guard: Never open counter-trend trades unless validated reversal
+        regime_trend_consistent = True
+        if regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL):
+            if tentative_bias == "SELL" and not is_validated_reversal:
+                regime_trend_consistent = False
+        elif regime.primary_regime in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR):
+            if tentative_bias == "BUY" and not is_validated_reversal:
+                regime_trend_consistent = False
 
         # 5. Dynamic RSI Exhaustion Bounds based on ADX and regime: 70 +- 15 * TrendPower
         adx_val = getattr(context.momentum, "adx", 20.0) if hasattr(context, "momentum") else 20.0
@@ -682,6 +819,7 @@ class DecisionEngine:
             "Market Session Open": is_mkt_open,
             "Drawdown Safety Guard": current_drawdown_pct <= 10.0,
             "Regime Viability": regime_viable,
+            "Regime Trend Consistency": regime_trend_consistent,
             "Directional Bias": tentative_bias in ["BUY", "SELL"],
             "Strategy Viable": strategy_viable,
             "Risk/Reward >= 1.5": rr_ratio >= min_rr,
@@ -1118,11 +1256,11 @@ class DecisionEngine:
             elif tentative_bias == "SELL" and st.discount_premium_zone == "DISCOUNT" and trend_score_val > -40:
                 premium_discount_valid = False
         else:
-            if tentative_bias == "BUY" and st.discount_premium_zone == "PREMIUM" and trend_score_val < 40:
-                if not (context.structure.bos or context.liquidity.sweep_detected):
+            if tentative_bias == "BUY" and st.discount_premium_zone == "PREMIUM" and trend_score_val < 50:
+                if not bool(getattr(context.liquidity, "sweep_detected", False)):
                     premium_discount_valid = False
-            elif tentative_bias == "SELL" and st.discount_premium_zone == "DISCOUNT" and trend_score_val > -40:
-                if not (context.structure.bos or context.liquidity.sweep_detected):
+            elif tentative_bias == "SELL" and st.discount_premium_zone == "DISCOUNT" and trend_score_val > -50:
+                if not bool(getattr(context.liquidity, "sweep_detected", False)):
                     premium_discount_valid = False
 
         planned_risk_dollars = max(0.50, account_balance * (risk_per_trade_pct / 100.0))
@@ -1199,6 +1337,45 @@ class DecisionEngine:
             else:
                 gate_policy_decision = "BLOCK"
 
+        # Dedicated Scalp Execution Engine integration
+        scalp_res = None
+        if "SCALP" in style.upper() and is_mkt_open:
+            df_m1 = None
+            df_m5 = None
+            if isinstance(mtf_data, dict):
+                df_m1 = mtf_data.get("M1") if mtf_data.get("M1") is not None else mtf_data.get("timing")
+                _m5_cand = mtf_data.get("M5")
+                if _m5_cand is None:
+                    _m5_cand = mtf_data.get("primary")
+                if _m5_cand is None:
+                    _m5_cand = mtf_data.get("setup")
+                df_m5 = _m5_cand
+            if df_m5 is None and isinstance(recent_candles, list) and len(recent_candles) >= 5:
+                import pandas as pd
+                df_m5 = pd.DataFrame(recent_candles)
+            
+            scalp_res = self.scalp_engine.evaluate_scalp(
+                context=context,
+                regime=regime,
+                tentative_bias=tentative_bias,
+                df_m1=df_m1,
+                df_m5=df_m5,
+                account_balance=account_balance,
+                risk_per_trade_pct=risk_per_trade_pct
+            )
+            if scalp_res.action == "NO_TRADE":
+                gate_passed = False
+                failing_reasons.extend(scalp_res.failing_reasons)
+            elif scalp_res.action == "WAIT":
+                gate_passed = False
+            elif scalp_res.action == "EXECUTE" and gate_passed:
+                sl_price = scalp_res.stop_loss
+                tp1_price = scalp_res.tp1
+                tp2_price = scalp_res.tp2
+                tp3_price = scalp_res.tp3
+                tp_price = scalp_res.tp2
+                rr_ratio = scalp_res.risk_reward
+
         if not is_mkt_open:
             decision_action = "NO_TRADE"
         elif gate_passed:
@@ -1206,12 +1383,16 @@ class DecisionEngine:
                 decision_action = "EXECUTE"
             else:
                 decision_action = "NO_TRADE"
+        elif scalp_res is not None and scalp_res.action == "WAIT":
+            decision_action = "WAIT"
         elif tentative_bias in ["BUY", "SELL"] and len(failing_reasons) <= 2 and quality_gate.checks.get("Regime Viability", False):
             decision_action = "WAIT"
         else:
             decision_action = "NO_TRADE"
 
         waiting_reasons = []
+        if scalp_res is not None and scalp_res.action == "WAIT":
+            waiting_reasons.extend(scalp_res.waiting_reasons)
         rejection_reasons = []
 
         if gate_policy_decision == "SOFTEN" and softened_gates:

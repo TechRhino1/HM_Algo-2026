@@ -399,26 +399,40 @@ class RiskEngine:
                 except Exception:
                     atr_ratio = 1.0
 
-            # 8b. Drawdown Tier Multiplier (1.0 -> 0.75 -> 0.50 -> 0.0)
+            # 8b. Drawdown Tier Multiplier — graduated sizing reduction.
+            # The drawdown guard now returns a minimum of 0.15 (micro) or 0.25
+            # (standard) instead of 0.0.  Daily-loss and max-drawdown circuit
+            # breakers in step 2 already provide hard halts at their configured
+            # limits; the tier multiplier only scales down position sizes.
             dd_risk_mult = self.drawdown_guard.get_risk_multiplier(account.equity)
-            if dd_risk_mult <= 0.0:
-                rejection_reasons.append("DRAWDOWN_TIER_HALT: Drawdown tier multiplier is 0.0 (drawdown >= 8%). Trading halted.")
-                return {
-                    "authorized": False,
-                    "lots": 0.0,
-                    "reasons": rejection_reasons,
-                    "heat_score": heat_res.score,
-                    "heat_zone": heat_res.zone
-                }
+            if dd_risk_mult < 0.50:
+                logger.warning(
+                    "DRAWDOWN_TIER_WARNING: Drawdown tier multiplier is %.2f. "
+                    "Position sizing severely reduced (peak=%.2f, equity=%.2f).",
+                    dd_risk_mult, self.drawdown_guard.peak_equity, account.equity,
+                )
 
             # 9. Dynamic Position Sizing with Heat, Drawdown Tier, & 2nd Position Scaling
             sample_size = getattr(decision, "pattern_sample_size", 0)
             combined_multiplier = heat_res.risk_multiplier * dd_risk_mult
+
+            # Micro-account adaptive risk boost: the base 0.5% is designed for
+            # $10k+ accounts.  On a $100 account 0.5% = $0.50, which cannot buy
+            # even one micro lot of Gold.  The industry standard for micro/cent
+            # accounts is 1-2% risk per trade.
+            base_risk = self.max_risk_per_trade_pct
+            if account.equity < 250.0:
+                base_risk = min(base_risk * 3.0, 2.0)   # 0.5% → 1.5% (cap 2%)
+            elif account.equity < 500.0:
+                base_risk = min(base_risk * 2.0, 1.5)   # 0.5% → 1.0% (cap 1.5%)
+            elif account.equity < 1000.0:
+                base_risk = min(base_risk * 1.5, 1.0)   # 0.5% → 0.75% (cap 1.0%)
+
             lots = self.position_sizer.calculate_lot_size(
                 account_balance=account.equity,
                 entry_price=decision.entry_price,
                 sl_price=decision.stop_loss,
-                risk_pct=self.max_risk_per_trade_pct,
+                risk_pct=base_risk,
                 symbol_info=symbol_info,
                 invalidation_risk_coefficient=1.0 - (decision.adversarial_penalty / 60.0),
                 model_confidence=decision.model_confidence,

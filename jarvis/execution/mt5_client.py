@@ -153,7 +153,7 @@ class MT5Client:
             candidates = []
             for s in all_syms:
                 s_name_u = s.name.upper()
-                if base_u in ["XAUUSD", "GOLD"]:
+                if base_u in ["XAUUSD", "GOLD", "GOLD#"]:
                     if any(k in s_name_u for k in ["GOLD.I#", "GOLD#", "GOLD.M", "XAUUSD.I#", "XAUUSD#", "GOLD", "XAUUSD"]):
                         candidates.append(s)
                 elif base_u in ["BTCUSD", "BTC"]:

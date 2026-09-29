@@ -69,6 +69,15 @@ BROKER_ALIASES: Dict[str, List[str]] = {
     "ETHBTC": ["ETHBTC#", "ETHBTC"],
 }
 
+# Alternate user/input names that map directly to a known canonical symbol.
+# Kept separate from BROKER_ALIASES so alias tables remain one-way canonical -> broker name.
+CANONICAL_SYNONYMS: Dict[str, str] = {
+    "GOLD": "XAUUSD",
+    "GOLD#": "XAUUSD",
+    "SILVER": "XAGUSD",
+    "SILVER#": "XAGUSD",
+}
+
 # cache: canonical -> broker name confirmed to exist
 _CACHE: Dict[str, str] = {}
 # cache: canonical -> False when nothing resolved (avoid rescanning)
@@ -413,7 +422,12 @@ def resolve_broker_symbol(symbol: str, verbose: bool = False, mt5_module=None) -
     if not ensure_mt5_terminal(mt5_module=mt5_module):
         return None
 
+    canonical_key = CANONICAL_SYNONYMS.get(sym, sym)
     candidates = [sym] + list(BROKER_ALIASES.get(sym, []))
+    if canonical_key != sym:
+        for c in BROKER_ALIASES.get(canonical_key, []):
+            if c not in candidates:
+                candidates.append(c)
     for cand in candidates:
         if probe_symbol(cand, mt5_module=mt5_module):
             _CACHE[sym] = cand

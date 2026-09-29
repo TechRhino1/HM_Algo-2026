@@ -52,7 +52,7 @@ class LiquidityAnalyst(BaseAnalyst):
         return AnalystReport(
             role=self.role,
             symbol=context.symbol,
-            bias=bias if bias != "NEUTRAL" else st.bias,
+            bias=bias,
             score=round(final_score, 1),
             confidence=round(confidence, 2),
             evidence=evidence,

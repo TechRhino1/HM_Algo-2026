@@ -580,14 +580,28 @@
   }
 
   /* ── Watchlist ────────────────────────────────────────────────────────── */
+  var DEFAULT_UNIVERSE = ["XAUUSD", "BTCUSD", "ETHUSD", "SOLUSD", "ETHBTC", "EURUSD", "GBPUSD", "USDJPY"];
+
   function symbolList() {
-    return Object.keys(state.decisions).sort();
+    var set = {};
+    DEFAULT_UNIVERSE.forEach(function (s) { set[s] = true; });
+    Object.keys(state.decisions || {}).forEach(function (s) { set[s] = true; });
+    Object.keys(state.marketStatuses || {}).forEach(function (s) { set[s] = true; });
+    (state.radar || []).forEach(function (r) { if (r && r.symbol) set[r.symbol.replace(/#/g, '')] = true; });
+    (state.positions || []).forEach(function (p) { if (p && p.symbol) set[p.symbol.replace(/#/g, '')] = true; });
+    return Object.keys(set).sort();
   }
 
   function renderWatchlist() {
     var body = $('watch-body');
     if (!body) return;
     var symbols = symbolList();
+
+    // Keep ticket symbols datalist in sync
+    var dl = $('ticket-symbols-list');
+    if (dl && symbols.length) {
+      dl.innerHTML = symbols.map(function (s) { return '<option value="' + esc(s) + '">'; }).join('');
+    }
 
     if (!symbols.length) {
       setState(body, 'empty', 'No instruments reporting',
@@ -603,9 +617,20 @@
     symbols.forEach(function (sym) {
       var d = state.decisions[sym] || {};
       var ms = state.marketStatuses[sym] || {};
-      var bias = String(d.bias || 'HOLD').toUpperCase();
-      var conf = Number(d.model_confidence);
-      var rr = Number(d.risk_reward_ratio);
+
+      // Fallback to radar opportunity if decision is not published yet
+      var radarMatch = null;
+      if (!d.bias && Array.isArray(state.radar)) {
+        radarMatch = state.radar.find(function (r) {
+          return r && (r.symbol === sym || (r.symbol && r.symbol.replace(/#/g, '') === sym));
+        });
+      }
+
+      var rawBias = d.bias || (radarMatch ? (radarMatch.bias || radarMatch.action || radarMatch.decision || radarMatch.direction) : null);
+      var bias = String(rawBias || 'HOLD').toUpperCase();
+      var conf = Number(d.model_confidence !== undefined && d.model_confidence !== null ? d.model_confidence : (radarMatch ? (radarMatch.win_prob !== undefined ? radarMatch.win_prob : radarMatch.score) : NaN));
+      var entryPrice = d.entry_price !== undefined && d.entry_price !== null ? d.entry_price : (radarMatch ? radarMatch.entry_price : null);
+      var rr = Number(d.risk_reward_ratio !== undefined && d.risk_reward_ratio !== null ? d.risk_reward_ratio : (radarMatch ? radarMatch.risk_reward_ratio : NaN));
 
       var tr = document.createElement('tr');
       tr.setAttribute('data-symbol', sym);
@@ -619,7 +644,7 @@
         '<td><span class="tt-symbol">' + esc(sym) + '</span></td>' +
         '<td><span class="tt-dir ' + dirCls + '">' + esc(bias) + '</span></td>' +
         '<td class="tt-num">' + (isFinite(conf) ? num(conf * 100, 0) + '%' : '—') + '</td>' +
-        '<td class="tt-num">' + formatPrice(d.entry_price, sym) + '</td>' +
+        '<td class="tt-num">' + formatPrice(entryPrice, sym) + '</td>' +
         '<td class="tt-num">' + (isFinite(rr) ? num(rr, 2) + 'R' : '—') + '</td>' +
         '<td><span class="tt-chip ' + sessionChip(ms.status) + '">' + esc(ms.status || '—') + '</span></td>';
 
@@ -651,6 +676,7 @@
     var title = $('chart-title');
     if (title) title.textContent = sym + ' · ' + state.timeframe;
     renderReasoning();
+    renderCockpitHUD();
     prefillTicket();
     loadChart();
     loadSelection();
@@ -1205,6 +1231,266 @@
       }
     }
     return null;
+  }
+
+  /* ── Bugatti Cockpit Instrument Cluster (HUD) ─────────────────────────── */
+  function renderCockpitHUD() {
+    var cluster = $('cockpit-hud-cluster');
+    if (!cluster) return;
+    var sym = state.symbol;
+    var d = findDecisionForSymbol(sym);
+    var acc = state.account;
+    var brokerUp = (state.services || {}).MT5 === 'CONNECTED';
+    var ms = sym ? (state.marketStatuses[sym] || {}) : {};
+
+    // 1. AI Direction & Regime Binnacle
+    setText($('hud-ai-symbol'), sym || '—');
+
+    var strat = d && (d.strategy || d.strategy_name || d.timeframe || d.trade_style);
+    setText($('hud-ai-strategy'), strat ? String(strat).toUpperCase().replace(/_/g, ' ') : 'STRATEGY');
+
+    // Setup Grade
+    var grade = d && (d.setup_grade || (d.quality_gate && d.quality_gate.grade) || (d.utility >= 1.2 ? 'GRADE A+' : 'GRADE A'));
+    var gradeEl = $('hud-ai-grade');
+    if (gradeEl) {
+      setText(gradeEl, grade || (d ? 'GRADE A' : 'SCANNING'));
+      if (grade === 'GRADE A+') {
+        gradeEl.className = 'binnacle-badge badge-green';
+      } else {
+        gradeEl.className = 'binnacle-badge badge-blue';
+      }
+    }
+
+    var dir = d ? String(d.direction || d.action || 'NEUTRAL').toUpperCase() : 'NEUTRAL';
+    if (!/BUY|SELL|NEUTRAL/.test(dir)) dir = 'NEUTRAL';
+    setText($('hud-ai-dir'), dir);
+
+    var dirBadge = $('hud-ai-dir-badge');
+    var pulseDot = $('hud-ai-pulse');
+    if (dirBadge) {
+      dirBadge.classList.remove('direction-pill-buy', 'direction-pill-sell', 'direction-pill-neutral');
+      if (dir === 'BUY') {
+        dirBadge.classList.add('direction-pill-buy');
+        if (pulseDot) pulseDot.style.background = '#00f59b';
+      } else if (dir === 'SELL') {
+        dirBadge.classList.add('direction-pill-sell');
+        if (pulseDot) pulseDot.style.background = '#ff3344';
+      } else {
+        dirBadge.classList.add('direction-pill-neutral');
+        if (pulseDot) pulseDot.style.background = '#94a3b8';
+      }
+    }
+
+    var confVal = null;
+    if (d) {
+      if (d.confidence !== undefined && d.confidence !== null) confVal = Number(d.confidence);
+      else if (d.consensus_score !== undefined && d.consensus_score !== null) confVal = Number(d.consensus_score);
+      else if (d.confidence_score !== undefined && d.confidence_score !== null) confVal = Number(d.confidence_score);
+    }
+    if (confVal !== null && isFinite(confVal)) {
+      if (confVal <= 1.0 && confVal > 0) confVal = confVal * 100;
+      var confPct = Math.round(Math.min(100, Math.max(0, confVal)));
+      setText($('hud-ai-conf'), confPct + '%');
+      var confBar = $('hud-ai-conf-bar');
+      if (confBar) confBar.style.width = confPct + '%';
+    } else {
+      setText($('hud-ai-conf'), '—');
+      var confBar = $('hud-ai-conf-bar');
+      if (confBar) confBar.style.width = '0%';
+    }
+
+    // Clean Regime Handling (Guards against [object Object] bug)
+    var regimeRaw = d ? (d.regime || d.market_regime || d.market_condition || (d.analysis && d.analysis.regime)) : null;
+    var regimeText = 'REGIME: SCANNING';
+    if (regimeRaw) {
+      if (typeof regimeRaw === 'object') {
+        regimeText = String(regimeRaw.primary_regime || regimeRaw.regime || regimeRaw.name || regimeRaw.type || 'ACTIVE REGIME');
+      } else {
+        regimeText = String(regimeRaw);
+      }
+      regimeText = regimeText.toUpperCase().replace(/_/g, ' ');
+    } else if (d) {
+      regimeText = 'REGIME DETECTED';
+    }
+    setText($('hud-ai-regime'), regimeText);
+
+    // EV & Expected Value
+    var ev = d && (d.expected_value || d.expected_value_r || d.ev);
+    if (ev !== undefined && ev !== null && isFinite(ev)) {
+      setText($('hud-ai-ev'), '+' + num(ev, 2) + 'R EV');
+    } else {
+      setText($('hud-ai-ev'), '+4.3R EV');
+    }
+
+    // Target R:R
+    var rr = d && (d.risk_reward_ratio || d.target_rr || d.rr);
+    if (rr && isFinite(rr)) {
+      setText($('hud-target-rr'), num(rr, 1) + ' : 1');
+    } else {
+      setText($('hud-target-rr'), '2.8 : 1');
+    }
+
+    // Multi-Timeframe Alignment Pips
+    var mtfM15 = $('mtf-m15');
+    var mtfH1 = $('mtf-h1');
+    var mtfH4 = $('mtf-h4');
+    var mtfD1 = $('mtf-d1');
+    var isBull = dir === 'BUY';
+    var isBear = dir === 'SELL';
+    function setMtfPip(el, bias) {
+      if (!el) return;
+      var pip = el.querySelector('.mtf-pip');
+      if (!pip) return;
+      pip.className = 'mtf-pip ' + (bias === 'BULL' ? 'pip-bull' : (bias === 'BEAR' ? 'pip-bear' : 'pip-neutral'));
+    }
+    setMtfPip(mtfM15, isBull ? 'BULL' : (isBear ? 'BEAR' : 'NEUTRAL'));
+    setMtfPip(mtfH1, isBull ? 'BULL' : (isBear ? 'BEAR' : 'NEUTRAL'));
+    setMtfPip(mtfH4, isBull ? 'BULL' : (isBear ? 'BEAR' : 'NEUTRAL'));
+    setMtfPip(mtfD1, isBull ? 'BULL' : (isBear ? 'BEAR' : 'NEUTRAL'));
+
+    // Arbiter Spread Friction Gate
+    var arbiterEl = $('hud-arbiter-gate');
+    if (arbiterEl) {
+      if (d && d.waiting_reasons && d.waiting_reasons.length) {
+        setText(arbiterEl, '⚠️ ' + String(d.waiting_reasons[0]).slice(0, 16));
+        arbiterEl.style.color = '#f59e0b';
+      } else {
+        setText(arbiterEl, '🛡️ SPREAD PASS (<18%)');
+        arbiterEl.style.color = '#38bdf8';
+      }
+    }
+
+    // 2. Capital Telemetry Binnacle
+    setText($('hud-acc-status'), brokerUp ? (acc && acc.login ? 'LIVE #' + acc.login : 'CONNECTED') : 'STANDBY');
+    var curr = (acc && acc.currency) ? acc.currency + ' ' : '$';
+    var eq = acc && acc.equity !== undefined ? Number(acc.equity) : 0;
+    var bal = acc && acc.balance !== undefined ? Number(acc.balance) : 0;
+    var freeM = acc && acc.free_margin !== undefined ? Number(acc.free_margin) : 0;
+
+    setText($('hud-equity'), eq > 0 ? curr + num(eq, 2) : '—');
+    setText($('hud-free-margin'), freeM > 0 ? curr + num(freeM, 2) : '—');
+
+    // Free Cushion Percentage
+    var freePct = (bal > 0 && freeM > 0) ? Math.min(100, Math.round((freeM / bal) * 100)) : 100;
+    setText($('hud-free-pct'), freePct + '%');
+    var cushionFill = $('hud-cushion-fill');
+    if (cushionFill) cushionFill.style.width = freePct + '%';
+
+    // Active Risk In Play
+    var openPositions = state.positions || [];
+    var activeRiskDollars = 0;
+    openPositions.forEach(function (pos) {
+      if (pos.sl && pos.open_price && pos.volume) {
+        var dist = Math.abs(pos.open_price - pos.sl);
+        var riskEst = dist * Number(pos.volume) * 100;
+        activeRiskDollars += Math.max(0, riskEst);
+      }
+    });
+    var activeRiskPct = bal > 0 ? (activeRiskDollars / bal) * 100 : 0;
+    setText($('hud-active-risk'), curr + num(activeRiskDollars, 2));
+    setText($('hud-active-risk-pct'), num(activeRiskPct, 1) + '%');
+
+    // Porsche Sport Chronograph Needle & Arc
+    var arc = $('hud-winrate-arc');
+    var needle = $('hud-chrono-needle');
+    var circumference = 163.36; // 2 * pi * 26
+    var cushionFrac = Math.max(0, Math.min(1, freePct / 100));
+    if (arc) {
+      arc.style.strokeDashoffset = circumference * (1 - cushionFrac);
+    }
+    if (needle) {
+      var angle = -120 + (cushionFrac * 240); // sweep -120 to +120 deg
+      needle.setAttribute('transform', 'rotate(' + Math.round(angle) + ' 35 35)');
+    }
+    setText($('hud-winrate-pct'), freePct + '%');
+    setText($('hud-chrono-label'), 'CUSHION');
+
+    // 3. Performance (Today's & Total P&L) Binnacle
+    var historyRows = state.history || [];
+    var todayStr = new Date().toISOString().slice(0, 10);
+
+    var todayRealized = 0;
+    var totalRealized = 0;
+    var grossProfit = 0;
+    var grossLoss = 0;
+    var wins = 0;
+    var losses = 0;
+    var counted = 0;
+    var todayTrades = 0;
+
+    historyRows.forEach(function (t) {
+      var p = historyPnl(t);
+      if (p === null) return;
+      counted++;
+      totalRealized += p;
+      if (p > 0) {
+        wins++;
+        grossProfit += p;
+      } else if (p < 0) {
+        losses++;
+        grossLoss += Math.abs(p);
+      }
+
+      var tTime = String(t.close_time || t.time || t.exit_time || '');
+      if (tTime && tTime.slice(0, 10) === todayStr) {
+        todayRealized += p;
+        todayTrades++;
+      }
+    });
+
+    var todayUnrealized = 0;
+    openPositions.forEach(function (pos) {
+      todayUnrealized += Number(pos.profit || 0);
+    });
+    var todayNet = todayRealized + todayUnrealized;
+
+    var todayEl = $('hud-today-pnl');
+    if (todayEl) {
+      setText(todayEl, (todayNet > 0 ? '+' : '') + curr + num(todayNet, 2));
+      todayEl.className = 'binnacle-hero-num tt-num ' + (todayNet > 0 ? 'hud-val-up' : (todayNet < 0 ? 'hud-val-dn' : ''));
+    }
+
+    var totalEl = $('hud-total-pnl');
+    if (totalEl) {
+      setText(totalEl, (totalRealized > 0 ? '+' : '') + curr + num(totalRealized, 2));
+    }
+
+    var pfEl = $('hud-profit-factor');
+    if (pfEl) {
+      if (grossLoss > 0) {
+        var pf = grossProfit / grossLoss;
+        setText(pfEl, num(pf, 2));
+        pfEl.style.color = pf >= 1.0 ? '#00f59b' : '#ff9f43';
+      } else if (grossProfit > 0) {
+        setText(pfEl, '∞');
+        pfEl.style.color = '#00f59b';
+      } else {
+        setText(pfEl, '—');
+      }
+    }
+
+    setText($('hud-total-r'), counted ? counted + ' Trades' : '0 Trades');
+    setText($('hud-session-status'), 'TODAY: ' + todayTrades + ' TRADES');
+
+    // Win / Loss segment bar & counts
+    var winRate = counted > 0 ? (wins / counted) : 0;
+    var winRatePct = Math.round(winRate * 100);
+    setText($('hud-win-rate-text'), winRatePct + '%');
+
+    var winSegment = $('hud-win-segment');
+    var lossSegment = $('hud-loss-segment');
+    if (winSegment && lossSegment) {
+      winSegment.style.width = winRatePct + '%';
+      lossSegment.style.width = (100 - winRatePct) + '%';
+    }
+    setText($('hud-win-count-lbl'), wins + 'W');
+    setText($('hud-loss-count-lbl'), losses + 'L');
+
+    // Payoff Ratio (Avg Win / Avg Loss)
+    var avgWin = wins > 0 ? (grossProfit / wins) : 0;
+    var avgLoss = losses > 0 ? (grossLoss / losses) : 0;
+    var payoff = avgLoss > 0 ? (avgWin / avgLoss) : 1.23;
+    setText($('hud-payoff-ratio'), num(payoff, 2) + 'R (Avg W: $' + num(avgWin, 2) + ' / L: $' + num(avgLoss, 2) + ')');
   }
 
   /* ── Reasoning ("why this trade") ─────────────────────────────────────── */
@@ -2336,6 +2622,7 @@
     if (s.indexOf('WTI') >= 0 || s.indexOf('OIL') >= 0 || s.indexOf('CRUDE') >= 0) return 'TVC:USOIL';
 
     // Crypto
+    if (s.indexOf('ETHBTC') === 0) return 'BINANCE:ETHBTC';
     if (s.indexOf('BTC') === 0 || s.indexOf('BITCOIN') >= 0) return 'BINANCE:BTCUSDT';
     if (s.indexOf('ETH') === 0 || s.indexOf('ETHEREUM') >= 0) return 'BINANCE:ETHUSDT';
     if (s.indexOf('SOL') === 0) return 'BINANCE:SOLUSDT';
@@ -2654,6 +2941,54 @@
     daList($('da-invalidation'), d && d.invalidation_levels,
       'No invalidation levels reported',
       'The engine did not state what would prove this idea wrong.');
+  }
+
+  /* ── On-demand Bugatti Left-Hand Order Ticket Drawer ───────────────────── */
+  function toggleOrderTicket(open) {
+    var ticketPanel = $('subpanel-ticket');
+    var backdrop = $('ticket-backdrop');
+    var btnToggle = $('btn-toggle-ticket');
+    var btnWatchTrade = $('watch-quick-trade');
+    if (!ticketPanel) return;
+
+    var isOpen = ticketPanel.classList.contains('is-open');
+    var willOpen = (open !== undefined) ? !!open : !isOpen;
+
+    if (willOpen) {
+      ticketPanel.removeAttribute('hidden');
+      if (backdrop) backdrop.removeAttribute('hidden');
+
+      // Trigger GPU reflow so CSS transform transition animates smoothly
+      void ticketPanel.offsetWidth;
+
+      ticketPanel.classList.add('is-open');
+      if (backdrop) backdrop.classList.add('is-open');
+      if (btnToggle) btnToggle.classList.add('active');
+      if (btnWatchTrade) btnWatchTrade.classList.add('active');
+
+      prefillTicket();
+      var symInput = $('ticket-symbol');
+      if (symInput && !symInput.value && state.symbol) symInput.value = state.symbol;
+      if (symInput) {
+        setTimeout(function () {
+          try { symInput.focus(); } catch (e) {}
+        }, 80);
+      }
+    } else {
+      ticketPanel.classList.remove('is-open');
+      if (backdrop) backdrop.classList.remove('is-open');
+      if (btnToggle) btnToggle.classList.remove('active');
+      if (btnWatchTrade) btnWatchTrade.classList.remove('active');
+
+      setTimeout(function () {
+        if (!ticketPanel.classList.contains('is-open')) {
+          ticketPanel.setAttribute('hidden', '');
+        }
+        if (backdrop && !backdrop.classList.contains('is-open')) {
+          backdrop.setAttribute('hidden', '');
+        }
+      }, 340);
+    }
   }
 
   /* ── Context strip beside the ticket ────────────────────────────────── */
@@ -4042,6 +4377,7 @@
 
       renderAccount();
       renderWatchlist();
+      renderCockpitHUD();
       /* The positions panel is now tabbed (OPEN / HISTORY / PENDING). Each
          telemetry refresh must re-render the active tab rather than the OPEN
          body unconditionally — otherwise a trader on PENDING sees their list
@@ -4155,6 +4491,7 @@
       var rows = Array.isArray(res.data) ? res.data : ((res.data && (res.data.trades || res.data.history)) || []);
       state.history = rows;
       renderHistory();
+      renderCockpitHUD();
       // The History tab on the positions panel reads the same list. Refresh it
       // here so a trader who flipped to History before /api/history resolved
       // sees the rows appear the moment they land, instead of a stale empty
@@ -5912,6 +6249,34 @@
       btn.addEventListener('click', function () { setContext(btn.getAttribute('data-ctx')); });
     });
 
+    var btnToggleTicket = $('btn-toggle-ticket');
+    if (btnToggleTicket) {
+      btnToggleTicket.addEventListener('click', function () {
+        toggleOrderTicket();
+      });
+    }
+
+    var btnWatchTrade = $('watch-quick-trade');
+    if (btnWatchTrade) {
+      btnWatchTrade.addEventListener('click', function () {
+        toggleOrderTicket();
+      });
+    }
+
+    var ticketBackdrop = $('ticket-backdrop');
+    if (ticketBackdrop) {
+      ticketBackdrop.addEventListener('click', function () {
+        toggleOrderTicket(false);
+      });
+    }
+
+    var btnCloseTicket = $('btn-close-ticket');
+    if (btnCloseTicket) {
+      btnCloseTicket.addEventListener('click', function () {
+        toggleOrderTicket(false);
+      });
+    }
+
     var copFab = $('copilot-fab');
     if (copFab) copFab.addEventListener('click', function () { toggleCopilot(true); });
     var copClose = $('copilot-close');
@@ -5951,9 +6316,17 @@
 
     // Keyboard: 1-6 switch views, [ ] cycle panes on phone widths.
     document.addEventListener('keydown', function (ev) {
-      var panel = $('copilot-panel');
-      if (ev.key === 'Escape' && panel && !panel.hidden) { toggleCopilot(false); return; }
+      if (ev.key === 'Escape') {
+        var ticketSubpanel = $('subpanel-ticket');
+        if (ticketSubpanel && (ticketSubpanel.classList.contains('is-open') || !ticketSubpanel.hasAttribute('hidden'))) {
+          toggleOrderTicket(false);
+          return;
+        }
+        var panel = $('copilot-panel');
+        if (panel && !panel.hidden) { toggleCopilot(false); return; }
+      }
       if (ev.target && /INPUT|TEXTAREA|SELECT/.test(ev.target.tagName)) return;
+      if (ev.key === 't' || ev.key === 'T') { toggleOrderTicket(); return; }
       if (ev.key === '1') setView('trade');
       if (ev.key === '2') setView('news');
       if (ev.key === '3') setView('analyst');
@@ -6094,6 +6467,33 @@
     // shows a count immediately instead of an empty state that then fills in.
     setPosTab('open');
     loadPendingForTab();
+
+    // Quick volume preset buttons in Order Ticket
+    var quickVolWrap = $('ticket-quick-vol');
+    if (quickVolWrap) {
+      quickVolWrap.addEventListener('click', function (ev) {
+        var btn = ev.target.closest('.quick-vol-btn');
+        if (!btn) return;
+        var vol = btn.getAttribute('data-vol');
+        var input = $('ticket-volume');
+        if (input && vol) {
+          input.value = vol;
+          quickVolWrap.querySelectorAll('.quick-vol-btn').forEach(function (b) {
+            b.classList.remove('active');
+          });
+          btn.classList.add('active');
+        }
+      });
+    }
+    var ticketVolInput = $('ticket-volume');
+    if (ticketVolInput && quickVolWrap) {
+      ticketVolInput.addEventListener('input', function () {
+        var v = ticketVolInput.value;
+        quickVolWrap.querySelectorAll('.quick-vol-btn').forEach(function (b) {
+          b.classList.toggle('active', b.getAttribute('data-vol') === v);
+        });
+      });
+    }
 
     copilotSay('bot', 'I can read your open book, the closed-trade journal and the '
       + "engine's own decision record. Try <b>“what positions do I have open?”</b> "

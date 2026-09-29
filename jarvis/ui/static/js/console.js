@@ -29,7 +29,7 @@
 
   /* ── constants ────────────────────────────────────────────────────────── */
   var POLL = { telemetry: 2000, chart: 6000, regime: 30000, analytics: 15000, jobs: 2000 };
-  var FALLBACK_SYMBOLS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'BTCUSD', 'ETHUSD', 'WTI', 'NAS100'];
+  var FALLBACK_SYMBOLS = ['XAUUSD', 'BTCUSD', 'ETHUSD', 'SOLUSD', 'ETHBTC', 'EURUSD', 'GBPUSD', 'USDJPY', 'WTI', 'NAS100'];
   var VIEWS = ['trade', 'backtest', 'analytics'];
   var PANELS = ['watchlist', 'chart', 'ticket'];
   var TIER_CLASS = { HIGH: 'cx-chip--bull', MEDIUM: 'cx-chip', LOW: 'cx-chip--warn', NONE: 'cx-chip--muted' };

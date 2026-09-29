@@ -125,9 +125,28 @@ class ExposureManager:
         breaches = []
         target_canon = resolve_symbol(symbol).canonical
 
-        # 1. Total Concurrent Positions Limit
-        if len(positions) >= self.max_open_positions:
-            breaches.append(f"Max Concurrent Positions reached ({len(positions)} >= {self.max_open_positions}).")
+        # 1. Total Concurrent Positions Limit (with Risk-Free Breakeven Exemption)
+        # Positions that have reached Breakeven or locked in profit carry $0 capital risk.
+        active_risk_positions = []
+        for p in positions:
+            side = getattr(p, "side", getattr(p, "type", "")).upper()
+            sl = float(getattr(p, "sl", 0.0) or 0.0)
+            entry = float(getattr(p, "entry_price", getattr(p, "open_price", 0.0)) or 0.0)
+            status = str(getattr(p, "milestone_status", "") or "")
+            is_derisked = False
+            if status in ("TP1_HIT_BE_LOCKED", "BE_LOCKED", "RUNNER_TRAILING", "TP2_HIT_PROFIT_LOCKED", "TP3_RUNNER_TRAILING"):
+                is_derisked = True
+            elif sl > 0 and entry > 0:
+                if side in ("BUY", "LONG", "0") and sl >= (entry - 1e-5):
+                    is_derisked = True
+                elif side in ("SELL", "SHORT", "1") and sl <= (entry + 1e-5):
+                    is_derisked = True
+            if not is_derisked:
+                active_risk_positions.append(p)
+
+        max_total_ceiling = self.max_open_positions + 2
+        if len(active_risk_positions) >= self.max_open_positions or len(positions) >= max_total_ceiling:
+            breaches.append(f"Max Concurrent Positions reached ({len(active_risk_positions)} active risk / {len(positions)} total >= {self.max_open_positions} allowed).")
 
         # 2. Per-Symbol Exposure (Soft Limit = 1, Hard Limit = 2)
         symbol_count = sum(1 for p in positions if resolve_symbol(p.symbol).canonical == target_canon)

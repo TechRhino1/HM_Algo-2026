@@ -115,11 +115,12 @@ body.tt-app, body.ios-app {
 }
 
 .bugatti-brand__mark {
-  background: linear-gradient(135deg, var(--bugatti-blue), var(--electric-cyan)) !important;
-  box-shadow: var(--bugatti-blue-glow) !important;
-  border-radius: 6px !important;
-  width: 18px !important;
-  height: 18px !important;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 125'%3E%3Cpath d='M12 16 C 12 16, 60 12, 108 16 C 108 16, 108 82, 60 140 C 12 82, 12 16, 12 16 Z' fill='%23d4af37' stroke='%232b1e06' stroke-width='3'/%3E%3Crect x='14' y='14' width='92' height='120' fill='%23d4af37'/%3E%3Cpath d='M12 16 L 108 16 L 105 32 L 15 32 Z' fill='%23b8860b'/%3E%3Ctext x='60' y='27' font-family='sans-serif' font-size='9' fill='%23000' font-weight='900' text-anchor='middle'%3EPORSCHE%3C/text%3E%3Crect x='60' y='32' width='12' height='30' fill='%23000'/%3E%3Crect x='72' y='32' width='12' height='30' fill='%23c00'/%3E%3Crect x='84' y='32' width='12' height='30' fill='%23000'/%3E%3Crect x='96' y='32' width='12' height='30' fill='%23c00'/%3E%3Crect x='14' y='62' width='11.5' height='38' fill='%23c00'/%3E%3Crect x='25.5' y='62' width='11.5' height='38' fill='%23000'/%3E%3Crect x='37' y='62' width='11.5' height='38' fill='%23c00'/%3E%3Crect x='48.5' y='62' width='11.5' height='38' fill='%23000'/%3E%3Cpath d='M42 46 C 42 46, 60 44, 78 46 C 78 46, 78 72, 60 86 C 42 72, 42 46, 42 46 Z' fill='%23d4af37' stroke='%23000' stroke-width='1.5'/%3E%3Cpath d='M58 74 C 56 73, 55 70, 57 68 C 58 66, 60 65, 60 63 C 60 61, 58 60, 57 58 C 56 56, 56 54, 58 52 C 59 51, 61 51, 62 53 C 63 51, 64 51, 65 52 C 66 53, 65 55, 64 56 C 65 57, 67 58, 66 60 C 65 62, 63 63, 64 65 C 65 67, 66 69, 65 72 C 64 74, 62 75, 60 75 Z' fill='%23000'/%3E%3C/svg%3E") no-repeat center center / contain !important;
+  border-radius: 0 !important;
+  width: 22px !important;
+  height: 27px !important;
+  box-shadow: none !important;
+  filter: drop-shadow(0 2px 6px rgba(212, 175, 55, 0.45)) !important;
   display: inline-block !important;
   flex-shrink: 0 !important;
 }
@@ -1349,24 +1350,341 @@ button.bugatti-dropdown__item:focus {
   white-space: nowrap !important;
 }
 
-/* ── Increased Sidebar Widths for Watchlist & Order Ticket ───────────────── */
-@media (min-width: 1280px) {
+/* ── Bugatti Cockpit View Stability: Fixed 3 Columns ───────────────────── */
+#view-trade {
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+#view-trade > .tt-panel--watchlist {
+  grid-column: 1 !important;
+}
+#view-trade > .tt-panel--chart {
+  grid-column: 2 !important;
+}
+#view-trade > #ticket-context-panel {
+  grid-column: 3 !important;
+}
+
+@media (min-width: 1360px) {
   #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(360px, 420px) minmax(0, 1fr) minmax(350px, 410px) !important;
+    grid-template-columns: minmax(320px, 390px) minmax(0, 1fr) minmax(340px, 430px) !important;
     gap: 14px !important;
   }
 }
 
-@media (min-width: 1600px) {
+@media (min-width: 1680px) {
   #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(400px, 470px) minmax(0, 1fr) minmax(380px, 450px) !important;
+    grid-template-columns: minmax(350px, 430px) minmax(0, 1fr) minmax(360px, 460px) !important;
     gap: 16px !important;
   }
 }
 
-@media (min-width: 900px) and (max-width: 1279px) {
+@media (min-width: 900px) and (max-width: 1359px) {
   #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(340px, 390px) minmax(0, 1fr) !important;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) minmax(310px, 380px) !important;
+    gap: 12px !important;
+  }
+}
+
+/* ── Bugatti Left-Hand Speed Cockpit Order Ticket Drawer ───────────────── */
+.tt-order-drawer-backdrop {
+  position: absolute !important;
+  inset: 0 !important;
+  background: rgba(4, 7, 12, 0.6) !important;
+  backdrop-filter: blur(4px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(4px) saturate(140%) !important;
+  z-index: 140 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  transition: opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.28s !important;
+  will-change: opacity, visibility;
+}
+
+.tt-order-drawer-backdrop.is-open {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+}
+
+.tt-order-drawer-left {
+  position: absolute !important;
+  top: 10px !important;
+  bottom: 10px !important;
+  left: 10px !important;
+  width: 385px !important;
+  max-width: calc(100% - 20px) !important;
+  height: calc(100% - 20px) !important;
+  z-index: 160 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  background: linear-gradient(180deg, rgba(14, 20, 32, 0.985) 0%, rgba(7, 11, 18, 0.995) 100%) !important;
+  border: 1px solid rgba(0, 240, 255, 0.35) !important;
+  border-left: 3.5px solid var(--electric-cyan) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.9), 0 0 35px rgba(0, 102, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+  backdrop-filter: blur(32px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(200%) !important;
+  overflow: hidden !important;
+  transform: translate3d(-115%, 0, 0) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.24s ease, visibility 0.32s, box-shadow 0.32s ease !important;
+  will-change: transform, opacity;
+}
+
+.tt-order-drawer-left.is-open {
+  transform: translate3d(0, 0, 0) !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.95), 0 0 45px rgba(0, 240, 255, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+.ticket-drawer-head {
+  flex: 0 0 auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 12px 16px !important;
+  background: linear-gradient(90deg, rgba(0, 102, 255, 0.2) 0%, rgba(0, 240, 255, 0.08) 60%, rgba(255, 255, 255, 0.03) 100%) !important;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.25) !important;
+  gap: 10px !important;
+}
+
+.ticket-drawer-brand {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.ticket-brand-pulse {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 8px !important;
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.4), rgba(0, 240, 255, 0.25)) !important;
+  border: 1px solid rgba(0, 240, 255, 0.6) !important;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.5) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 0.85rem !important;
+  color: #00f0ff !important;
+  animation: bugattiBoltPulse 2.4s infinite ease-in-out !important;
+  flex-shrink: 0 !important;
+}
+
+@keyframes bugattiBoltPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(0, 240, 255, 0.4); transform: scale(1); }
+  50% { box-shadow: 0 0 16px rgba(0, 240, 255, 0.8); transform: scale(1.06); }
+}
+
+.ticket-brand-title {
+  font-family: var(--font-hud) !important;
+  font-size: 0.8125rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.08em !important;
+  color: #ffffff !important;
+  line-height: 1.2 !important;
+}
+
+.ticket-brand-sub {
+  font-family: var(--font-mono) !important;
+  font-size: 0.625rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.06em !important;
+  color: var(--electric-cyan) !important;
+  text-transform: uppercase !important;
+}
+
+.ticket-drawer-close {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 7px !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  color: var(--machined-silver) !important;
+  font-size: 0.75rem !important;
+  font-weight: 700 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  transition: all 0.18s ease !important;
+  padding: 0 !important;
+  flex-shrink: 0 !important;
+}
+
+.ticket-drawer-close:hover {
+  background: rgba(255, 51, 68, 0.25) !important;
+  border-color: rgba(255, 51, 68, 0.7) !important;
+  color: #ff3344 !important;
+  transform: scale(1.08) !important;
+  box-shadow: 0 0 10px rgba(255, 51, 68, 0.4) !important;
+}
+
+.ticket-drawer-body {
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding: 12px 14px !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(0, 240, 255, 0.3) transparent !important;
+}
+
+.ticket-drawer-body::-webkit-scrollbar {
+  width: 5px !important;
+}
+
+.ticket-drawer-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.3) !important;
+  border-radius: 4px !important;
+}
+
+.ticket-instrument-hud {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 7px 12px !important;
+  margin-bottom: 12px !important;
+  background: rgba(0, 0, 0, 0.45) !important;
+  border: 1px solid rgba(0, 240, 255, 0.18) !important;
+  border-radius: 8px !important;
+  font-family: var(--font-hud) !important;
+  font-size: 0.6875rem !important;
+}
+
+.ticket-action-row {
+  display: flex !important;
+  gap: 10px !important;
+  width: 100% !important;
+}
+
+.tt-btn--hero {
+  height: 48px !important;
+  font-family: var(--font-hud) !important;
+  font-size: 0.9375rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.06em !important;
+  border-radius: 10px !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  border: 1px solid transparent !important;
+}
+
+.tt-btn--hero.tt-btn--buy {
+  background: linear-gradient(135deg, #00f59b 0%, #00a86b 100%) !important;
+  color: #03140a !important;
+  border-color: rgba(0, 245, 155, 0.5) !important;
+  box-shadow: 0 4px 18px rgba(0, 245, 155, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.4) !important;
+}
+
+.tt-btn--hero.tt-btn--buy:hover {
+  background: linear-gradient(135deg, #1affaa 0%, #00c77f 100%) !important;
+  box-shadow: 0 6px 24px rgba(0, 245, 155, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+  transform: translateY(-2px) !important;
+}
+
+.tt-btn--hero.tt-btn--buy:active {
+  transform: translateY(0) scale(0.98) !important;
+  box-shadow: 0 2px 8px rgba(0, 245, 155, 0.5) !important;
+}
+
+.tt-btn--hero.tt-btn--sell {
+  background: linear-gradient(135deg, #ff3344 0%, #b31024 100%) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 51, 68, 0.5) !important;
+  box-shadow: 0 4px 18px rgba(255, 51, 68, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+}
+
+.tt-btn--hero.tt-btn--sell:hover {
+  background: linear-gradient(135deg, #ff5566 0%, #cc1122 100%) !important;
+  box-shadow: 0 6px 24px rgba(255, 51, 68, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+  transform: translateY(-2px) !important;
+}
+
+.tt-btn--hero.tt-btn--sell:active {
+  transform: translateY(0) scale(0.98) !important;
+  box-shadow: 0 2px 8px rgba(255, 51, 68, 0.5) !important;
+}
+
+.btn-hero-icon {
+  font-size: 0.8rem !important;
+  line-height: 1 !important;
+}
+
+/* Stop Loss & Take Profit Accent Borders */
+.tt-input--sl {
+  border-left: 3px solid #ff3344 !important;
+}
+
+.tt-input--sl:focus {
+  border-left-color: #ff3344 !important;
+  box-shadow: 0 0 10px rgba(255, 51, 68, 0.35) !important;
+}
+
+.tt-input--tp {
+  border-left: 3px solid #00f59b !important;
+}
+
+.tt-input--tp:focus {
+  border-left-color: #00f59b !important;
+  box-shadow: 0 0 10px rgba(0, 245, 155, 0.35) !important;
+}
+
+/* On-Demand Trade Toggle Button */
+#btn-toggle-ticket,
+#watch-quick-trade {
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.3), rgba(0, 240, 255, 0.2)) !important;
+  border: 1px solid rgba(0, 240, 255, 0.5) !important;
+  color: #ffffff !important;
+  padding: 4px 11px !important;
+  border-radius: 6px !important;
+  font-family: var(--font-hud) !important;
+  font-size: 0.72rem !important;
+  letter-spacing: 0.04em !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  cursor: pointer !important;
+}
+
+#btn-toggle-ticket:hover,
+#watch-quick-trade:hover {
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.55), rgba(0, 240, 255, 0.4)) !important;
+  border-color: #00f0ff !important;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.5) !important;
+  transform: translateY(-1px) !important;
+}
+
+#btn-toggle-ticket.active,
+#watch-quick-trade.active {
+  background: linear-gradient(135deg, #0066ff, #00f0ff) !important;
+  color: #05070b !important;
+  font-weight: 800 !important;
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.7) !important;
+}
+
+/* Mobile & Tablet Reflow for Order Drawer */
+@media (max-width: 899px) {
+  .tt-order-drawer-left {
+    position: fixed !important;
+    top: 56px !important;
+    bottom: 60px !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    z-index: 9999 !important;
+  }
+  .tt-order-drawer-backdrop {
+    position: fixed !important;
+    z-index: 9998 !important;
   }
 }
 
@@ -1549,4 +1867,665 @@ button.bugatti-dropdown__item:focus {
   color: #ffffff;
 }
 
+/* ===========================================================================
+   COCKPIT INSTRUMENT CLUSTER (4-BINNACLE DIGITAL HUD)
+   Inspired by Bugatti Tourbillon & Chiron Digital Telemetry
+   =========================================================================== */
+.cockpit-hud-cluster {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 12px 16px 6px 16px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
 
+.cockpit-binnacle {
+  background: rgba(13, 19, 32, 0.88);
+  border: 1px solid var(--titanium-border);
+  border-top: 1px solid rgba(0, 102, 255, 0.4);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 110px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.cockpit-binnacle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.5), transparent);
+  opacity: 0.7;
+}
+
+.cockpit-binnacle:hover {
+  border-color: rgba(0, 240, 255, 0.35);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 16px rgba(0, 102, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.binnacle-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.binnacle-title {
+  font-family: var(--font-cockpit);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.binnacle-badge {
+  font-family: var(--font-hud);
+  font-size: 0.625rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--machined-silver);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.binnacle-badge.badge-blue {
+  background: rgba(0, 102, 255, 0.15);
+  color: #38bdf8;
+  border-color: rgba(0, 102, 255, 0.35);
+}
+
+.binnacle-badge.badge-green {
+  background: rgba(0, 245, 155, 0.15);
+  color: #00f59b;
+  border-color: rgba(0, 245, 155, 0.35);
+}
+
+.binnacle-badge.badge-red {
+  background: rgba(255, 51, 68, 0.15);
+  color: #ff3344;
+  border-color: rgba(255, 51, 68, 0.35);
+}
+
+.binnacle-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 1;
+}
+
+.binnacle-main-val {
+  font-family: var(--font-hud);
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  line-height: 1.1;
+}
+
+.binnacle-main-val.val-green {
+  color: var(--emerald-velocity);
+  text-shadow: 0 0 14px rgba(0, 245, 155, 0.35);
+}
+
+.binnacle-main-val.val-red {
+  color: var(--hyper-crimson);
+  text-shadow: 0 0 14px rgba(255, 51, 68, 0.35);
+}
+
+.binnacle-sub-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--font-hud);
+  font-size: 0.6875rem;
+  color: #94a3b8;
+  text-align: right;
+}
+
+.binnacle-sub-metrics span b {
+  color: var(--machined-silver);
+  font-weight: 600;
+}
+
+/* Direction Binnacle Specifics */
+.direction-pill-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-family: var(--font-hud);
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.direction-pill-buy {
+  background: linear-gradient(135deg, rgba(0, 245, 155, 0.25), rgba(0, 102, 255, 0.2));
+  color: #00f59b;
+  border: 1px solid rgba(0, 245, 155, 0.5);
+  box-shadow: 0 0 12px rgba(0, 245, 155, 0.25);
+}
+
+.direction-pill-sell {
+  background: linear-gradient(135deg, rgba(255, 51, 68, 0.25), rgba(180, 20, 40, 0.2));
+  color: #ff3344;
+  border: 1px solid rgba(255, 51, 68, 0.5);
+  box-shadow: 0 0 12px rgba(255, 51, 68, 0.25);
+}
+
+.direction-pill-neutral {
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.hud-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+  display: inline-block;
+  box-shadow: 0 0 6px currentColor;
+  animation: hudPulse 1.8s infinite ease-in-out;
+}
+
+@keyframes hudPulse {
+  0% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.25); opacity: 1; filter: drop-shadow(0 0 4px currentColor); }
+  100% { transform: scale(0.9); opacity: 0.7; }
+}
+
+.hud-ev-chip {
+  font-family: var(--font-hud);
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(0, 245, 155, 0.12);
+  color: #00f59b;
+  border: 1px solid rgba(0, 245, 155, 0.3);
+}
+
+.badge-safe {
+  background: rgba(0, 245, 155, 0.12) !important;
+  color: #00f59b !important;
+  border-color: rgba(0, 245, 155, 0.3) !important;
+}
+
+.hud-card-footer {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* Multi-Timeframe Matrix */
+.hud-mtf-matrix {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mtf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-hud);
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mtf-pip {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.pip-bull {
+  background: #00f59b;
+  box-shadow: 0 0 6px rgba(0, 245, 155, 0.7);
+}
+
+.pip-bear {
+  background: #ff3344;
+  box-shadow: 0 0 6px rgba(255, 51, 68, 0.7);
+}
+
+.pip-neutral {
+  background: #64748b;
+}
+
+.binnacle-meter-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.binnacle-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0066ff, #00f0ff);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
+}
+
+/* Capital Cushion Bar */
+.hud-cushion-bar-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.hud-cushion-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00f59b, #00f0ff);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+  box-shadow: 0 0 8px rgba(0, 245, 155, 0.4);
+}
+
+/* Visual Segmented Win/Loss Bar */
+.hud-winloss-visual-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hud-winloss-track {
+  display: flex;
+  width: 100%;
+  height: 5px;
+  border-radius: 2.5px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.hud-win-segment {
+  height: 100%;
+  background: linear-gradient(90deg, #00c853, #00f59b);
+  transition: width 0.5s ease;
+}
+
+.hud-loss-segment {
+  height: 100%;
+  background: linear-gradient(90deg, #ff3344, #b71c1c);
+  transition: width 0.5s ease;
+}
+
+.hud-winloss-micro-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-hud);
+  font-size: 0.58rem;
+  font-weight: 700;
+}
+
+/* Tachometer SVG Circular Gauge & Chronograph Needle */
+.tachometer-container {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tachometer-svg {
+  transform: rotate(-90deg);
+  width: 100%;
+  height: 100%;
+}
+
+.tachometer-bg-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 4.5;
+}
+
+.tachometer-val-arc {
+  fill: none;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s ease;
+  filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.5));
+}
+
+#hud-chrono-needle {
+  transition: transform 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.tachometer-center-text {
+  position: absolute;
+  font-family: var(--font-hud);
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #ffffff;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Quick Volume Presets in Order Ticket */
+.quick-vol-group {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.quick-vol-btn {
+  background: rgba(20, 28, 45, 0.8);
+  border: 1px solid var(--titanium-border);
+  color: var(--machined-silver);
+  font-family: var(--font-hud);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 4px 0;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+
+.quick-vol-btn:hover {
+  background: rgba(0, 102, 255, 0.2);
+  border-color: rgba(0, 240, 255, 0.4);
+  color: #ffffff;
+}
+
+.quick-vol-btn.active {
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.4), rgba(0, 240, 255, 0.25));
+  border-color: rgba(0, 240, 255, 0.6);
+  color: #ffffff;
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.3);
+}
+
+/* Responsive Breakpoints Reflow */
+@media (max-width: 1200px) {
+  .cockpit-hud-cluster {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .cockpit-hud-cluster {
+    grid-template-columns: 1fr;
+    padding: 8px 12px 4px 12px;
+    gap: 8px;
+  }
+  .cockpit-binnacle {
+    min-height: 90px;
+    padding: 10px 12px;
+  }
+  .binnacle-main-val {
+    font-size: 1.25rem;
+  }
+}
+
+/* ===========================================================================
+   PORSCHE STUTTGART BRAND HEADERS & TRANSPARENT CREST
+   =========================================================================== */
+.porsche-brand {
+  display: flex !important;
+  align-items: center !important;
+  gap: 11px !important;
+  text-decoration: none !important;
+  cursor: pointer !important;
+  flex-shrink: 0 !important;
+}
+
+.porsche-crest-wrap {
+  width: 26px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), filter 0.25s ease;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.75));
+  background: transparent !important;
+}
+
+.porsche-crest-wrap:hover {
+  transform: scale(1.08) translateY(-1px);
+  filter: drop-shadow(0 0 14px rgba(220, 180, 60, 0.7)) drop-shadow(0 3px 10px rgba(0, 0, 0, 0.9));
+}
+
+.porsche-crest-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: transparent !important;
+}
+
+.porsche-brand-titles {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.porsche-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.porsche-brand__text {
+  font-family: 'Montserrat', 'Inter', -apple-system, sans-serif !important;
+  font-weight: 900 !important;
+  font-size: 0.96rem !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase !important;
+  color: #ffffff !important;
+  white-space: nowrap !important;
+}
+
+.porsche-brand__badge {
+  font-family: var(--font-hud);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(0, 240, 255, 0.12);
+  color: #00f0ff;
+  border: 1px solid rgba(0, 240, 255, 0.3);
+}
+
+.porsche-brand-sub {
+  font-size: 0.51rem;
+  letter-spacing: 0.14em;
+  color: #94a3b8;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Legacy Bugatti Compatibility */
+.bugatti-macaron {
+  width: 32px;
+  height: 20px;
+  border-radius: 10px;
+  background: radial-gradient(circle at 35% 30%, #ff2a3b 0%, #d50015 60%, #8b000c 100%);
+  border: 1.5px solid #d4af37;
+  box-shadow: 0 0 10px rgba(220, 20, 40, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-cockpit);
+  font-weight: 900;
+  font-size: 0.65rem;
+  letter-spacing: -0.05em;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.bugatti-macaron:hover {
+  transform: scale(1.06);
+  box-shadow: 0 0 16px rgba(255, 42, 59, 0.8), inset 0 1px 2px rgba(255, 255, 255, 0.6);
+}
+
+.bugatti-brand-titles {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.bugatti-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bugatti-brand-sub {
+  font-size: 0.53rem;
+  letter-spacing: 0.12em;
+  color: #94a3b8;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* ===========================================================================
+   TACTICAL SCANNER RADAR WIDGET
+   =========================================================================== */
+.tactical-radar-widget {
+  padding: 10px 14px 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--titanium-border);
+  background: rgba(10, 14, 23, 0.55);
+}
+
+.radar-sweep-screen {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 240, 255, 0.45);
+  background: radial-gradient(circle, rgba(0, 102, 255, 0.18) 0%, rgba(5, 10, 20, 0.95) 100%);
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.25);
+}
+
+.radar-sweep-beam {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg, transparent 270deg, rgba(0, 240, 255, 0.15) 320deg, rgba(0, 240, 255, 0.65) 360deg);
+  animation: radarBeamSweep 3s linear infinite;
+}
+
+@keyframes radarBeamSweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.radar-blip {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #00f0ff;
+  box-shadow: 0 0 6px #00f0ff;
+}
+
+.radar-blip.blip-1 {
+  top: 28%;
+  left: 65%;
+  animation: blipPulse 1.8s ease-in-out infinite;
+}
+
+.radar-blip.blip-2 {
+  top: 60%;
+  left: 35%;
+  animation: blipPulse 1.8s ease-in-out 0.9s infinite;
+}
+
+@keyframes blipPulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.3); }
+}
+
+.radar-crosshair {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: 
+    linear-gradient(rgba(0, 240, 255, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.15) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-position: center center;
+  pointer-events: none;
+}
+
+.radar-info {
+  flex: 1;
+}
+
+.radar-info-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-cockpit);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--machined-silver);
+  margin-bottom: 2px;
+}
+
+.radar-info-status {
+  color: var(--electric-cyan);
+  font-family: var(--font-hud);
+  font-size: 0.625rem;
+  font-weight: 700;
+}
+
+.radar-info-sub {
+  font-size: 0.625rem;
+  color: #94a3b8;
+  font-family: var(--font-hud);
+}

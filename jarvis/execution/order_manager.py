@@ -176,11 +176,30 @@ class OrderManager:
         if vol.current_spread_pips > self.SPREAD_ALERT_THRESHOLD:
             logger.warning(f"⚠️ High Spread Detected on #{position.ticket} ({vol.current_spread_pips:.1f} pips).")
 
+        new_tp = position.tp
+        risk_dist = abs(position.open_price - initial_sl) if initial_sl > 0 else 0.0
+        r_multiple = (favorable_dist / risk_dist) if risk_dist > 1e-9 else 0.0
+        if position.volume <= self.MICRO_VOLUME_THRESHOLD and r_multiple >= 1.4 and (dec.be_locked or position.ticket in self._be_locked):
+            macro_runner_r = min(8.0, r_multiple + 3.5)
+            extended_tp = round(
+                position.open_price + (risk_dist * macro_runner_r) if position.type == "BUY"
+                else position.open_price - (risk_dist * macro_runner_r),
+                policy.digits,
+            )
+            if position.type == "BUY" and (new_tp == 0 or extended_tp > new_tp):
+                new_tp = extended_tp
+                modified = True
+                dec.actions.append(f"MICRO_RUNNER_TP_{macro_runner_r:.1f}R")
+            elif position.type == "SELL" and (new_tp == 0 or extended_tp < new_tp):
+                new_tp = extended_tp
+                modified = True
+                dec.actions.append(f"MICRO_RUNNER_TP_{macro_runner_r:.1f}R")
+
         return {
             "ticket": position.ticket,
             "modified": modified,
             "new_sl": round(new_sl, policy.digits),
-            "new_tp": round(position.tp, policy.digits),
+            "new_tp": round(new_tp, policy.digits),
         }
 
     def forget_ticket(self, ticket: int) -> None:

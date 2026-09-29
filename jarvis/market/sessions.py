@@ -77,6 +77,8 @@ class SessionEngine:
             session_name = "NEW_YORK"
         elif 0 <= hour < 9:
             session_name = "ASIAN"
+        elif 21 <= hour <= 23:
+            session_name = "SYDNEY_PACIFIC"
 
         # Prime volume window is typically 07:00 - 20:59 UTC during weekdays (Monday to Friday)
         is_weekday = weekday < 5

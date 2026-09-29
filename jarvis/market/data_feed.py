@@ -83,9 +83,15 @@ def style_timeframe_set(trade_style: Optional[str]) -> set:
 # A bar is "fresh" while the newest bar's open is no older than this many bar
 # durations. It cannot be 1: with `include_current_bar=False` the newest bar
 # returned is the last CLOSED one, so its open is already 1-2 durations old and
-# a 1x rule would flag every healthy frame. 2.5 leaves room for the in-progress
-# bar plus exchange slack without accepting a genuinely stalled feed.
+# a 1x rule would flag every healthy frame.
+# In addition, precious metals (Gold, Silver) and CFD indices have a 1-hour daily
+# rollover / maintenance break where no bars form. During the first hour after
+# reopen, the last closed bar is 2.5 to 3.0 bar durations old.
+# A closed-bar tolerance of 3.5 bridges this daily break without accepting
+# genuinely stalled feeds (4-8h+).
 _FRESH_BAR_TOLERANCE = 2.5
+_FRESH_BAR_TOLERANCE_LIVE = 2.5
+_FRESH_BAR_TOLERANCE_CLOSED = 3.5
 
 # Cold-history warm-up budget. MT5 downloads a symbol's history on demand and
 # does it asynchronously, so the first read after `symbol_select` can return a
@@ -151,7 +157,8 @@ def classify_bar_freshness(
     if age < 0:
         return (FRESH if -age <= bar_sec else FRESHNESS_UNKNOWN), age
 
-    if age <= bar_sec * _FRESH_BAR_TOLERANCE:
+    tol = _FRESH_BAR_TOLERANCE_LIVE if include_current_bar else _FRESH_BAR_TOLERANCE_CLOSED
+    if age <= bar_sec * tol:
         return FRESH, age
     if _is_weekend_gap(now):
         return MARKET_CLOSED, age
