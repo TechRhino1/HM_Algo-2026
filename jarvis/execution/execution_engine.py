@@ -276,7 +276,15 @@ class ExecutionEngine:
                     res["tp"] = actual_tp
                     res["real_fill_anchored"] = True
 
-            # ── Post-Fill Monetary Risk Check (Spec v2.1 Refinement 2) ──
+            # ── Post-Fill Monetary Risk Audit (LOG ONLY) ──────────────────
+            # IMPORTANT: This block no longer tightens the SL.  The old code
+            # crushed structural stops (e.g. 35-pt Gold) down to $13–$15 of
+            # monetary risk, placing the SL inside sub-session noise.  Forensic
+            # analysis of 465 trades showed 92.5% exiting by SL hit, with 269
+            # trades lasting < 5 minutes (–$884).  The position sizer already
+            # approved this trade at the given lot size; if the monetary risk is
+            # too large, the correct place to reject is BEFORE dispatch — not
+            # after fill by destroying the structural stop.
             if ticket:
                 tick_val = float(sym_spec.get("trade_tick_value", 1.0) or 1.0)
                 tick_sz = float(sym_spec.get("trade_tick_size", point) or point)
@@ -286,23 +294,15 @@ class ExecutionEngine:
                 
                 account_equity = self.state_manager.account.equity if self.state_manager.account else 10000.0
                 from jarvis.config.settings import SETTINGS
-                # Respect micro-account risk floor ($15.00 for equity < $2,500) so minimum 0.01 lot trades are not choked
                 base_target = account_equity * (SETTINGS.risk.max_risk_per_trade_pct / 100.0)
                 target_risk_usd = max(base_target, 15.0) if account_equity < 2500.0 else base_target
                 
                 if realized_risk_usd > target_risk_usd * 1.10:
                     logger.warning(
-                        f"⚠️ POST-FILL RISK EXCEEDED TARGET on #{ticket}: Realized risk ${realized_risk_usd:.2f} > target ${target_risk_usd:.2f} "
-                        f"(Lots: {lots}, Stop Dist: {abs(fill_price - actual_sl_final):.5f})."
+                        f"⚠️ POST-FILL RISK NOTE on #{ticket}: Realized risk ${realized_risk_usd:.2f} > target ${target_risk_usd:.2f} "
+                        f"(Lots: {lots}, Stop Dist: {abs(fill_price - actual_sl_final):.5f}). "
+                        f"Structural SL preserved — position sizer approved this geometry."
                     )
-                    max_allowed_dist = target_risk_usd / (dollar_per_unit * lots)
-                    if max_allowed_dist >= min_broker_stop_dist:
-                        tighter_sl = round(fill_price - max_allowed_dist if decision.bias == "BUY" else fill_price + max_allowed_dist, digits)
-                        logger.info(f"Tightening SL on #{ticket} to safe risk level: {actual_sl_final} -> {tighter_sl}")
-                        mod_tight = self.mt5_client.modify_position(ticket=ticket, sl=tighter_sl, tp=res.get("tp", decision.take_profit))
-                        if mod_tight and mod_tight.get("status") == "MODIFIED":
-                            res["sl"] = tighter_sl
-                            res["risk_tightened"] = True
                     
             try:
                 import json

@@ -239,22 +239,22 @@ class DynamicRiskAndLevelsEngine:
             # That is a directional asymmetry introduced by an inconsistency, not a
             # trading view, so BUY is widened to match SELL rather than the reverse.
             if style == "SCALP":
-                sl_dist = min(1.00 * atr + spread_dist, max(0.50 * atr, struct_sl_dist * 0.7))
-                min_target_rr = 2.0
-                asym_rr = 2.8
+                sl_dist = min(1.50 * atr + spread_dist, max(0.75 * atr, struct_sl_dist * 0.75))
+                min_target_rr = 1.5
+                asym_rr = 2.0
             elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
                 if is_index:
-                    sl_dist = min(1.10 * atr + spread_dist, max(0.60 * atr, struct_sl_dist * 0.8))
-                    min_target_rr = 2.2
-                    asym_rr = 3.2
+                    sl_dist = min(1.30 * atr + spread_dist, max(0.70 * atr, struct_sl_dist * 0.8))
+                    min_target_rr = 1.5
+                    asym_rr = 2.2
                 elif is_forex:
-                    sl_dist = min(1.20 * atr + spread_dist, max(0.65 * atr, struct_sl_dist * 0.85))
-                    min_target_rr = 2.2
-                    asym_rr = 3.2
+                    sl_dist = min(1.50 * atr + spread_dist, max(0.75 * atr, struct_sl_dist * 0.85))
+                    min_target_rr = 1.5
+                    asym_rr = 2.2
                 else:
-                    sl_dist = min(1.50 * atr + spread_dist, max(0.70 * atr, struct_sl_dist * 0.9))
-                    min_target_rr = 2.0
-                    asym_rr = 3.0
+                    sl_dist = min(1.80 * atr + spread_dist, max(0.80 * atr, struct_sl_dist * 0.9))
+                    min_target_rr = 1.5
+                    asym_rr = 2.4
             else:  # SWING
                 if is_gold:
                     max_swing_sl = 2.80 * atr  # Retain winning commodity runner parameters (100% UNCHANGED)
@@ -396,22 +396,22 @@ class DynamicRiskAndLevelsEngine:
                 struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
 
             if style == "SCALP":
-                sl_dist = min(1.00 * atr + spread_dist, max(0.50 * atr, struct_sl_dist * 0.7))
-                min_target_rr = 2.0
-                asym_rr = 2.8
+                sl_dist = min(1.50 * atr + spread_dist, max(0.75 * atr, struct_sl_dist * 0.75))
+                min_target_rr = 1.5
+                asym_rr = 2.0
             elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
                 if is_index:
-                    sl_dist = min(1.10 * atr + spread_dist, max(0.60 * atr, struct_sl_dist * 0.8))
-                    min_target_rr = 2.2
-                    asym_rr = 3.2
+                    sl_dist = min(1.30 * atr + spread_dist, max(0.70 * atr, struct_sl_dist * 0.8))
+                    min_target_rr = 1.5
+                    asym_rr = 2.2
                 elif is_forex:
-                    sl_dist = min(1.20 * atr + spread_dist, max(0.65 * atr, struct_sl_dist * 0.85))
-                    min_target_rr = 2.2
-                    asym_rr = 3.2
+                    sl_dist = min(1.50 * atr + spread_dist, max(0.75 * atr, struct_sl_dist * 0.85))
+                    min_target_rr = 1.5
+                    asym_rr = 2.2
                 else:
-                    sl_dist = min(1.50 * atr + spread_dist, max(0.70 * atr, struct_sl_dist * 0.9))
-                    min_target_rr = 2.0
-                    asym_rr = 3.0
+                    sl_dist = min(1.80 * atr + spread_dist, max(0.80 * atr, struct_sl_dist * 0.9))
+                    min_target_rr = 1.5
+                    asym_rr = 2.4
             else:  # SWING
                 if is_gold:
                     max_swing_sl = 2.80 * atr  # Retain winning commodity runner parameters (100% UNCHANGED)

@@ -632,24 +632,7 @@ class PositionMonitorEngine:
                         new_tp = extended_tp
                         actions.append(f"ML_TP_EXTEND_{extension_r:.1f}R(p={ml_prob:.2f})")
 
-                # Micro Indivisible Lot Runner Mode (volume <= 0.01):
-                # Positions <= 0.01 cannot split partials at TP1. Once Breakeven or profit is locked,
-                # extend TP to macro runner targets (up to 8R) so the trailing stop ratchets behind large multi-point trends!
-                elif pos.volume <= 0.01 and current_r >= 1.4:
-                    is_be = (pos.ticket in self._be_locked) or (new_sl >= pos.open_price if pos.type == "BUY" else (new_sl <= pos.open_price and new_sl > 0))
-                    if is_be:
-                        macro_runner_r = max(init_tp_r, min(8.0, current_r + 3.5))
-                        extended_tp = round(
-                            pos.open_price + (risk_dist * macro_runner_r) if pos.type == "BUY"
-                            else pos.open_price - (risk_dist * macro_runner_r),
-                            digits,
-                        )
-                        if pos.type == "BUY" and (new_tp == 0 or extended_tp > new_tp):
-                            new_tp = extended_tp
-                            actions.append(f"MICRO_RUNNER_TP_{macro_runner_r:.1f}R")
-                        elif pos.type == "SELL" and (new_tp == 0 or extended_tp < new_tp):
-                            new_tp = extended_tp
-                            actions.append(f"MICRO_RUNNER_TP_{macro_runner_r:.1f}R")
+                # (Micro runner TP extension removed: planned TP target must remain reachable)
 
                 # Low ML Confidence (<=0.45) or Divergence Detected: Contract TP to bank profit early
                 elif (ml_prob <= 0.45 or getattr(ctx.momentum, "divergence", "NONE") not in ("NONE", None, "")) and current_r >= 0.75:
@@ -685,18 +668,7 @@ class PositionMonitorEngine:
                         elif pos.type == "SELL" and (new_sl == 0 or be_level < new_sl) and be_level > c_price:
                             new_sl = be_level
                             actions.append(f"ML_DETERIORATION_BE@{new_sl:.4f}(p={ml_prob:.2f})")
-                    elif -0.70 <= current_r <= 0.0 and atr > 0:
-                        reduced_sl_dist = risk_dist * 0.50
-                        tightened_sl = round(
-                            pos.open_price - reduced_sl_dist if pos.type == "BUY" else pos.open_price + reduced_sl_dist,
-                            digits,
-                        )
-                        if pos.type == "BUY" and tightened_sl > new_sl and tightened_sl < c_price:
-                            new_sl = tightened_sl
-                            actions.append(f"ML_RISK_CAP_0.5R@{new_sl:.4f}(p={ml_prob:.2f})")
-                        elif pos.type == "SELL" and (new_sl == 0 or tightened_sl < new_sl) and tightened_sl > c_price:
-                            new_sl = tightened_sl
-                            actions.append(f"ML_RISK_CAP_0.5R@{new_sl:.4f}(p={ml_prob:.2f})")
+                    # (Underwater SL halving removed: trades must be allowed structural breathing room)
 
             # ── 6. 3-Tier Milestone Progression Tracking ────────────────────
             if pos.ticket in self._position_milestones:
@@ -1073,25 +1045,25 @@ class PositionMonitorEngine:
         atr: float,
         current_sl: float,
     ):
-        """If price crosses VWAP against the trade direction, warn and optionally tighten."""
+        """If price crosses VWAP against the trade direction, warn and optionally tighten once in solid profit (>=1.5R)."""
         vwap = getattr(ctx, "vwap", 0.0)
         if not isinstance(vwap, (int, float)) or isinstance(vwap, bool) or vwap <= 0:
             return current_sl, None
 
+        risk_dist = self._initial_risk_dist.get(pos.ticket, atr * 1.5)
+        min_profit_dist = max(risk_dist * 1.5, atr * 1.0)
+
         if pos.type == "BUY" and c_price < vwap:
-            # Price dropped below VWAP — bearish signal for a BUY
             profit_pips = c_price - pos.open_price
-            if profit_pips > 0:
-                # Still profitable — tighten to 50% profit lock
+            if profit_pips >= min_profit_dist:
                 candidate = pos.open_price + (profit_pips * 0.50)
                 if candidate > current_sl:
                     logger.info(f"📊 VWAP cross (below) on BUY #{pos.ticket} → 50% profit lock @ {candidate:.4f}")
                     return candidate, f"VWAP_CROSS_50%@{candidate:.4f}"
 
         elif pos.type == "SELL" and c_price > vwap:
-            # Price rose above VWAP — bullish signal against a SELL
             profit_pips = pos.open_price - c_price
-            if profit_pips > 0:
+            if profit_pips >= min_profit_dist:
                 candidate = pos.open_price - (profit_pips * 0.50)
                 if current_sl == 0 or candidate < current_sl:
                     logger.info(f"📊 VWAP cross (above) on SELL #{pos.ticket} → 50% profit lock @ {candidate:.4f}")
@@ -1109,26 +1081,29 @@ class PositionMonitorEngine:
         atr: float,
         current_sl: float,
     ):
-        """If trend_score flips sign against trade, apply 80% profit lock."""
+        """If trend_score flips sign against trade once in solid profit (>=1.5R), lock 50% profit safely."""
         raw_score = getattr(ctx.momentum, "trend_score", 0.0) if hasattr(ctx, "momentum") else 0.0
         trend_score = float(raw_score) if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool) else 0.0
         profit_pips = (
             (c_price - pos.open_price) if pos.type == "BUY"
             else (pos.open_price - c_price)
         )
-        if profit_pips <= 0:
+        risk_dist = self._initial_risk_dist.get(pos.ticket, atr * 1.5)
+        min_profit_dist = max(risk_dist * 1.5, atr * 1.0)
+
+        if profit_pips < min_profit_dist:
             return current_sl, None
 
         if pos.type == "BUY" and trend_score < -20:
-            candidate = pos.open_price + (profit_pips * 0.80)
+            candidate = pos.open_price + (profit_pips * 0.50)
             if candidate > current_sl:
-                logger.info(f"⚡ Momentum exhaustion (score={trend_score}) BUY #{pos.ticket} → 80% lock @ {candidate:.4f}")
+                logger.info(f"⚡ Momentum exhaustion (score={trend_score}) BUY #{pos.ticket} → 50% lock @ {candidate:.4f}")
                 return candidate, f"MOMENTUM_EXHAUST@{candidate:.4f}"
 
         elif pos.type == "SELL" and trend_score > 20:
-            candidate = pos.open_price - (profit_pips * 0.80)
+            candidate = pos.open_price - (profit_pips * 0.50)
             if current_sl == 0 or candidate < current_sl:
-                logger.info(f"⚡ Momentum exhaustion (score={trend_score}) SELL #{pos.ticket} → 80% lock @ {candidate:.4f}")
+                logger.info(f"⚡ Momentum exhaustion (score={trend_score}) SELL #{pos.ticket} → 50% lock @ {candidate:.4f}")
                 return candidate, f"MOMENTUM_EXHAUST@{candidate:.4f}"
 
         return current_sl, None
@@ -1257,21 +1232,22 @@ class PositionMonitorEngine:
         if not is_adversarial:
             return False, None
 
-        is_in_profit = (pos.profit > 0.0) or ((c_price > pos.open_price) if pos.type == "BUY" else (c_price < pos.open_price))
+        profit_pips = (c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)
+        risk_dist = self._initial_risk_dist.get(pos.ticket, atr * 1.5)
+        min_profit_dist = max(risk_dist * 1.5, atr * 1.0)
 
-        if is_in_profit:
-            # In profit -> ratchet SL to Bid/Ask +/- 0.15x ATR
+        if profit_pips >= min_profit_dist:
+            # Solid profit -> ratchet SL to safe buffer outside sub-session noise (0.75x ATR)
             if pos.type == "BUY":
                 bid_price = getattr(ctx, "bid", c_price)
-                cand_sl = round(bid_price - (0.15 * atr), digits)
+                cand_sl = round(bid_price - (0.75 * atr), digits)
                 return True, cand_sl
             else:
                 ask_price = getattr(ctx, "ask", c_price)
-                cand_sl = round(ask_price + (0.15 * atr), digits)
+                cand_sl = round(ask_price + (0.75 * atr), digits)
                 return True, cand_sl
         else:
-            # Underwater or flat: Never panic-close on 3-candle tick delta.
-            # Allow the trade room to breathe towards its planned structural SL.
+            # Under minimum solid profit: Allow the trade room to breathe towards its planned structural SL.
             return False, None
 
     def _get_context(self, symbol: str) -> Optional[MarketContext]:
