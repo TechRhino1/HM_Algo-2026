@@ -255,18 +255,21 @@ class StrategySelector:
             if getattr(liq, "sweep_detected", False):
                 sweep_mag = getattr(liq, "sweep_magnitude", 1.0)
                 sweep_factor = 1.0 + min(2.5, max(0.5, sweep_mag))
-                if is_crypto or is_jpy:
-                    if is_crypto:
-                        prior_weights["BREAKOUT_EXPANSION"] *= (2.5 * sweep_factor)
-                        prior_weights["TREND_FOLLOWING"] *= (2.0 * sweep_factor)
-                    elif is_jpy:
-                        prior_weights["TREND_FOLLOWING"] *= (2.0 * sweep_factor)
-                        prior_weights["TREND_PULLBACK"] *= (1.5 * sweep_factor)
+                trend_score_val = float(getattr(mom, "trend_score", 0.0) or 0.0)
+                is_strong_trend = (adx_val >= 24.0 or abs(trend_score_val) >= 20.0)
+
+                if is_crypto or is_jpy or is_strong_trend:
+                    # In strong trending conditions across all symbols (Gold, Crypto, Indices, FX),
+                    # sweeps are continuation expansion liquidity runs, NEVER reversal fades.
+                    prior_weights["BREAKOUT_EXPANSION"] *= (2.0 * sweep_factor)
+                    prior_weights["TREND_FOLLOWING"] *= (1.8 * sweep_factor)
+                    prior_weights["TREND_PULLBACK"] *= (1.4 * sweep_factor)
                     prior_weights["LIQUIDITY_SWEEP_REVERSAL"] = 0.0
+                    prior_weights["CHOCH_STRUCTURAL_REVERSAL"] *= 0.3
                 else:
                     prior_weights["LIQUIDITY_SWEEP_REVERSAL"] *= (2.0 * sweep_factor)
                     prior_weights["CHOCH_STRUCTURAL_REVERSAL"] *= (1.5 * sweep_factor)
-                    prior_weights["TREND_FOLLOWING"] *= 0.2
+                    prior_weights["TREND_FOLLOWING"] *= 0.5
 
             # C. Order Flow Volume Delta Alignment Evidence
             of_data = getattr(context, "order_flow", {})
@@ -332,8 +335,13 @@ class StrategySelector:
                 prior_weights["TREND_PULLBACK"] = max(prior_weights.get("TREND_PULLBACK", 0.0), 2.4)
                 prior_weights["LIQUIDITY_SWEEP_REVERSAL"] = 0.0
             elif is_commodity or is_gbp:
-                prior_weights["LIQUIDITY_SWEEP_REVERSAL"] = max(prior_weights.get("LIQUIDITY_SWEEP_REVERSAL", 0.0), 2.8)
-                prior_weights["CHOCH_STRUCTURAL_REVERSAL"] = max(prior_weights.get("CHOCH_STRUCTURAL_REVERSAL", 0.0), 2.5)
+                ts_val = abs(float(getattr(context.momentum, "trend_score", 0.0))) if (context and hasattr(context, "momentum")) else 0.0
+                adx_v = float(getattr(context.momentum, "adx", 0.0)) if (context and hasattr(context, "momentum")) else 0.0
+                if not (adx_v >= 24.0 or ts_val >= 20.0):
+                    prior_weights["LIQUIDITY_SWEEP_REVERSAL"] = max(prior_weights.get("LIQUIDITY_SWEEP_REVERSAL", 0.0), 2.8)
+                    prior_weights["CHOCH_STRUCTURAL_REVERSAL"] = max(prior_weights.get("CHOCH_STRUCTURAL_REVERSAL", 0.0), 2.5)
+                else:
+                    prior_weights["LIQUIDITY_SWEEP_REVERSAL"] = 0.0
                 prior_weights["TREND_PULLBACK"] = min(prior_weights.get("TREND_PULLBACK", 0.0), 2.0)
                 if is_gbp:
                     prior_weights["TREND_FOLLOWING"] = 0.0

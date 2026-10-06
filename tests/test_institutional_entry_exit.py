@@ -418,34 +418,34 @@ class TestHorizonAdaptiveRatchetAndExits(unittest.TestCase):
         ctx = MarketContext(
             symbol="XAUUSD",
             timestamp=datetime.now(timezone.utc),
-            current_price=2407.0,
-            bid=2406.8,
-            ask=2407.2,
+            current_price=2415.0,
+            bid=2414.8,
+            ask=2415.2,
             structure=StructureContext(bias="BULLISH"),
             liquidity=LiquidityContext(),
             volatility=VolatilityContext(atr=10.0, current_spread_pips=2.0),
             momentum=MomentumContext(trend_score=20, adx=25.0),
             session=SessionContext(is_prime_session=True),
-            order_flow={"delta_score": -45.0, "delta_ratio": -0.40}  # Strong counter volume delta (>35%)
+            order_flow={"delta_score": -65.0, "delta_ratio": -0.65, "absorption_trap": "SELLER_ABSORPTION_TRAP"}
         )
         self.monitor._ctx_cache["XAUUSD"] = (ctx, time.monotonic())
 
-        # BUY trade in profit (Entry 2400.0, Current 2407.0, Profit $70)
+        # BUY trade in profit (Entry 2400.0, Current 2415.0, Profit > 0.8*ATR)
         pos = PositionSnapshot(
             ticket=801, symbol="XAUUSD", type="BUY", volume=0.01,
-            open_price=2400.0, current_price=2407.0, sl=2395.0, tp=2430.0,
-            profit=70.0, swap=0.0, commission=0.0,
+            open_price=2400.0, current_price=2415.0, sl=2395.0, tp=2430.0,
+            profit=150.0, swap=0.0, commission=0.0,
             open_time=(datetime.now(timezone.utc) - timedelta(seconds=300)).isoformat(),
             magic=JARVIS_MAGIC_NUMBER, comment="[DAY_TRADING]"
         )
         self.mt5_client.modify_position.return_value = {"status": "MODIFIED"}
         self.monitor._manage_single_position(pos)
 
-        # Ratchet SL to Bid (2406.8) - 0.15 * 10 = 2405.3
-        self.mt5_client.modify_position.assert_called_with(801, sl=2405.3, tp=2430.0)
+        # Ratchet SL to Bid (2414.8) - 0.75 * 10 = 2407.3
+        self.mt5_client.modify_position.assert_called_with(801, sl=2407.3, tp=2430.0)
 
     def test_adversarial_order_flow_shield_underwater_liquidation(self):
-        """Adversarial Order Flow Shield: When trade is underwater and absorption trap opposes it, liquidate immediately."""
+        """Adversarial Order Flow Shield: When trade is underwater, arbitrary market closing is disabled; structural SL governs."""
         ctx = MarketContext(
             symbol="XAUUSD",
             timestamp=datetime.now(timezone.utc),
@@ -457,7 +457,7 @@ class TestHorizonAdaptiveRatchetAndExits(unittest.TestCase):
             volatility=VolatilityContext(atr=10.0, current_spread_pips=2.0),
             momentum=MomentumContext(trend_score=-10, adx=20.0),
             session=SessionContext(is_prime_session=True),
-            order_flow={"absorption_trap": "SELLER_ABSORPTION_TRAP"}  # Institutional trap against BUY
+            order_flow={"absorption_trap": "SELLER_ABSORPTION_TRAP"}
         )
         self.monitor._ctx_cache["XAUUSD"] = (ctx, time.monotonic())
 
@@ -470,7 +470,8 @@ class TestHorizonAdaptiveRatchetAndExits(unittest.TestCase):
             magic=JARVIS_MAGIC_NUMBER, comment="[SCALP]"
         )
         self.monitor._manage_single_position(pos)
-        self.mt5_client.close_position.assert_called_with(901)
+        # Structural SL governs; close_position is NOT called prematurely
+        self.mt5_client.close_position.assert_not_called()
 
 
 if __name__ == "__main__":

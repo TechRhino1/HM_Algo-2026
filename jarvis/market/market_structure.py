@@ -81,6 +81,23 @@ class MarketStructureEngine:
         elif bos_bearish or choch_bearish:
             bias = "BEARISH"
 
+        # Dynamic Momentum & Price Location Override:
+        # Prevents stale historical swing pivots (lagged by window w) from locking
+        # bias in BEARISH during a violent upward rally, or BULLISH during a collapse.
+        if len(df) >= 20:
+            c_series = pd.Series(closes)
+            ema20 = float(c_series.ewm(span=min(20, len(df)), adjust=False).mean().iloc[-1])
+            ema50 = float(c_series.ewm(span=min(50, len(df)), adjust=False).mean().iloc[-1])
+            swing_range = max(recent_sh - recent_sl, 1e-9)
+            rebound_pct = (latest_close - recent_sl) / swing_range
+
+            # Price surging upward through EMAs and past equilibrium of swing range
+            if bias == "BEARISH" and latest_close > ema20 and ema20 >= ema50 and rebound_pct >= 0.55:
+                bias = "BULLISH" if rebound_pct >= 0.75 else "NEUTRAL"
+            # Price collapsing downward through EMAs and below equilibrium of swing range
+            elif bias == "BULLISH" and latest_close < ema20 and ema20 <= ema50 and rebound_pct <= 0.45:
+                bias = "BEARISH" if rebound_pct <= 0.25 else "NEUTRAL"
+
         # Premium / Discount / Equilibrium Zones
         recent_max = float(highs[-200:].max()) if len(highs) >= 200 else float(highs.max())
         recent_min = float(lows[-200:].min()) if len(lows) >= 200 else float(lows.min())
