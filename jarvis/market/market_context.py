@@ -160,39 +160,62 @@ class MarketContextEngine:
         def _score_bias(b: str) -> float:
             return 1.0 if b == "BULLISH" else (-1.0 if b == "BEARISH" else 0.0)
 
+        df_anchor = mtf_data.get("anchor", mtf_data.get("D1", pd.DataFrame()))
+        d1_anchor_bias = self.structure_engine.analyze_structure(df_anchor).bias if not df_anchor.empty else "NEUTRAL"
+
         if style in ("DAY_TRADING", "INTRADAY", "DAY"):
-            # When trade_style == "DAY_TRADING": H4 (40%), H1 (35%), M15 (25%)
+            # When trade_style == "DAY_TRADING": D1 (30%), H4 (35%), H1 (20%), M15 (15%) when D1 present
             h4_bias = self.structure_engine.analyze_structure(df_macro).bias if not df_macro.empty else "NEUTRAL"
             h1_bias = self.structure_engine.analyze_structure(df_context).bias if not df_context.empty else "NEUTRAL"
             m15_bias = structure_primary.bias if not df_primary.empty else "NEUTRAL"
             
+            if not df_anchor.empty:
+                mtf_alignment["D1"] = d1_anchor_bias
             mtf_alignment["H4"] = h4_bias
             mtf_alignment["H1"] = h1_bias
             mtf_alignment["M15"] = m15_bias
             mtf_alignment["M5"] = self.structure_engine.analyze_structure(df_timing).bias if not df_timing.empty else "NEUTRAL"
             
-            weighted_score = (
-                _score_bias(h4_bias) * 0.40 +
-                _score_bias(h1_bias) * 0.35 +
-                _score_bias(m15_bias) * 0.25
-            )
+            if not df_anchor.empty:
+                weighted_score = (
+                    _score_bias(d1_anchor_bias) * 0.30 +
+                    _score_bias(h4_bias) * 0.35 +
+                    _score_bias(h1_bias) * 0.20 +
+                    _score_bias(m15_bias) * 0.15
+                )
+            else:
+                weighted_score = (
+                    _score_bias(h4_bias) * 0.40 +
+                    _score_bias(h1_bias) * 0.35 +
+                    _score_bias(m15_bias) * 0.25
+                )
         elif style == "SCALP":
             h1_bias = self.structure_engine.analyze_structure(df_macro).bias if not df_macro.empty else "NEUTRAL"
             m15_bias = self.structure_engine.analyze_structure(df_context).bias if not df_context.empty else "NEUTRAL"
             m5_bias = structure_primary.bias if not df_primary.empty else "NEUTRAL"
             m1_bias = self.structure_engine.analyze_structure(df_timing).bias if not df_timing.empty else "NEUTRAL"
             
+            if not df_anchor.empty:
+                mtf_alignment["D1"] = d1_anchor_bias
             mtf_alignment["H1"] = h1_bias
             mtf_alignment["M15"] = m15_bias
             mtf_alignment["M5"] = m5_bias
             mtf_alignment["M1"] = m1_bias
             
-            weighted_score = (
-                _score_bias(h1_bias) * 0.40 +
-                _score_bias(m15_bias) * 0.30 +
-                _score_bias(m5_bias) * 0.20 +
-                _score_bias(m1_bias) * 0.10
-            )
+            if not df_anchor.empty:
+                weighted_score = (
+                    _score_bias(d1_anchor_bias) * 0.25 +
+                    _score_bias(h1_bias) * 0.35 +
+                    _score_bias(m15_bias) * 0.25 +
+                    _score_bias(m5_bias) * 0.15
+                )
+            else:
+                weighted_score = (
+                    _score_bias(h1_bias) * 0.40 +
+                    _score_bias(m15_bias) * 0.30 +
+                    _score_bias(m5_bias) * 0.20 +
+                    _score_bias(m1_bias) * 0.10
+                )
         else:  # SWING (default): D1 (40%), H4 (30%), H1 (20%), M15 (10%)
             d1_bias = self.structure_engine.analyze_structure(df_macro).bias if not df_macro.empty else "NEUTRAL"
             h4_bias = self.structure_engine.analyze_structure(df_context).bias if not df_context.empty else "NEUTRAL"

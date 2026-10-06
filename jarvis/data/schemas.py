@@ -139,6 +139,8 @@ class VolatilityContext:
     current_spread_pips: float = 0.0
     max_allowed_spread_pips: float = 35.0
     is_excessive_spread: bool = False
+    forward_atr_forecast: float = 0.0
+    spread_risk_score: float = 0.0
 
 @dataclass
 class MomentumContext:

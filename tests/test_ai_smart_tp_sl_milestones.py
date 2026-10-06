@@ -239,9 +239,9 @@ def test_position_monitor_milestone_progression():
     assert pos.tp3 == m["tp3"]
     assert pos.milestone_status == "OPEN"
 
-    # Step 2: Price hits TP1 (+1.0R / 2410.50) -> should mark TP1_HIT_BE_LOCKED
-    pos.current_price = 2411.0
-    ctx.current_price = 2411.0
+    # Step 2: Price hits TP1 (+1.5R institutional / 2415.00) -> should mark TP1_HIT_BE_LOCKED
+    pos.current_price = 2416.0
+    ctx.current_price = 2416.0
     pm._ctx_cache["XAUUSD"] = (ctx, time.monotonic())
     pm._manage_single_position(pos, equity=10000.0, balance=10000.0)
     assert pos.milestone_status == "TP1_HIT_BE_LOCKED"

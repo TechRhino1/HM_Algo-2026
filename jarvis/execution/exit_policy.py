@@ -69,7 +69,7 @@ class ExitPolicy:
     trail_activation_r: float = DEFAULT_TRAIL_ACTIVATION_R
     # Milestone ratchets: (favorable R threshold, R level to lock in)
     milestones: List[tuple] = field(
-        default_factory=lambda: [(1.5, 0.5), (2.0, 1.0), (3.0, 2.0), (5.0, 3.5)]
+        default_factory=lambda: [(2.0, 0.5), (2.8, 1.2), (3.8, 2.2), (5.0, 3.5)]
     )
     digits: int = 5
     pip_size: float = 0.0001
@@ -201,12 +201,11 @@ def evaluate_exit(
     # Deferred until the trade has proven itself. Locking at 1R was the primary
     # cause of +20R winners being closed at +0.9R.
     #
-    # An already executed partial (partial_already_taken) or achieving the dedicated
-    # be_trigger_r moves the stop to breakeven. A pending partial signal does not
-    # lock breakeven if the lot size could not actually split.
-    be_triggered = be_already_locked or partial_already_taken
-    if not be_triggered and r_multiple >= policy.be_trigger_r:
-        be_triggered = True
+    # Breakeven lock triggers ONLY when the dedicated be_trigger_r is reached.
+    # Taking a partial scale-out must NEVER force an immediate breakeven move;
+    # doing so chokes runners on routine entry pullbacks.
+    be_triggered = be_already_locked or (r_multiple >= policy.be_trigger_r)
+    if not be_already_locked and r_multiple >= policy.be_trigger_r:
         dec.actions.append(f"BE_LOCK_{policy.be_trigger_r:.2f}R")
 
     if be_triggered:

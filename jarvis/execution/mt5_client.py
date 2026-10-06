@@ -192,9 +192,11 @@ class MT5Client:
                 return best
             return symbol
 
-        res = TimeoutGuard.run_sync(_resolve, timeout_sec=2.0, default=symbol, task_name=f"ResolveSymbol_{symbol}")
-        self.symbol_alias_cache[symbol] = res
-        return res
+        res = TimeoutGuard.run_sync(_resolve, timeout_sec=5.0, default=None, task_name=f"ResolveSymbol_{symbol}")
+        if res:
+            self.symbol_alias_cache[symbol] = res
+            return res
+        return symbol
 
     def get_symbol_trading_spec(self, symbol: str) -> Dict[str, Any]:
         """Fetches live broker trading specifications for a symbol with fallback to symbol registry."""

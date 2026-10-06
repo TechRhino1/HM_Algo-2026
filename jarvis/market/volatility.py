@@ -61,8 +61,16 @@ class VolatilityEngine:
         else:
             state = "NORMAL"
 
-        is_excessive_spread = current_spread_pips > max_allowed_spread_pips
+        # Forward Volatility Clustering Forecast & Spread Impact Ratio
+        forward_forecast = current_atr
+        spread_risk_score = 0.0
+        if len(atr_series) >= 10:
+            atr_momentum = float(atr_series.iloc[-1] - atr_series.iloc[-5]) / (float(atr_series.iloc[-5]) + 1e-9)
+            forward_forecast = float(current_atr * (1.0 + np.clip(atr_momentum * 0.5, -0.3, 0.5)))
+            if current_atr > 0:
+                spread_risk_score = float(np.clip((current_spread_pips / (current_atr + 1e-9)) * 10.0, 0.0, 100.0))
 
+        is_excessive_spread = current_spread_pips > max_allowed_spread_pips
         return VolatilityContext(
             atr=round(current_atr, 4),
             atr_percent=round(atr_pct, 4),
@@ -70,5 +78,7 @@ class VolatilityEngine:
             bollinger_bandwidth=round(bb_bandwidth, 3),
             current_spread_pips=round(current_spread_pips, 2),
             max_allowed_spread_pips=max_allowed_spread_pips,
-            is_excessive_spread=is_excessive_spread
+            is_excessive_spread=is_excessive_spread,
+            forward_atr_forecast=round(forward_forecast, 4),
+            spread_risk_score=round(spread_risk_score, 2)
         )

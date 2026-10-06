@@ -61,7 +61,7 @@ class SelfLearningEngine:
                 if avg_ev > 0.5:
                     res = 1.10 # Boost
                 elif avg_ev < 0:
-                    res = 0.90 # Penalize
+                    res = 0.95 # Mild penalty (was 0.90 which caused death spiral with buggy history)
                 else:
                     res = 1.0
 
@@ -154,7 +154,7 @@ class SelfLearningEngine:
                 elif win_rate >= 0.55:
                     conviction_mult = 1.10
                 elif win_rate <= 0.35 or avg_ev < 0:
-                    conviction_mult = 0.80
+                    conviction_mult = 0.95  # Mild penalty (was 0.80 which caused feedback loop)
                 else:
                     conviction_mult = 1.0
 

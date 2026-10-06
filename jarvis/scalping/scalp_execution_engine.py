@@ -69,8 +69,8 @@ class ScalpExecutionEngine:
     unvalidated counter-trend scalps.
     """
 
-    MIN_QUALITY_SCORE = 75.0
-    MAX_FRICTION_PCT = 0.25  # Max 25% of gross profit eaten by spread + slippage + commission
+    MIN_QUALITY_SCORE = 58.0
+    MAX_FRICTION_PCT = 0.35  # Max 35% of gross profit eaten by spread + slippage + commission
     NEWS_LOCKOUT_MINUTES_PRE = 10
     NEWS_LOCKOUT_MINUTES_POST = 5
 
@@ -487,14 +487,14 @@ class ScalpExecutionEngine:
             action = "NO_TRADE"
         elif passed_cost_gate and quality_score.is_qualified and (not is_counter_trend or five_step["all_passed"]):
             action = "EXECUTE"
-        elif quality_score.total_score >= 60.0 and len(failing_reasons) <= 2:
+        elif quality_score.total_score >= 50.0 and len(failing_reasons) <= 2:
             action = "WAIT"
             if not five_step["all_passed"]:
                 waiting_reasons.append(f"Awaiting 5-step precision trigger: {', '.join(five_step['missing_steps'])}")
             if not passed_cost_gate:
-                waiting_reasons.append(f"Awaiting spread tightening (current friction {friction_ratio*100:.1f}% > 25%)")
+                waiting_reasons.append(f"Awaiting spread tightening (current friction {friction_ratio*100:.1f}% > {self.MAX_FRICTION_PCT*100:.0f}%)")
             if not quality_score.is_qualified:
-                waiting_reasons.append(f"Awaiting institutional volume / momentum boost to reach quality threshold ({quality_score.total_score:.1f}/75)")
+                waiting_reasons.append(f"Awaiting institutional volume / momentum boost to reach quality threshold ({quality_score.total_score:.1f}/{self.MIN_QUALITY_SCORE:.0f})")
         else:
             action = "NO_TRADE"
 

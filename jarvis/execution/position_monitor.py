@@ -34,8 +34,8 @@ logger = logging.getLogger("JARVIS_PositionMonitor")
 # ─── Constants ─────────────────────────────────────────────────────────────────
 MONITOR_INTERVAL_SEC      = 2.0    # Monitor loop tick rate
 CONTEXT_CACHE_TTL_SEC     = 10.0   # Re-fetch market context every 10s per symbol
-EMERGENCY_SL_ATR_MULT     = 2.0    # Auto-SL for manual trades: 2× ATR from entry
-DANGEROUS_SL_ATR_MULT     = 3.0    # SL wider than 3× ATR → tighten to 2× ATR
+EMERGENCY_SL_ATR_MULT     = 1.8    # Auto-SL for manual trades: 1.8× ATR from entry
+DANGEROUS_SL_ATR_MULT     = 3.5    # SL wider than 3.5× ATR → tighten to 2.0× ATR
 
 # Profit-lock / trailing thresholds are NO LONGER defined here.
 # Every stop-ratchet decision is delegated to jarvis.execution.exit_policy, which
@@ -385,19 +385,21 @@ class PositionMonitorEngine:
                         if p_res and p_res.get("status") in ("PARTIALLY_CLOSED", "CLOSED"):
                             self._partially_closed_tickets.add(pos.ticket)
                             logger.info(f"🎯 PARTIAL TP HIT: #{pos.ticket} {symbol} closed {close_volume} lots @ {c_price:.4f}. Remaining: {remaining_volume}")
-                            actions.append(f"PARTIAL_TP_{int(target_pct*100)}%@{c_price:.4f}")
+                            # Institutional Runner Protection: Do NOT prematurely choke the remaining runner
+                            # back to entry on partial TP. Only lock BE once price reaches >=1.8R or policy threshold.
                             _p = self._exit_policy.get(pos.ticket) or ExitPolicy.for_symbol(symbol, spec)
-                            _be_buf = _p.buffer_distance(risk_dist_init)
-                            be_candidate = round(
-                                pos.open_price + _be_buf if pos.type == "BUY" else pos.open_price - _be_buf,
-                                digits,
-                            )
-                            if pos.type == "BUY" and be_candidate > new_sl and be_candidate < c_price:
-                                new_sl = be_candidate
-                                actions.append(f"PARTIAL_BE@{new_sl:.4f}")
-                            elif pos.type == "SELL" and (new_sl == 0 or be_candidate < new_sl) and be_candidate > c_price:
-                                new_sl = be_candidate
-                                actions.append(f"PARTIAL_BE@{new_sl:.4f}")
+                            if current_r >= getattr(_p, "be_trigger_r", 1.80):
+                                _be_buf = _p.buffer_distance(risk_dist_init)
+                                be_candidate = round(
+                                    pos.open_price + _be_buf if pos.type == "BUY" else pos.open_price - _be_buf,
+                                    digits,
+                                )
+                                if pos.type == "BUY" and be_candidate > new_sl and be_candidate < c_price:
+                                    new_sl = be_candidate
+                                    actions.append(f"PARTIAL_BE@{new_sl:.4f}")
+                                elif pos.type == "SELL" and (new_sl == 0 or be_candidate < new_sl) and be_candidate > c_price:
+                                    new_sl = be_candidate
+                                    actions.append(f"PARTIAL_BE@{new_sl:.4f}")
 
             # ── 1.5 Adversarial Order Flow Shield (Suppressed in Grace Period) ────
             if not in_grace_period:
@@ -634,9 +636,9 @@ class PositionMonitorEngine:
 
                 # (Micro runner TP extension removed: planned TP target must remain reachable)
 
-                # Low ML Confidence (<=0.45) or Divergence Detected: Contract TP to bank profit early
-                elif (ml_prob <= 0.45 or getattr(ctx.momentum, "divergence", "NONE") not in ("NONE", None, "")) and current_r >= 0.75:
-                    contracted_r = max(current_r + 0.35, 1.0)
+                # Macro Divergence Check: Only contract TP if price is already past +1.8R and strong structural divergence forms
+                elif (getattr(ctx.momentum, "divergence", "NONE") not in ("NONE", None, "")) and current_r >= 1.80:
+                    contracted_r = max(current_r + 0.50, 2.0)
                     if contracted_r < init_tp_r:
                         contracted_tp = round(
                             pos.open_price + (risk_dist * contracted_r) if pos.type == "BUY"
@@ -656,7 +658,8 @@ class PositionMonitorEngine:
                 prob_deteriorated = (ml_prob < 0.40) or (entry_prob - ml_prob >= 0.18)
 
                 if prob_deteriorated:
-                    if current_r > 0:
+                    # Require minimum +1.50R profit before allowing ML deterioration BE lock
+                    if current_r >= 1.50:
                         be_buf = policy.buffer_distance(risk_dist)
                         be_level = round(
                             pos.open_price + be_buf if pos.type == "BUY" else pos.open_price - be_buf,
@@ -1000,36 +1003,25 @@ class PositionMonitorEngine:
 
             if is_invalidated:
                 profit_pips = (c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)
-                if profit_pips > 0:
-                    # Lock 80% of floating profit
+                risk_dist = self._initial_risk_dist.get(pos.ticket, atr * 1.5)
+                # Only ratchet on regime invalidation if already secured >= 1.80R profit
+                if profit_pips >= (risk_dist * 1.80):
                     if pos.type == "BUY":
-                        candidate = pos.open_price + (profit_pips * 0.80)
+                        candidate = pos.open_price + (profit_pips * 0.50)
                         if candidate > current_sl:
                             logger.info(
                                 f"🔄 Regime invalidation for #{pos.ticket} ({regime_str} conf={confidence:.2f}) → "
-                                f"80% profit lock @ {candidate:.4f}"
+                                f"50% profit lock @ {candidate:.4f}"
                             )
                             return candidate, f"REGIME_INVALIDATION@{candidate:.4f}"
                     else:
-                        candidate = pos.open_price - (profit_pips * 0.80)
+                        candidate = pos.open_price - (profit_pips * 0.50)
                         if current_sl == 0 or candidate < current_sl:
                             logger.info(
                                 f"🔄 Regime invalidation for #{pos.ticket} ({regime_str} conf={confidence:.2f}) → "
-                                f"80% profit lock @ {candidate:.4f}"
+                                f"50% profit lock @ {candidate:.4f}"
                             )
                             return candidate, f"REGIME_INVALIDATION@{candidate:.4f}"
-                else:
-                    # In loss — move to breakeven if possible
-                    if pos.type == "BUY" and current_sl < pos.open_price - (atr * 0.1):
-                        be = pos.open_price - (atr * 0.1)
-                        if be > current_sl:
-                            logger.info(f"🔄 Regime invalidation (losing) for #{pos.ticket} → BE @ {be:.4f}")
-                            return be, f"REGIME_INVALIDATION_BE@{be:.4f}"
-                    elif pos.type == "SELL" and (current_sl == 0 or current_sl > pos.open_price + (atr * 0.1)):
-                        be = pos.open_price + (atr * 0.1)
-                        if current_sl == 0 or be < current_sl:
-                            logger.info(f"🔄 Regime invalidation (losing) for #{pos.ticket} → BE @ {be:.4f}")
-                            return be, f"REGIME_INVALIDATION_BE@{be:.4f}"
         except Exception as e:
             logger.debug(f"Regime invalidation check failed for #{pos.ticket}: {e}")
 
@@ -1217,27 +1209,26 @@ class PositionMonitorEngine:
         delta_ratio = float(of_data.get("delta_ratio", 0.0))
         absorption_trap = of_data.get("absorption_trap")
 
+        # Require decisive confirmation: BOTH extreme counter delta AND confirmed trap
         is_adversarial = False
         if pos.type == "BUY":
-            counter_delta = (delta_score < -35.0) or (delta_ratio < -0.35)
-            counter_trap = absorption_trap in ("SELLER_ABSORPTION_TRAP", "ABSORPTION_TRAP", "BEARISH_ABSORPTION_TRAP")
-            if counter_delta or counter_trap:
+            counter_delta = (delta_score < -60.0) or (delta_ratio < -0.60)
+            counter_trap = absorption_trap in ("SELLER_ABSORPTION_TRAP", "BEARISH_ABSORPTION_TRAP")
+            if counter_delta and counter_trap:
                 is_adversarial = True
         elif pos.type == "SELL":
-            counter_delta = (delta_score > 35.0) or (delta_ratio > 0.35)
-            counter_trap = absorption_trap in ("BUYER_ABSORPTION_TRAP", "ABSORPTION_TRAP", "BULLISH_ABSORPTION_TRAP")
-            if counter_delta or counter_trap:
+            counter_delta = (delta_score > 60.0) or (delta_ratio > 0.60)
+            counter_trap = absorption_trap in ("BUYER_ABSORPTION_TRAP", "BULLISH_ABSORPTION_TRAP")
+            if counter_delta and counter_trap:
                 is_adversarial = True
 
         if not is_adversarial:
             return False, None
 
         profit_pips = (c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)
-        risk_dist = self._initial_risk_dist.get(pos.ticket, atr * 1.5)
-        min_profit_dist = max(risk_dist * 1.5, atr * 1.0)
-
-        if profit_pips >= min_profit_dist:
-            # Solid profit -> ratchet SL to safe buffer outside sub-session noise (0.75x ATR)
+        # Only tighten to a sensible trailing distance (0.75*ATR) if already significantly in profit (>= +1.0R equivalent)
+        # Never close underwater trades at market arbitrarily; the structural stop loss must govern.
+        if profit_pips > (atr * 0.8):
             if pos.type == "BUY":
                 bid_price = getattr(ctx, "bid", c_price)
                 cand_sl = round(bid_price - (0.75 * atr), digits)
@@ -1247,7 +1238,6 @@ class PositionMonitorEngine:
                 cand_sl = round(ask_price + (0.75 * atr), digits)
                 return True, cand_sl
         else:
-            # Under minimum solid profit: Allow the trade room to breathe towards its planned structural SL.
             return False, None
 
     def _get_context(self, symbol: str) -> Optional[MarketContext]:

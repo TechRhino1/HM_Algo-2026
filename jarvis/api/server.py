@@ -136,6 +136,12 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
             attrs.append("Secure")
         return "; ".join(attrs)
 
+    def address_string(self):
+        """Avoid blocking reverse DNS lookup on each request."""
+        if hasattr(self, "client_address") and self.client_address:
+            return str(self.client_address[0])
+        return "127.0.0.1"
+
     def _is_local_request(self) -> bool:
         """Check if request originates locally on the host machine without reverse proxying."""
         client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else ""

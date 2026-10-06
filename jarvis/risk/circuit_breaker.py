@@ -4,7 +4,8 @@ Halts trading during consecutive execution failures, rapid loss streaks, or plat
 """
 import time
 import sqlite3
-from typing import Dict, Any
+import os
+from typing import Dict, Any, Optional
 
 from jarvis.config.paths import resolve_db_path
 from jarvis.data.schema_version import migrate
@@ -29,7 +30,7 @@ MIGRATIONS = {1: _migration_1}
 
 
 class CircuitBreaker:
-    def __init__(self, db_path: str = "jarvis_circuit_state.db", clock=None):
+    def __init__(self, db_path: str = "jarvis_circuit_state.db", clock=None, reset_on_boot: Optional[bool] = None):
         # Injectable clock. Live trading uses the real wall clock; a BACKTEST must
         # advance on BAR TIME (``BacktestEngine`` sets this to the current bar's
         # epoch seconds each bar). Without it, a 45-minute symbol pause is
@@ -66,6 +67,13 @@ class CircuitBreaker:
         if self.db_path:
             self._init_db()
             self._load_state()
+
+        # If reset_on_boot requested explicitly or via env var JARVIS_RESET_CIRCUIT_BREAKER=1
+        _do_reset = reset_on_boot if reset_on_boot is not None else (
+            os.environ.get("JARVIS_RESET_CIRCUIT_BREAKER", "0").lower() in ("1", "true", "yes")
+        )
+        if _do_reset:
+            self.reset()
 
     def _connect(self) -> sqlite3.Connection:
         """Open the state DB with WAL and a busy timeout.

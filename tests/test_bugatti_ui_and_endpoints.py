@@ -90,7 +90,7 @@ class TestBugattiEndpoints(unittest.TestCase):
             self.assertTrue(handled)
             self.assertIsNotNone(handler.data)
             self.assertEqual(handler.data["status"], "OK")
-            self.assertEqual(handler.data["count"], 20)
+            self.assertEqual(handler.data["count"], 21)
             profiles = handler.data["profiles"]
             self.assertIn("XAUUSD", profiles)
             self.assertIn("EURUSD", profiles)

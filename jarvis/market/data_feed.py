@@ -52,9 +52,9 @@ TF_MAP = {
 # ``fetch_multi_timeframe``, which meant the live path and any offline
 # backtest could silently drift apart. Both now read it from here.
 STYLE_TIMEFRAMES: Dict[str, Dict[str, str]] = {
-    "SWING": {"macro": "D1", "context": "H4", "primary": "H1", "setup": "H4", "timing": "M15"},
-    "DAY_TRADING": {"macro": "H4", "context": "H1", "primary": "M15", "setup": "H1", "timing": "M5"},
-    "SCALP": {"macro": "H1", "context": "M15", "primary": "M5", "setup": "M5", "timing": "M1"},
+    "SWING": {"macro": "D1", "context": "H4", "primary": "H1", "setup": "H4", "timing": "M15", "anchor": "D1"},
+    "DAY_TRADING": {"macro": "H4", "context": "H1", "primary": "M15", "setup": "H1", "timing": "M5", "anchor": "D1"},
+    "SCALP": {"macro": "H1", "context": "M15", "primary": "M5", "setup": "M5", "timing": "M1", "anchor": "D1"},
 }
 
 # Accepted spellings for the day-trading style.
@@ -157,8 +157,23 @@ def classify_bar_freshness(
     if age < 0:
         return (FRESH if -age <= bar_sec else FRESHNESS_UNKNOWN), age
 
+    # Weekend gap bridge for closed D1 and H4 bars:
+    # Forex, Gold, Silver and Indices close from Friday 21:00 UTC to Sunday 21:00 UTC (~48 hours = 172,800s).
+    # On Monday (and Sunday open), the newest closed D1 bar is Friday's bar (opened Fri 00:00 UTC).
+    # By Monday afternoon, Friday 00:00 is 3.5+ days old (~300,000s). Without subtracting the 48h
+    # non-trading weekend closure, Friday's D1 bar exceeds the 3.5 * 86,400s tolerance (302,400s)
+    # and is falsely marked STALE, blocking all Monday trading across all traditional assets.
+    effective_age = age
+    moment = datetime.fromtimestamp(now, tz=timezone.utc)
+    tf_upper = str(timeframe or "").upper()
+    if tf_upper in ("D1", "H4"):
+        # If today is Monday (weekday == 0) or Sunday post-open (weekday == 6):
+        # Subtract the 48-hour weekend market closure (172,800s) when spanning the weekend.
+        if moment.weekday() == 0 or (moment.weekday() == 6 and moment.hour >= 21):
+            effective_age = max(0.0, age - 172800.0)
+
     tol = _FRESH_BAR_TOLERANCE_LIVE if include_current_bar else _FRESH_BAR_TOLERANCE_CLOSED
-    if age <= bar_sec * tol:
+    if effective_age <= bar_sec * tol:
         return FRESH, age
     if _is_weekend_gap(now):
         return MARKET_CLOSED, age

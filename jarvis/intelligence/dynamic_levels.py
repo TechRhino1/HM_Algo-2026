@@ -153,10 +153,12 @@ class DynamicRiskAndLevelsEngine:
 
         # Anti-Wick Shield: Asset-specific buffer to absorb stop-hunts and wick probes
         # Asset-Class Specific Intelligence
-        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name) or (getattr(spec, "asset_class", "").upper() == "COMMODITY") or ("WTI" in sym_name) or ("OIL" in sym_name)
+        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name)
+        is_silver = ("XAG" in sym_name) or ("SILVER" in sym_name)
+        is_oil = ("WTI" in sym_name) or ("OIL" in sym_name)
         is_crypto = getattr(spec, "is_crypto", False) or (getattr(spec, "asset_class", "").upper() == "CRYPTO") or ("BTC" in sym_name) or ("ETH" in sym_name) or ("SOL" in sym_name)
         is_index = ("US500" in sym_name) or ("NAS100" in sym_name) or ("US30" in sym_name) or (getattr(spec, "asset_class", "").upper() == "INDEX")
-        is_forex = (getattr(spec, "asset_class", "").upper() == "FOREX") and not (is_gold or is_crypto or is_index)
+        is_forex = (getattr(spec, "asset_class", "").upper() == "FOREX") and not (is_gold or is_silver or is_oil or is_crypto or is_index)
 
         # Anti-Wick Shield: Asset-specific buffer to absorb stop-hunts and wick probes
         cfg = get_symbol_profile_config(sym_name)
@@ -239,46 +241,49 @@ class DynamicRiskAndLevelsEngine:
             # That is a directional asymmetry introduced by an inconsistency, not a
             # trading view, so BUY is widened to match SELL rather than the reverse.
             if style == "SCALP":
-                sl_dist = min(1.50 * atr + spread_dist, max(0.75 * atr, struct_sl_dist * 0.75))
-                min_target_rr = 1.5
-                asym_rr = 2.0
+                sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                min_target_rr = 1.8
+                asym_rr = 2.5
             elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
                 if is_index:
-                    sl_dist = min(1.30 * atr + spread_dist, max(0.70 * atr, struct_sl_dist * 0.8))
-                    min_target_rr = 1.5
-                    asym_rr = 2.2
+                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
                 elif is_forex:
-                    sl_dist = min(1.50 * atr + spread_dist, max(0.75 * atr, struct_sl_dist * 0.85))
-                    min_target_rr = 1.5
-                    asym_rr = 2.2
+                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
                 else:
-                    sl_dist = min(1.80 * atr + spread_dist, max(0.80 * atr, struct_sl_dist * 0.9))
-                    min_target_rr = 1.5
-                    asym_rr = 2.4
+                    sl_dist = min(2.20 * atr + spread_dist, max(1.25 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
             else:  # SWING
                 if is_gold:
                     max_swing_sl = 2.80 * atr  # Retain winning commodity runner parameters (100% UNCHANGED)
                     min_target_rr = 2.0 if is_ranging else 2.5
-                    asym_rr = 2.2 if is_ranging else 4.2
+                    asym_rr = 2.5 if is_ranging else 4.2
                 else:
                     max_swing_sl = cfg.sl_atr_multiplier * atr
-                    min_target_rr = cfg.min_target_rr if not is_ranging else max(1.5, cfg.min_target_rr - 0.3)
-                    asym_rr = cfg.asym_rr if not is_ranging else max(2.2, cfg.asym_rr - 0.6)
+                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
+                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
 
                 if "ETHBTC" in sym_name:
-                    min_floor_sl = max(1.20 * atr, 0.00035)
+                    min_floor_sl = max(1.20 * atr + spread_dist, 0.00035)
                 elif is_crypto:
-                    min_floor_sl = max(1.35 * atr, 2.50 if "SOL" in sym_name else (35.0 if "ETH" in sym_name else 700.0))
+                    min_floor_sl = max(1.35 * atr + spread_dist, 2.50 if "SOL" in sym_name else (35.0 if "ETH" in sym_name else 700.0))
                 else:
-                    min_floor_sl = 0.65 * atr if (is_index or is_forex) else 0.75 * atr
+                    min_floor_sl = max(1.20 * atr + spread_dist, 3.5 * spread_dist)
 
                 sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
 
-            # Floor is derived from current conditions: >=3x spread so the spread stays a
-            # small share of the risk budget, and >=10% ATR so we never stop inside noise.
-            min_sl_dist = max(3.0 * spread_dist, 0.10 * atr)
+            # Floor is derived from current conditions: >=3.5x spread and >=1.20x ATR to protect against noise
+            min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
             if is_gold:
                 min_sl_dist = max(min_sl_dist, 8.0)
+            elif is_silver:
+                min_sl_dist = max(min_sl_dist, 0.35)
+            elif is_oil:
+                min_sl_dist = max(min_sl_dist, 0.65)
             elif is_crypto:
                 if "ETHBTC" in sym_name:
                     min_crypto_pts = 0.00030
@@ -396,46 +401,49 @@ class DynamicRiskAndLevelsEngine:
                 struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
 
             if style == "SCALP":
-                sl_dist = min(1.50 * atr + spread_dist, max(0.75 * atr, struct_sl_dist * 0.75))
-                min_target_rr = 1.5
-                asym_rr = 2.0
+                sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                min_target_rr = 1.8
+                asym_rr = 2.5
             elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
                 if is_index:
-                    sl_dist = min(1.30 * atr + spread_dist, max(0.70 * atr, struct_sl_dist * 0.8))
-                    min_target_rr = 1.5
-                    asym_rr = 2.2
+                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
                 elif is_forex:
-                    sl_dist = min(1.50 * atr + spread_dist, max(0.75 * atr, struct_sl_dist * 0.85))
-                    min_target_rr = 1.5
-                    asym_rr = 2.2
+                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
                 else:
-                    sl_dist = min(1.80 * atr + spread_dist, max(0.80 * atr, struct_sl_dist * 0.9))
-                    min_target_rr = 1.5
-                    asym_rr = 2.4
+                    sl_dist = min(2.20 * atr + spread_dist, max(1.25 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
             else:  # SWING
                 if is_gold:
                     max_swing_sl = 2.80 * atr  # Retain winning commodity runner parameters (100% UNCHANGED)
                     min_target_rr = 2.0 if is_ranging else 2.5
-                    asym_rr = 2.2 if is_ranging else 4.2
+                    asym_rr = 2.5 if is_ranging else 4.2
                 else:
                     max_swing_sl = cfg.sl_atr_multiplier * atr
-                    min_target_rr = cfg.min_target_rr if not is_ranging else max(1.5, cfg.min_target_rr - 0.3)
-                    asym_rr = cfg.asym_rr if not is_ranging else max(2.2, cfg.asym_rr - 0.6)
+                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
+                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
 
                 if "ETHBTC" in sym_name:
-                    min_floor_sl = max(1.20 * atr, 0.00035)
+                    min_floor_sl = max(1.20 * atr + spread_dist, 0.00035)
                 elif is_crypto:
-                    min_floor_sl = max(1.35 * atr, 2.50 if "SOL" in sym_name else (35.0 if "ETH" in sym_name else 700.0))
+                    min_floor_sl = max(1.35 * atr + spread_dist, 2.50 if "SOL" in sym_name else (35.0 if "ETH" in sym_name else 700.0))
                 else:
-                    min_floor_sl = 0.65 * atr if (is_index or is_forex) else 0.75 * atr
+                    min_floor_sl = max(1.20 * atr + spread_dist, 3.5 * spread_dist)
 
                 sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
 
-            # See the BUY branch above: the floor must widen the distance, not just
-            # risk_dist, or sizing and the post-fill re-anchor disagree by ~7x.
-            min_sl_dist = max(3.0 * spread_dist, 0.10 * atr)
+            # Floor is derived from current conditions: >=3.5x spread and >=1.20x ATR to protect against noise
+            min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
             if is_gold:
                 min_sl_dist = max(min_sl_dist, 8.0)
+            elif is_silver:
+                min_sl_dist = max(min_sl_dist, 0.35)
+            elif is_oil:
+                min_sl_dist = max(min_sl_dist, 0.65)
             elif is_crypto:
                 if "ETHBTC" in sym_name:
                     min_crypto_pts = 0.00030

@@ -470,13 +470,19 @@ class JarvisOrchestrator:
                 style=trade_style
             )
 
-        # 4. Update Circuit Breaker & Drawdown Guard
+        # 4. Update Circuit Breaker, Loss Cooldown & Drawdown Guard
         trade_symbol = pending.get("symbol", data.get("symbol", "")) if pending else data.get("symbol", "")
         # The dangerous one: `is_win == 1` was False for an unmeasured close, so a
         # data gap registered as a LOSS and could help trip the circuit breaker on
         # losses that were never observed. Withhold the sample instead.
         if is_win is not None:
             self.circuit_breaker.record_trade_result(is_win == 1, symbol=trade_symbol, regime=regime_name)
+            if hasattr(self.risk_engine, "loss_cooldown"):
+                self.risk_engine.loss_cooldown.record_trade_result(
+                    pnl=pnl or 0.0,
+                    is_win=(is_win == 1),
+                    symbol=trade_symbol
+                )
         if new_equity > 0:
             self.drawdown_guard.update_equity_benchmarks(new_equity, float(data.get("balance", new_equity)))
 

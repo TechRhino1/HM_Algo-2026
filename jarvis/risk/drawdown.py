@@ -181,24 +181,25 @@ class DrawdownGuard:
 
         # ── Auto-reanchor stale peak_equity ──────────────────────────────────
         # If balance ≈ equity (no meaningful floating P&L) and the persisted
-        # peak is more than 1.5x the current balance, the peak is from a prior
-        # account state — a withdrawal, a demo reset, or cross-mode DB
-        # contamination. A genuine trading drawdown CANNOT produce a balance
-        # that is close to equity but far below the peak without having shown
-        # intermediate losing trades, each of which would have been risk-
-        # checked. Reanchor to current balance so the drawdown measurement
-        # reflects the actual trading session, not a historical artifact.
+        # peak is more than 1.15x current balance on small/micro accounts or 1.5x generally,
+        # the peak is from a prior account state — a withdrawal, a demo reset, or
+        # cross-mode DB contamination. A genuine trading session with 0 open positions
+        # should not be locked in a permanent circuit breaker from historical runs.
+        is_stale_peak = (
+            (self.peak_equity > current_balance * 1.5) or
+            (current_balance < 2500.0 and self.peak_equity > current_balance * 1.15)
+        )
         if (
             self.peak_equity > 0
             and current_balance > 0
             and current_equity > 0
             and abs(current_balance - current_equity) / current_balance < 0.02  # <2% float
-            and self.peak_equity > current_balance * 1.5  # peak is 50%+ higher than balance
+            and is_stale_peak
         ):
             import logging
             _logger = logging.getLogger("JARVIS_DrawdownGuard")
             _logger.warning(
-                "AUTO-REANCHOR: peak_equity (%.2f) is %.1fx current balance (%.2f) with "
+                "AUTO-REANCHOR: peak_equity (%.2f) is %.2fx current balance (%.2f) with "
                 "no meaningful floating P&L. Reanchoring to current balance. "
                 "This indicates a withdrawal, demo reset, or stale DB state.",
                 self.peak_equity, self.peak_equity / current_balance, current_balance,

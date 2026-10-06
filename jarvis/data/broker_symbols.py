@@ -63,6 +63,7 @@ BROKER_ALIASES: Dict[str, List[str]] = {
     # "Fuzzy broker-symbol match GOLD.I# -> GOLD.i#" on a symbol that was never
     # ambiguous — noise that hides the one warning that matters.
     "GOLD.I#": ["GOLD.i#"],
+    "SILVER.I#": ["SILVER.i#"],
     "BTCUSD": ["BTCUSD#", "BTCUSD"],
     "ETHUSD": ["ETHUSD#", "ETHUSD"],
     "SOLUSD": ["SOLUSD#", "SOLUSD"],

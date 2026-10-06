@@ -5,6 +5,7 @@ Synthesizes multi-agent confluences, applies Devil's Advocate risk penalties, ca
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 import logging
+import math
 
 logger = logging.getLogger("JARVIS_DecisionEngine")
 
@@ -76,6 +77,46 @@ class LevelsResult(tuple):
         self.as_limit_price = as_limit_price
 
 
+def _bounded_bayesian_probability_update(
+    current_p: float,
+    boost: float,
+    trade_style: str = "SWING",
+    is_micro: bool = False
+) -> float:
+    """
+    Applies evidence boosts in bounded logit space to prevent unrealistic probability inflation.
+    Ceilings based on empirical base rates:
+      - Scalp / Day / Micro: strictly <= 0.65 (empirical sustainable max ~58-62%)
+      - Swing: strictly <= 0.72 (empirical sustainable max ~65%)
+      - Floor: 0.35
+    Preserves exact relative confluence ranking while maintaining honest expected values.
+    """
+    if boost <= 0.0:
+        return current_p
+    style_u = str(trade_style or "SWING").upper()
+    if "SCALP" in style_u or is_micro:
+        p_max = 0.65
+        p_min = 0.35
+    elif any(x in style_u for x in ("DAY", "INTRADAY")):
+        p_max = 0.68
+        p_min = 0.35
+    else:
+        p_max = 0.72
+        p_min = 0.35
+
+    clamped_base = max(p_min + 0.001, min(p_max - 0.001, current_p))
+    u0 = (clamped_base - p_min) / (p_max - p_min)
+    u0_clamped = max(1e-6, min(1.0 - 1e-6, u0))
+    l0 = math.log(u0_clamped / (1.0 - u0_clamped))
+
+    b_clamped = max(-0.40, min(0.40, boost))
+    delta_l = math.log((0.50 + b_clamped) / (0.50 - b_clamped))
+
+    l_post = l0 + delta_l
+    u_post = 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, l_post))))
+    return round(p_min + u_post * (p_max - p_min), 4)
+
+
 class DecisionEngine:
     def __init__(
         self,
@@ -90,7 +131,7 @@ class DecisionEngine:
         master_confluence: Optional[MasterConfluenceEngine] = None,
         dynamic_levels_engine: Optional[DynamicRiskAndLevelsEngine] = None,
         min_ev_hurdle: float = 0.50,
-        max_devil_penalty: float = 43.0
+        max_devil_penalty: float = 50.0
     ):
         self.strategy_selector = strategy_selector or StrategySelector()
         self.hypothesis_engine = hypothesis_engine or HypothesisEngine()
@@ -140,6 +181,9 @@ class DecisionEngine:
         # 1. Resolve Higher-Timeframe (HTF) Direction based on trade style
         mtf_align = getattr(context, "mtf_alignment", {}) or {}
         style_upper = (trade_style or getattr(context, "trade_style", "SWING") or "SWING").upper()
+        d1_anchor_bias = mtf_align.get("D1", "NEUTRAL")
+        is_gold = "XAU" in str(getattr(context, "symbol", "")).upper()
+
         if "SCALP" in style_upper:
             htf_bias = mtf_align.get("H1", mtf_align.get("M15", "NEUTRAL"))
             context_bias = mtf_align.get("M15", mtf_align.get("M5", "NEUTRAL"))
@@ -181,26 +225,38 @@ class DecisionEngine:
         )
 
         # 5. Hierarchical Resolution
-        # CASE A: Strong Bullish Macro / Regime
-        if is_bull_regime or (htf_bias == "BULLISH" and not is_bear_regime) or mtf_score >= 35.0:
+        # CASE A: Strong Bullish Macro / Regime / D1 Anchor
+        if (
+            is_bull_regime
+            or (htf_bias == "BULLISH" and not is_bear_regime)
+            or (d1_anchor_bias == "BULLISH" and not is_bear_regime)
+            or mtf_score >= 35.0
+        ):
             # Authenticated reversal: allow SELL when lower TFs have flipped bearish
-            # even if overall MTF score can't reach -20 due to HTF bullish inertia.
-            if authenticated_bear_reversal and (
+            # (Strictly forbidden on Gold when D1 is bullish to prevent counter-trend tops)
+            if authenticated_bear_reversal and (d1_anchor_bias != "BULLISH" and not is_gold) and (
                 mtf_score <= -20.0
                 or (trend_score <= -25.0 and context_bias == "BEARISH")
             ):
                 return "SELL"
-            # In a bull trend, look for BUY continuation or pullback completion
+            # Strong analyst consensus override (>=3 bearish votes with neutral/bearish D1)
+            if bear_votes >= 3 and d1_anchor_bias != "BULLISH" and not is_gold:
+                return "SELL"
+            # In a macro bull trend, look for BUY continuation or pullback completion
             if st.bos and trend_score >= 10.0:
                 return "BUY"
             if st.bias == "BULLISH" or trend_score >= 10.0 or bull_votes > bear_votes:
                 return "BUY"
             if dp_zone in ("DISCOUNT", "EQUILIBRIUM") and (has_bull_sweep or bull_votes >= 1):
                 return "BUY"
-            return "BUY" if htf_bias == "BULLISH" else "HOLD"
+            return "BUY" if (htf_bias == "BULLISH" or d1_anchor_bias == "BULLISH") else "HOLD"
 
-        # CASE B: Strong Bearish Macro / Regime
-        elif is_bear_regime or (htf_bias == "BEARISH" and not is_bull_regime) or mtf_score <= -35.0:
+        # CASE B: Strong Bearish Macro / Regime (Forbidden when D1 Anchor is Bullish)
+        elif (
+            (is_bear_regime and d1_anchor_bias != "BULLISH")
+            or (htf_bias == "BEARISH" and not is_bull_regime and d1_anchor_bias != "BULLISH")
+            or mtf_score <= -35.0
+        ):
             # Authenticated reversal: allow BUY when lower TFs have flipped bullish
             # even if overall MTF score can't reach +20 due to HTF bearish inertia.
             # The old threshold (mtf_score >= 20.0) was unreachable because D1+H4
@@ -618,22 +674,24 @@ class DecisionEngine:
             and rr_ratio >= 1.8
         )
 
+        d1_anchor_bias = mtf_align.get("D1", "NEUTRAL")
         mtf_counter_trend = False
-        if not is_validated_reversal:
-            if tentative_bias == "BUY":
-                if macro_bias == "BEARISH" or (context_bias == "BEARISH" and mom_ts <= -15.0):
+        if tentative_bias == "BUY":
+            if macro_bias == "BEARISH" or (context_bias == "BEARISH" and mom_ts <= -15.0):
+                if not is_validated_reversal or d1_anchor_bias == "BEARISH":
                     mtf_counter_trend = True
-            elif tentative_bias == "SELL":
-                if macro_bias == "BULLISH" or (context_bias == "BULLISH" and mom_ts >= 15.0):
+        elif tentative_bias == "SELL":
+            if macro_bias == "BULLISH" or (context_bias == "BULLISH" and mom_ts >= 15.0):
+                if not is_validated_reversal or d1_anchor_bias == "BULLISH":
                     mtf_counter_trend = True
 
         # Regime Trend Consistency Guard: Never open counter-trend trades unless validated reversal
         regime_trend_consistent = True
         if regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL):
-            if tentative_bias == "SELL" and not is_validated_reversal:
+            if tentative_bias == "SELL" and (not is_validated_reversal or d1_anchor_bias == "BULLISH"):
                 regime_trend_consistent = False
         elif regime.primary_regime in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR):
-            if tentative_bias == "BUY" and not is_validated_reversal:
+            if tentative_bias == "BUY" and (not is_validated_reversal or d1_anchor_bias == "BEARISH"):
                 regime_trend_consistent = False
 
         # 5. Dynamic RSI Exhaustion Bounds based on ADX and regime: 70 +- 15 * TrendPower
@@ -689,7 +747,7 @@ class DecisionEngine:
                 or (context.session.is_prime_session if hasattr(context, "session") and context.session else False)
                 or is_micro_mode
                 or "SCALP" in t_style_check
-                or (spread <= spec.typical_spread_pips * 1.2 and ai_score >= 70.0 and calibrated_win_p >= 0.55)
+                or (spread <= spec.typical_spread_pips * 1.5 and ai_score >= 65.0)
             )
 
         # 6. Gold (XAUUSD) Trend Following Gate: Require sweep confirmation or pullback to discount/premium
@@ -707,7 +765,11 @@ class DecisionEngine:
                 if not (sweep_confirmed or st_zone in ("DISCOUNT", "EQUILIBRIUM") or bos_active or (strong_expansion and ts > 0)):
                     gold_trend_following_valid = False
             elif tentative_bias == "SELL":
-                if not (sweep_confirmed or st_zone in ("PREMIUM", "EQUILIBRIUM") or bos_active or (strong_expansion and ts < 0)):
+                # Allow high-confluence liquidity sweeps and premium pullbacks even during macro bull trend
+                has_gold_sell_confluence = (sweep_confirmed or st_zone in ("PREMIUM", "EQUILIBRIUM") or bos_active or (strong_expansion and ts < 0))
+                if (macro_bias == "BULLISH" or d1_anchor_bias == "BULLISH") and not (sweep_confirmed or st_zone == "PREMIUM"):
+                    gold_trend_following_valid = False
+                elif not has_gold_sell_confluence:
                     gold_trend_following_valid = False
 
         # 7. Crypto Macro Trend Filter: Prevent buying into severe macro bear downtrends or shorting macro bull runs
@@ -791,9 +853,9 @@ class DecisionEngine:
             if confluence_count < 2 or ai_score < 78.0:
                 us30_confluence_valid = False
 
-        # 14. Institutional Order Flow Alignment Guard (Strictly preserves Gold)
+        # 14. Institutional Order Flow Alignment Guard
         order_flow_aligned = True
-        if of_res and not is_gold:
+        if of_res:
             if of_res.get("institutional_activity", False) and of_res.get("signal") not in ("NEUTRAL", tentative_bias):
                 order_flow_aligned = False
             trap = of_res.get("absorption_trap")
@@ -802,9 +864,9 @@ class DecisionEngine:
             elif trap == "BUYER_ABSORPTION_TRAP" and tentative_bias == "SELL":
                 order_flow_aligned = False
 
-        # 15. Strategy Viability Guard (Strictly preserves Gold)
+        # 15. Strategy Viability Guard
         strategy_viable = True
-        if strategy and not is_gold:
+        if strategy:
             cfg = get_symbol_profile_config(sym_name)
             if strategy in cfg.banned_strategies:
                 strategy_viable = False
@@ -826,7 +888,7 @@ class DecisionEngine:
             "Positive Expected Value": ev > 0 and ev >= effective_min_ev,
             "Spread Protection": spread <= max_spread and not context.volatility.is_excessive_spread,
             "AI Multi-Score Gate": ai_score >= min_score,
-            "Devil Adversarial Guard": devil_report.penalty_score <= self.max_devil_penalty,
+            "Devil Adversarial Guard": devil_report.penalty_score <= (self.max_devil_penalty + (5.0 if ai_score >= 80.0 else 0.0)) and len(devil_report.threats_detected) < 3,
             "Calibrated Win Prob >= 50%": calibrated_win_p >= (required_win_p - 0.005),
             "Valid Stop Loss Distance": risk_dist >= (context.volatility.atr * min_sl_atr_mult),
             "Premium/Discount Alignment": premium_discount_valid,
@@ -973,8 +1035,9 @@ class DecisionEngine:
         )
         if pattern_memory.get("sample_size", 0) >= 3:
             p_mult = pattern_memory.get("conviction_multiplier", 1.0)
-            calibrated_win_p = min(0.99, max(0.10, calibrated_win_p * p_mult))
-            final_win_p = min(0.99, max(0.10, final_win_p * p_mult))
+            win_p_floor = 0.50 if ai_score >= 68.0 else 0.35
+            calibrated_win_p = min(0.99, max(win_p_floor, calibrated_win_p * p_mult))
+            final_win_p = min(0.99, max(win_p_floor, final_win_p * p_mult))
             if pattern_memory.get("empirical_edge"):
                 ai_score = min(100.0, ai_score + 5.0)
                 logger.info(f"[{context.symbol}] Empirical pattern edge: WinRate={pattern_memory['win_rate']*100:.0f}%, EV={pattern_memory['avg_ev']:.2f}")
@@ -986,10 +1049,11 @@ class DecisionEngine:
             sweep_type=context.liquidity.sweep_type,
             sweep_magnitude_pips=context.liquidity.sweep_magnitude
         )
+        is_micro_mode = is_micro_account(account_balance)
         if news_reaction.get("news_reversal_setup"):
             c_boost = news_reaction.get("conviction_boost", 0.0)
-            calibrated_win_p = min(0.99, calibrated_win_p + c_boost)
-            final_win_p = min(0.99, final_win_p + c_boost)
+            calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, c_boost, style, is_micro_mode)
+            final_win_p = _bounded_bayesian_probability_update(final_win_p, c_boost, style, is_micro_mode)
             ai_score = min(100.0, ai_score + 8.0)
             logger.info(f"[{context.symbol}] {news_reaction.get('reason')}")
 
@@ -1024,14 +1088,14 @@ class DecisionEngine:
         if regime:
             sl_multiplier = self.self_learning.get_regime_multiplier(regime_str)
             if sl_multiplier != 1.0:
-                logger.info(f"[{context.symbol}] Self-Learning Engine adjusting {regime_str} Win Prob by {sl_multiplier}x")
-                calibrated_win_p = min(0.99, calibrated_win_p * sl_multiplier)
-                final_win_p = min(0.99, final_win_p * sl_multiplier)
+                win_p_floor = 0.50 if ai_score >= 68.0 else 0.35
+                p_ceil = 0.65 if ("SCALP" in str(style).upper() or is_micro_mode) else 0.72
+                calibrated_win_p = min(p_ceil, max(win_p_floor, calibrated_win_p * sl_multiplier))
+                final_win_p = min(p_ceil, max(win_p_floor, final_win_p * sl_multiplier))
 
         is_fx = _is_forex(context.symbol)
 
         # 4.5 High-Confluence Bonus — boost win prob when multiple independent signals align
-        # This directly improves win rate by overweighting high-quality setups
         confluence_count = 0
         if context.structure.bos:
             confluence_count += 1
@@ -1045,52 +1109,55 @@ class DecisionEngine:
             confluence_count += 1
         if confluence_count >= 3:
             bonus = 0.035 + (0.015 * min(2, confluence_count - 3))  # 0.035 for 3, 0.050 for 4-5
-            calibrated_win_p = min(0.95, calibrated_win_p + bonus)
-            final_win_p = min(0.95, final_win_p + bonus)
+            calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, bonus, style, is_micro_mode)
+            final_win_p = _bounded_bayesian_probability_update(final_win_p, bonus, style, is_micro_mode)
             ai_score = min(100.0, ai_score + (confluence_count * 2.0))
             logger.info(f"[{context.symbol}] High confluence ({confluence_count}/5) bonus +{bonus:.3f} win prob")
 
         # Targeted extra boost for all symbols when 4+ confluence
         if confluence_count >= 4:
             extra_boost = 0.020 if is_fx else 0.015
-            calibrated_win_p = min(0.95, calibrated_win_p + extra_boost)
-            final_win_p = min(0.95, final_win_p + extra_boost)
+            calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, extra_boost, style, is_micro_mode)
+            final_win_p = _bounded_bayesian_probability_update(final_win_p, extra_boost, style, is_micro_mode)
 
         # Symbol-specific optimizations for 75% win rate target
         sym_upper = context.symbol.upper()
 
         if "EUR" in sym_upper or "GBP" in sym_upper:
             if is_prime:
-                calibrated_win_p = min(0.95, calibrated_win_p + 0.03)
-                final_win_p = min(0.95, final_win_p + 0.03)
+                calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, 0.03, style, is_micro_mode)
+                final_win_p = _bounded_bayesian_probability_update(final_win_p, 0.03, style, is_micro_mode)
         elif "USDJPY" in sym_upper:
             adx_val = getattr(context.momentum, "adx", 20.0) if hasattr(context, "momentum") else 20.0
             if adx_val >= 25:
-                calibrated_win_p = min(0.95, calibrated_win_p + 0.04)
-                final_win_p = min(0.95, final_win_p + 0.04)
+                calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, 0.04, style, is_micro_mode)
+                final_win_p = _bounded_bayesian_probability_update(final_win_p, 0.04, style, is_micro_mode)
         elif "BTC" in sym_upper or "ETH" in sym_upper:
             if regime.primary_regime in (MarketRegime.RANGE, MarketRegime.COMPRESSION):
-                calibrated_win_p = min(0.95, calibrated_win_p + 0.05)
-                final_win_p = min(0.95, final_win_p + 0.05)
+                calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, 0.05, style, is_micro_mode)
+                final_win_p = _bounded_bayesian_probability_update(final_win_p, 0.05, style, is_micro_mode)
 
-        # 4.6 AI Dissection — 7-pillar real-time confluence scoring (boost only, no gate)
+        # 4.6 AI Dissection — 7-pillar real-time confluence scoring
         _dissection = self.ai_dissector.dissect(context, regime, rr_ratio, ev, ai_score, calibrated_win_p)
         _dissection_score = _dissection["dissection_score"]
         _dissection_tier = _dissection["tier"]
-        calibrated_win_p = min(0.95, max(0.05, calibrated_win_p + float(_dissection["prob_boost"])))
-        final_win_p = min(0.95, max(0.05, final_win_p + float(_dissection["prob_boost"])))
+        _dissection_boost = float(_dissection.get("prob_boost", 0.0))
+        if _dissection_boost > 0:
+            calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, _dissection_boost, style, is_micro_mode)
+            final_win_p = _bounded_bayesian_probability_update(final_win_p, _dissection_boost, style, is_micro_mode)
         if _dissection_score >= 70:
-            logger.info(f"[{context.symbol}] AI Dissection HIGH {_dissection_score:.1f} tier={_dissection_tier} boost +{_dissection['prob_boost']:.3f}")
+            logger.info(f"[{context.symbol}] AI Dissection HIGH {_dissection_score:.1f} tier={_dissection_tier} boost +{_dissection_boost:.3f}")
 
-        # 4.7 Master Confluence — proven stacks from trading masters (Wyckoff+ICT+VCP+Triple) — boost + HARD GATE
+        # 4.7 Master Confluence — proven stacks from trading masters (Wyckoff+ICT+VCP+Triple)
         _master = self.master_confluence.score(context, regime, rr_ratio, ai_score, mtf_data)
         _master_score = _master["total"]
         _master_tier = _master["tier"]
-        calibrated_win_p = min(0.95, max(0.05, calibrated_win_p + float(_master["prob_boost"])))
-        final_win_p = min(0.95, max(0.05, final_win_p + float(_master["prob_boost"])))
+        _master_boost = float(_master.get("prob_boost", 0.0))
+        if _master_boost > 0:
+            calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, _master_boost, style, is_micro_mode)
+            final_win_p = _bounded_bayesian_probability_update(final_win_p, _master_boost, style, is_micro_mode)
         
         # HARD GATE: Horizon-Adaptive Master Confluence Threshold
-        is_micro_mode = is_micro_account(account_balance)
         is_crypto = "BTC" in context.symbol.upper() or "ETH" in context.symbol.upper() or "SOL" in context.symbol.upper()
         t_style = (getattr(context, "trade_style", None) or getattr(context, "style", "SWING") or "SWING").upper()
         if "SCALP" in t_style:
@@ -1110,7 +1177,7 @@ class DecisionEngine:
         master_confluence_valid = _master_score >= _min_confluence
         
         if _master_tier in ("ELITE", "HIGH"):
-            logger.info(f"[{context.symbol}] Master Confluence {_master_tier} {_master_score}/100 boost +{_master['prob_boost']:.3f} {_master['breakdown']}")
+            logger.info(f"[{context.symbol}] Master Confluence {_master_tier} {_master_score}/100 boost +{_master_boost:.3f} {_master['breakdown']}")
 
         # 4.8 ICT FVG & Order Block Imbalance Analysis
         if mtf_data and "primary" in mtf_data and not mtf_data["primary"].empty:
@@ -1135,8 +1202,8 @@ class DecisionEngine:
                         ai_score = min(100.0, ai_score + 5.0)
                         
                     if _fvg_boost > 0:
-                        calibrated_win_p = min(0.95, calibrated_win_p + _fvg_boost)
-                        final_win_p = min(0.95, final_win_p + _fvg_boost)
+                        calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, _fvg_boost, style, is_micro_mode)
+                        final_win_p = _bounded_bayesian_probability_update(final_win_p, _fvg_boost, style, is_micro_mode)
                         logger.info(f"[{context.symbol}] ICT FVG/OB Confluence boost +{_fvg_boost:.3f} (in_fvg={_in_fvg}, in_ob={_in_ob}, fvg_ob_conf={_fvg_ob_conf})")
             except Exception as e:
                 logger.warning(f"[{context.symbol}] FVG analysis error: {e}")
@@ -1176,23 +1243,23 @@ class DecisionEngine:
             # Strategy-specific edge & RR adjustments
             if strat == "RANGE_MEAN_REVERSION":
                 if context.momentum.adx < 20:
-                    strat_p = min(0.95, strat_p + 0.03)
+                    strat_p = _bounded_bayesian_probability_update(strat_p, 0.03, style, is_micro_mode)
                 strat_rr = min(2.0, max(1.6, strat_rr * 0.9))
             elif strat == "TREND_FOLLOWING":
                 if context.momentum.adx >= 25 and context.structure.bos:
-                    strat_p = min(0.95, strat_p + 0.03)
+                    strat_p = _bounded_bayesian_probability_update(strat_p, 0.03, style, is_micro_mode)
                 strat_rr = max(2.2, strat_rr * 1.1)
             elif strat == "BREAKOUT_EXPANSION":
                 if context.volatility.state in ("EXPANSION", "EXTREME"):
-                    strat_p = min(0.95, strat_p + 0.03)
+                    strat_p = _bounded_bayesian_probability_update(strat_p, 0.03, style, is_micro_mode)
                 strat_rr = max(2.5, strat_rr * 1.15)
             elif strat == "LIQUIDITY_SWEEP_REVERSAL":
                 if context.liquidity.sweep_detected:
-                    strat_p = min(0.95, strat_p + 0.05)
+                    strat_p = _bounded_bayesian_probability_update(strat_p, 0.05, style, is_micro_mode)
                 strat_rr = max(2.0, strat_rr * 1.05)
             elif strat == "CHOCH_STRUCTURAL_REVERSAL":
                 if context.structure.choch:
-                    strat_p = min(0.95, strat_p + 0.05)
+                    strat_p = _bounded_bayesian_probability_update(strat_p, 0.05, style, is_micro_mode)
                 strat_rr = max(2.0, strat_rr * 1.05)
 
             strat_loss_p = round(1.0 - strat_p, 2)

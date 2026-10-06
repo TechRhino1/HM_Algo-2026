@@ -20,6 +20,7 @@ from jarvis.risk.exposure import ExposureManager, HARD_MAX_TRADES_PER_SYMBOL
 from jarvis.risk.circuit_breaker import CircuitBreaker
 from jarvis.risk.trade_guard import TradeGuard
 from jarvis.risk.portfolio_heat import PortfolioHeatEngine, PortfolioHeatResult
+from jarvis.risk.loss_cooldown import LossCooldownManager
 from jarvis.market.correlations import DynamicCorrelationEngine
 
 logger = logging.getLogger("JARVIS_RiskEngine")
@@ -88,6 +89,7 @@ class RiskEngine:
         self._now = time.time
         self.position_sizer = PositionSizer()
         self.trade_guard = TradeGuard()
+        self.loss_cooldown = LossCooldownManager()
         self.correlation_engine = DynamicCorrelationEngine()
 
         # Atomic Risk Reservation table: {symbol: (reserved_usd, expiry_time)}
@@ -302,7 +304,7 @@ class RiskEngine:
             is_second_trade = symbol_count == 1
             is_over_hard_limit = symbol_count >= HARD_MAX_TRADES_PER_SYMBOL
 
-            # 1. Circuit Breaker status (Global + Per-Symbol / Per-Regime)
+            # 1. Circuit Breaker & Consecutive Loss Cooldown status (Global + Per-Symbol / Per-Regime)
             cb = self.circuit_breaker.check_status()
             if cb.get("active"):
                 rejection_reasons.append(f"Circuit Breaker active: {cb.get('reason')} (Cooldown: {cb.get('remaining_cooldown_sec', 0)}s)")
@@ -310,6 +312,9 @@ class RiskEngine:
                 rejection_reasons.append(f"Symbol {symbol} is temporarily paused due to recent consecutive losses.")
             if decision.regime and hasattr(decision.regime, "primary_regime") and self.circuit_breaker.is_regime_paused(decision.regime.primary_regime.value):
                 rejection_reasons.append(f"Regime {decision.regime.primary_regime.value} is temporarily paused due to consecutive losses.")
+            should_skip, skip_reason = self.loss_cooldown.should_skip_trade(symbol)
+            if should_skip:
+                rejection_reasons.append(f"LOSS_COOLDOWN: {skip_reason}")
 
             # 2. Drawdown & Daily Loss limits
             dd = self.drawdown_guard.check_limits(account.equity, account.balance)

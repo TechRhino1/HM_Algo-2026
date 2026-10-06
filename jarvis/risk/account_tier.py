@@ -28,8 +28,8 @@ def get_account_tier(equity: float) -> AccountTier:
         return AccountTier.INSTITUTIONAL
 
 def is_micro_account(equity: float) -> bool:
-    """True if account is in micro mode (< $100 equity)."""
-    return float(equity) < 100.0
+    """True if account is in micro/small retail mode (< $1,000 equity)."""
+    return float(equity) < 1000.0
 
 def get_max_lot_cap(equity: float) -> float:
     """Returns hard lot cap for risk protection on smaller accounts."""
@@ -40,8 +40,14 @@ def get_max_lot_cap(equity: float) -> float:
         return 0.03
     elif eq < 250.0:
         return 0.05
+    elif eq < 500.0:
+        return 0.10
+    elif eq < 1000.0:
+        return 0.20
+    elif eq < 2500.0:
+        return 0.50
     else:
-        return 100.0  # Standard risk sizing handles larger accounts
+        return 10.0  # Safe upper ceiling for standard retail accounts
 
 def get_effective_min_ev(equity: float, planned_risk_dollars: float) -> float:
     """

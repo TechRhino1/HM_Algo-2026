@@ -50,9 +50,10 @@ class HypothesisEngine:
         # MTF alignment bonus
         mtf_align = getattr(context, "mtf_alignment", {})
         mtf_bonus = 0.0
-        if proposed_action == "BUY" and mtf_align.get("macro") == "BULLISH":
+        macro_bias = mtf_align.get("D1", mtf_align.get("H4", mtf_align.get("macro", "NEUTRAL")))
+        if proposed_action == "BUY" and macro_bias == "BULLISH":
             mtf_bonus += 0.04
-        elif proposed_action == "SELL" and mtf_align.get("macro") == "BEARISH":
+        elif proposed_action == "SELL" and macro_bias == "BEARISH":
             mtf_bonus += 0.04
 
         # Trend persistence factor

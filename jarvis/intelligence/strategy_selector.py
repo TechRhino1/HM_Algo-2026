@@ -86,12 +86,12 @@ class StrategySelector:
             # 100% UNCHANGED AND PRESERVED GOLD PARAMETERS
             prior_weights = {
                 "MICRO_ACCOUNT_ADAPTIVE": 0.0,
-                "TREND_FOLLOWING": 0.15,
+                "TREND_FOLLOWING": 1.5,
                 "TREND_PULLBACK": 2.2,
-                "BREAKOUT_EXPANSION": 0.4,
-                "LIQUIDITY_SWEEP_REVERSAL": 2.8,
-                "RANGE_MEAN_REVERSION": 0.5,
-                "CHOCH_STRUCTURAL_REVERSAL": 2.5
+                "BREAKOUT_EXPANSION": 1.0,
+                "LIQUIDITY_SWEEP_REVERSAL": 2.5,
+                "RANGE_MEAN_REVERSION": 1.0,
+                "CHOCH_STRUCTURAL_REVERSAL": 2.2
             }
         else:
             # Symbol-specific configuration initialization

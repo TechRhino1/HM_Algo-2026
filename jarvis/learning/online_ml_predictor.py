@@ -196,25 +196,28 @@ class OnlineMLPredictor:
         else:
             rsi_div = 0.0
 
-        # 5. Volatility ATR Ratio (-1.0 to 1.5)
+        # 5. Volatility ATR Ratio (-1.0 to 1.5) with Forward Clustering Forecast
         atr_val = float(getattr(vol, "atr", 0.0) or 0.0)
         curr_price = float(getattr(context, "current_price", 0.0) or 0.0)
+        fwd_atr = float(getattr(vol, "forward_atr_forecast", atr_val) or atr_val)
+        atr_val_eff = max(atr_val, fwd_atr)
         atr_ratio = 1.0
-        if atr_val > 0 and curr_price > 0:
+        if atr_val_eff > 0 and curr_price > 0:
             expected_atr = curr_price * 0.005
-            atr_ratio = min(2.5, max(0.4, atr_val / expected_atr))
+            atr_ratio = min(2.5, max(0.4, atr_val_eff / expected_atr))
         vol_atr_feat = atr_ratio - 1.0
 
         # 6. Bollinger Bandwidth (0.0 to 1.0)
         bb_width = float(getattr(vol, "bollinger_bandwidth", 0.05) or 0.05)
         bb_norm = min(1.0, max(0.0, bb_width / 0.10))
 
-        # 7. Spread Friction Ratio (0.0 to 1.0)
+        # 7. Spread Friction Ratio (0.0 to 1.0) with Forward Spread Risk
         sym_str = getattr(context, "symbol", "EURUSD")
         spec = resolve_symbol(sym_str)
         spr_pips = float(getattr(vol, "current_spread_pips", spec.typical_spread_pips) or spec.typical_spread_pips)
         spread_price = spr_pips * spec.pip_size
-        friction = min(1.0, max(0.0, (spread_price / (atr_val + 1e-9)) * 5.0))
+        spr_risk = float(getattr(vol, "spread_risk_score", 0.0) or 0.0) / 100.0
+        friction = min(1.0, max(0.0, (spread_price / (atr_val + 1e-9)) * 5.0 + spr_risk * 0.2))
 
         # 8. Structure Alignment (+1.0 aligned, -1.0 opposing)
         st_bias = str(getattr(st, "bias", "NEUTRAL") or "NEUTRAL").upper()
@@ -335,7 +338,7 @@ class OnlineMLPredictor:
 
         # 22. Order Flow Imbalance (-1.0 to +1.0)
         of_data = getattr(context, "order_flow", {}) or {}
-        delta = float(of_data.get("delta_imbalance", 0.0) or of_data.get("delta", 0.0) or 0.0)
+        delta = float(of_data.get("delta_imbalance", 0.0) or of_data.get("delta", 0.0) or of_data.get("delta_score", 0.0) or 0.0)
         of_align = min(1.0, max(-1.0, delta / 100.0 if abs(delta) > 1.0 else delta))
         if bias == "SELL":
             of_align = -of_align
