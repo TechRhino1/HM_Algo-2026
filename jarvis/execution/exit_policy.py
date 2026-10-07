@@ -251,10 +251,12 @@ def evaluate_exit(
                 dec.actions.append(f"TRAIL_ATR_{policy.runner_trail_atr:.2f}")
 
     # ── 5. Structural ratchet ───────────────────────────────────────────────
-    if struct_level and struct_level > 0 and atr > 0:
+    # MUST be gated (>= 1.50R) to prevent suffocating trades in entry noise/spread!
+    if r_multiple >= 1.50 and struct_level and struct_level > 0 and atr > 0:
+        min_buffer = max(atr * 0.60, policy.buffer_distance(risk_dist))
         struct_sl = (
-            round(struct_level - atr * 0.20, digits) if is_buy
-            else round(struct_level + atr * 0.20, digits)
+            round(struct_level - min_buffer, digits) if is_buy
+            else round(struct_level + min_buffer, digits)
         )
         if is_buy and struct_sl > dec.new_sl and struct_sl < price:
             dec.new_sl = struct_sl

@@ -65,22 +65,22 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         canonical="BTCUSD",
         asset_class="CRYPTO",
         strategy_weights={
-            "TREND_FOLLOWING": 3.0,
-            "TREND_PULLBACK": 2.5,
-            "RANGE_MEAN_REVERSION": 2.0,
-            "BREAKOUT_EXPANSION": 1.5,
-            "CHOCH_STRUCTURAL_REVERSAL": 1.5,
-            "LIQUIDITY_SWEEP_REVERSAL": 1.5,
+            "RANGE_MEAN_REVERSION": 3.5,       # Empirically profitable (+8.94) on range wicks
+            "CHOCH_STRUCTURAL_REVERSAL": 3.0,  # Reversal confirmation after liquidity sweep
+            "LIQUIDITY_SWEEP_REVERSAL": 2.5,   # Fading fakeout liquidity runs
+            "TREND_PULLBACK": 1.5,             # Deep pullbacks only (in discount/premium)
+            "TREND_FOLLOWING": 0.5,            # Demote blind breakout chasing (-$56.87 loss)
+            "BREAKOUT_EXPANSION": 0.5,
         },
         banned_strategies=[],
-        sl_atr_multiplier=1.80,
+        sl_atr_multiplier=2.50,                # Widen from 1.80 to give BTC breathing room
         min_target_rr=2.0,
         asym_rr=3.5,
-        anti_wick_buffer_atr=0.35,
+        anti_wick_buffer_atr=0.60,             # Widen from 0.35 to absorb crypto wicks
         fast_cash_r=1.50,
         fast_cash_volume_pct=0.33,
         be_trigger_r=1.80,
-        runner_trail_atr=1.50,
+        runner_trail_atr=2.20,                 # Widen from 1.50 so trails don't scratch early
         session_restriction=False,
         contract_size=1.0,
         pip_size=0.01,
@@ -167,29 +167,30 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         canonical="ETHBTC",
         asset_class="CRYPTO",
         strategy_weights={
-            "TREND_FOLLOWING": 3.5,
-            "RANGE_MEAN_REVERSION": 2.5,
-            "BREAKOUT_EXPANSION": 1.5,
-            "CHOCH_STRUCTURAL_REVERSAL": 1.0,
+            "RANGE_MEAN_REVERSION": 3.5,       # Crypto cross-pair mean reversion
+            "CHOCH_STRUCTURAL_REVERSAL": 2.5,
+            "TREND_FOLLOWING": 0.5,            # Demote trend-following due to excessive spread friction
+            "BREAKOUT_EXPANSION": 0.5,
             "TREND_PULLBACK": 0.0,
             "LIQUIDITY_SWEEP_REVERSAL": 0.0,
         },
-        banned_strategies=["LIQUIDITY_SWEEP_REVERSAL"],
-        sl_atr_multiplier=2.20,
+        banned_strategies=["LIQUIDITY_SWEEP_REVERSAL", "BREAKOUT_EXPANSION"],
+        sl_atr_multiplier=2.50,
         min_target_rr=2.0,
         asym_rr=3.5,
-        anti_wick_buffer_atr=0.35,
+        anti_wick_buffer_atr=0.50,
         fast_cash_r=1.50,
         fast_cash_volume_pct=0.33,
         be_trigger_r=1.80,
-        runner_trail_atr=2.00,
-        session_restriction=False,
+        runner_trail_atr=2.20,
+        session_restriction=True,              # Restrict to prime hours to avoid spread blowouts
+        allowed_utc_hours=(8, 20),
         contract_size=100000.0,
-        pip_size=0.0001,
-        pip_value_per_lot=10.0,
+        pip_size=0.00001,
+        pip_value_per_lot=1.0,
         digits=5,
-        typical_spread_pips=2.0,
-        max_allowed_spread_pips=8.0,
+        typical_spread_pips=11.0,
+        max_allowed_spread_pips=25.0,
         commission_per_lot=0.0,
         min_volume=0.01,
         volume_step=0.01,

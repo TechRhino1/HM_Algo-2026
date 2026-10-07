@@ -119,9 +119,9 @@ _REGISTRY: Dict[str, SymbolSpec] = {
     ),
     "ETHBTC": SymbolSpec(
         canonical="ETHBTC", asset_class="CRYPTO",
-        contract_size=100_000.0, pip_size=0.0001, pip_value_per_lot=10.0,
-        typical_spread_pips=2.0, max_spread_pips=8.0,
-        typical_atr_pct=3.0, margin_pct=0.5, digits=5, is_crypto=True
+        contract_size=100_000.0, pip_size=0.00001, pip_value_per_lot=1.0,
+        typical_spread_pips=11.0, max_spread_pips=25.0,
+        typical_atr_pct=1.5, margin_pct=0.5, digits=5, is_crypto=True
     ),
     "US500": SymbolSpec(
         canonical="US500", asset_class="INDEX",

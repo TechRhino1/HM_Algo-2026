@@ -752,7 +752,9 @@ class DecisionEngine:
 
         if is_index_asset:
             is_prime_session_valid = SessionEngine.is_index_prime_session(getattr(context, "timestamp", None))
-        elif is_crypto or is_gold or is_oil_asset:
+        elif is_crypto:
+            is_prime_session_valid = (spread <= spec.typical_spread_pips * 1.20) or (ai_score >= 70.0)
+        elif is_gold or is_oil_asset:
             is_prime_session_valid = True
         elif is_jpy:
             is_prime_session_valid = kz_active or (context.session.is_prime_session if hasattr(context, "session") and context.session else False) or (spread <= spec.typical_spread_pips * 1.5) or is_micro_mode or "SCALP" in t_style_check

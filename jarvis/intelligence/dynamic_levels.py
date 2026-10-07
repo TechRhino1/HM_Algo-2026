@@ -286,11 +286,11 @@ class DynamicRiskAndLevelsEngine:
                 min_sl_dist = max(min_sl_dist, 0.65)
             elif is_crypto:
                 if "ETHBTC" in sym_name:
-                    min_crypto_pts = 0.00030
+                    min_crypto_pts = max(3.5 * spread_dist, 0.00030)
                 elif "ETH" in sym_name:
                     min_crypto_pts = 30.0
                 elif "BTC" in sym_name:
-                    min_crypto_pts = 500.0
+                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, 650.0)
                 else:
                     min_crypto_pts = 2.50
                 min_sl_dist = max(min_sl_dist, min_crypto_pts)
@@ -446,11 +446,11 @@ class DynamicRiskAndLevelsEngine:
                 min_sl_dist = max(min_sl_dist, 0.65)
             elif is_crypto:
                 if "ETHBTC" in sym_name:
-                    min_crypto_pts = 0.00030
+                    min_crypto_pts = max(3.5 * spread_dist, 0.00030)
                 elif "ETH" in sym_name:
                     min_crypto_pts = 30.0
                 elif "BTC" in sym_name:
-                    min_crypto_pts = 500.0
+                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, 650.0)
                 else:
                     min_crypto_pts = 2.50
                 min_sl_dist = max(min_sl_dist, min_crypto_pts)
