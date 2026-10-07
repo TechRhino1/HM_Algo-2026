@@ -51,17 +51,21 @@ __all__ = [
 BROKER_ALIASES: Dict[str, List[str]] = {
     "XAUUSD": ["GOLD.i#", "GOLD24-7.i#", "XAUUSD#", "XAUUSD"],
     "XAGUSD": ["SILVER.i#", "XAGUSD#", "XAGUSD"],
+    "EURUSD": ["EURUSD#", "EURUSD.i#", "EURUSD.m", "EURUSD"],
+    "GBPUSD": ["GBPUSD#", "GBPUSD.i#", "GBPUSD.m", "GBPUSD"],
+    "USDJPY": ["USDJPY#", "USDJPY.i#", "USDJPY.m", "USDJPY"],
+    "AUDUSD": ["AUDUSD#", "AUDUSD.i#", "AUDUSD.m", "AUDUSD"],
+    "USDCAD": ["USDCAD#", "USDCAD.i#", "USDCAD.m", "USDCAD"],
+    "USDCHF": ["USDCHF#", "USDCHF.i#", "USDCHF.m", "USDCHF"],
+    "NZDUSD": ["NZDUSD#", "NZDUSD.i#", "NZDUSD.m", "NZDUSD"],
+    "EURJPY": ["EURJPY#", "EURJPY.i#", "EURJPY.m", "EURJPY"],
+    "GBPJPY": ["GBPJPY#", "GBPJPY.i#", "GBPJPY.m", "GBPJPY"],
+    "WTI":    ["OILCash#", "USOILCash#", "USOIL#", "OIL#", "WTI#", "USOIL", "OIL"],
     "NAS100": ["US100Cash#", "US100-SEP26", "NAS100Cash#", "US100", "NAS100"],
     "US30":   ["US30Cash#", "US30-SEP26", "US30"],
     "GER40":  ["GER40Cash#", "GER40-SEP26", "DE40Cash#", "GER40"],
     "UK100":  ["UK100Cash#", "UK100-SEP26", "UK100"],
     "US500":  ["US500Cash#", "SPXUSD", "US500"],
-    # Callers that already hold a broker name pass it back in, upper-cased on
-    # the way through (`sym = symbol.upper()`), and MT5's `symbol_info` is
-    # case-SENSITIVE: "GOLD.I#" is None while "GOLD.i#" resolves. Without this
-    # entry every such call fell through to the fuzzy scan and logged
-    # "Fuzzy broker-symbol match GOLD.I# -> GOLD.i#" on a symbol that was never
-    # ambiguous — noise that hides the one warning that matters.
     "GOLD.I#": ["GOLD.i#"],
     "SILVER.I#": ["SILVER.i#"],
     "BTCUSD": ["BTCUSD#", "BTCUSD"],
@@ -77,6 +81,21 @@ CANONICAL_SYNONYMS: Dict[str, str] = {
     "GOLD#": "XAUUSD",
     "SILVER": "XAGUSD",
     "SILVER#": "XAGUSD",
+    "EURUSD#": "EURUSD",
+    "GBPUSD#": "GBPUSD",
+    "USDJPY#": "USDJPY",
+    "AUDUSD#": "AUDUSD",
+    "USDCAD#": "USDCAD",
+    "USDCHF#": "USDCHF",
+    "NZDUSD#": "NZDUSD",
+    "EURJPY#": "EURJPY",
+    "GBPJPY#": "GBPJPY",
+    "BTCUSD#": "BTCUSD",
+    "ETHUSD#": "ETHUSD",
+    "SOLUSD#": "SOLUSD",
+    "ETHBTC#": "ETHBTC",
+    "USOIL": "WTI",
+    "OIL": "WTI",
 }
 
 # cache: canonical -> broker name confirmed to exist
@@ -376,7 +395,7 @@ def reset_cache() -> None:
     _NO_TERMINAL_WARNED = False
 
 
-def probe_symbol(name: str, mt5_module=None) -> bool:
+def probe_symbol(name: str, mt5_module=None, require_tradable: bool = False) -> bool:
     """True if ``name`` exists at the broker and returns at least one H1 bar.
 
     `mt5_module` is used instead of the global package when supplied, so a
@@ -385,7 +404,10 @@ def probe_symbol(name: str, mt5_module=None) -> bool:
     """
     try:
         mt5 = mt5_module or _mt5()
-        if mt5.symbol_info(name) is None:
+        info = mt5.symbol_info(name)
+        if info is None:
+            return False
+        if require_tradable and getattr(info, "trade_mode", 4) == 0:
             return False
         mt5.symbol_select(name, True)
         rates = mt5.copy_rates_from_pos(name, mt5.TIMEFRAME_H1, 0, 5)
@@ -429,8 +451,18 @@ def resolve_broker_symbol(symbol: str, verbose: bool = False, mt5_module=None) -
         for c in BROKER_ALIASES.get(canonical_key, []):
             if c not in candidates:
                 candidates.append(c)
+
+    # Pass 1: find candidate with active trading enabled (trade_mode > 0)
     for cand in candidates:
-        if probe_symbol(cand, mt5_module=mt5_module):
+        if probe_symbol(cand, mt5_module=mt5_module, require_tradable=True):
+            _CACHE[sym] = cand
+            if verbose and cand != sym:
+                print(f"  [broker-symbol] {sym} -> {cand}")
+            return cand
+
+    # Pass 2: fallback if trade_mode is not enforced (e.g. test mock or weekend)
+    for cand in candidates:
+        if probe_symbol(cand, mt5_module=mt5_module, require_tradable=False):
             _CACHE[sym] = cand
             if verbose and cand != sym:
                 print(f"  [broker-symbol] {sym} -> {cand}")

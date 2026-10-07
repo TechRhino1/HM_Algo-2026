@@ -300,13 +300,19 @@ class PositionMonitorEngine:
         emergency_brake: bool = False,
     ):
         symbol  = pos.symbol
+        from jarvis.data.symbol_registry import resolve as _res
+        try:
+            canon_sym = _res(symbol).canonical
+        except Exception:
+            canon_sym = symbol
+
         is_manual = self._is_manual_trade(pos)
-        regime  = self._get_cached_regime(symbol)
+        regime  = self._get_cached_regime(canon_sym) or self._get_cached_regime(symbol)
 
         # ── Fetch (or reuse cached) market context ──────────────────────────
-        ctx = self._get_context(symbol)
+        ctx = self._get_context(canon_sym) or self._get_context(symbol)
         if ctx is None:
-            logger.debug(f"No market context for {symbol} — skipping #{pos.ticket}")
+            logger.debug(f"No market context for {symbol} ({canon_sym}) — skipping #{pos.ticket}")
             return
 
         c_price = ctx.current_price
@@ -636,9 +642,9 @@ class PositionMonitorEngine:
 
                 # (Micro runner TP extension removed: planned TP target must remain reachable)
 
-                # Macro Divergence Check: Only contract TP if price is already past +1.8R and strong structural divergence forms
-                elif (getattr(ctx.momentum, "divergence", "NONE") not in ("NONE", None, "")) and current_r >= 1.80:
-                    contracted_r = max(current_r + 0.50, 2.0)
+                # Low ML Confidence (<=0.45) or Macro Divergence Check: Contract TP when in profit (>=1.0R) to bank gains before reversal
+                elif (ml_prob <= 0.45 or (getattr(ctx.momentum, "divergence", "NONE") not in ("NONE", None, ""))) and current_r >= 1.0:
+                    contracted_r = max(current_r + 0.40, 1.50)
                     if contracted_r < init_tp_r:
                         contracted_tp = round(
                             pos.open_price + (risk_dist * contracted_r) if pos.type == "BUY"
@@ -1243,8 +1249,14 @@ class PositionMonitorEngine:
     def _get_context(self, symbol: str) -> Optional[MarketContext]:
         """Returns cached context or fetches fresh context if TTL expired."""
         now = time.monotonic()
+        from jarvis.data.symbol_registry import resolve as _res
+        try:
+            canon = _res(symbol).canonical
+        except Exception:
+            canon = symbol
+
         with self._ctx_lock:
-            cached = self._ctx_cache.get(symbol)
+            cached = self._ctx_cache.get(canon) or self._ctx_cache.get(symbol)
             if cached:
                 ctx, fetched_at = cached
                 if (now - fetched_at) < CONTEXT_CACHE_TTL_SEC:
@@ -1252,29 +1264,22 @@ class PositionMonitorEngine:
 
         # Fetch fresh context
         try:
-            mtf_data = self.data_feed.fetch_multi_timeframe(symbol)
-            # Feed the symbol's own typical spread so the spread-blowout guard
-            # in _manage_single_position compares like-for-like. build_context
-            # defaults current_spread_pips to a global 2.0; that constant
-            # exceeded 2x the typical spread of EURUSD/GBPUSD/USDJPY/AUDUSD,
-            # so the guard fired on every call and silently disabled trailing
-            # stops, breakeven moves and partial closes on those majors.
-            from jarvis.data.symbol_registry import resolve as _resolve_symbol
+            mtf_data = self.data_feed.fetch_multi_timeframe(canon)
             try:
-                spread_pips = _resolve_symbol(symbol).typical_spread_pips
+                spread_pips = _res(canon).typical_spread_pips
             except Exception:
                 spread_pips = 3.0
             ctx = self.context_engine.build_context(
-                symbol, mtf_data, current_spread_pips=spread_pips
+                canon, mtf_data, current_spread_pips=spread_pips
             )
             with self._ctx_lock:
+                self._ctx_cache[canon] = (ctx, now)
                 self._ctx_cache[symbol] = (ctx, now)
             return ctx
         except Exception as e:
-            logger.debug(f"Context fetch failed for {symbol}: {e}")
-            # Return last cached value even if stale rather than None
+            logger.debug(f"Context fetch failed for {symbol} ({canon}): {e}")
             with self._ctx_lock:
-                cached = self._ctx_cache.get(symbol)
+                cached = self._ctx_cache.get(canon) or self._ctx_cache.get(symbol)
                 if cached:
                     return cached[0]
             return None
@@ -1282,16 +1287,18 @@ class PositionMonitorEngine:
     def _get_cached_regime(self, symbol: str) -> Optional[Any]:
         """Get the last known regime from state manager decisions."""
         try:
-            # `latest_decisions`, not `_decisions`. The typo raised
-            # AttributeError on every call and the bare `except: pass` below
-            # swallowed it, so this branch had never once executed -- the
-            # caller silently fell through to a fresh classification.
             decisions = self.state_manager.latest_decisions  # type: ignore
             dec = decisions.get(symbol)
+            if not dec:
+                from jarvis.data.symbol_registry import resolve as _res
+                try:
+                    canon = _res(symbol).canonical
+                    dec = decisions.get(canon)
+                except Exception:
+                    pass
             if dec and hasattr(dec, "regime"):
                 return dec.regime
         except Exception as e:
-            # Never swallow silently: that is what hid the typo for so long.
             logger.debug(f"_get_cached_regime({symbol}) fell back to None: {e}")
         return None
 

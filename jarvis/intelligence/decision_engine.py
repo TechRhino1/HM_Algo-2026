@@ -690,11 +690,13 @@ class DecisionEngine:
         d1_anchor_bias = mtf_align.get("D1", "NEUTRAL")
         mtf_counter_trend = False
         if tentative_bias == "BUY":
-            if macro_bias == "BEARISH" or (context_bias == "BEARISH" and mom_ts <= -15.0) or d1_anchor_bias == "BEARISH" or mom_ts <= -15.0:
+            d1_veto = (d1_anchor_bias == "BEARISH" and ("SWING" in t_style_check or mom_ts <= 0.0))
+            if macro_bias == "BEARISH" or (context_bias == "BEARISH" and mom_ts <= -15.0) or d1_veto or mom_ts <= -15.0:
                 if not is_validated_reversal:
                     mtf_counter_trend = True
         elif tentative_bias == "SELL":
-            if macro_bias == "BULLISH" or (context_bias == "BULLISH" and mom_ts >= 15.0) or d1_anchor_bias == "BULLISH" or mom_ts >= 15.0:
+            d1_veto = (d1_anchor_bias == "BULLISH" and ("SWING" in t_style_check or mom_ts >= 0.0))
+            if macro_bias == "BULLISH" or (context_bias == "BULLISH" and mom_ts >= 15.0) or d1_veto or mom_ts >= 15.0:
                 if not is_validated_reversal:
                     mtf_counter_trend = True
 
@@ -775,9 +777,9 @@ class DecisionEngine:
             strong_expansion = (adx_val >= 20.0 and abs(ts) >= 20.0)
 
             # Never allow SELL on Gold when live momentum is positive or expanding upward
-            if tentative_bias == "SELL" and (ts >= 15.0 or (macro_bias == "BULLISH" and not is_validated_reversal)):
+            if tentative_bias == "SELL" and (ts >= 15.0 or (macro_bias == "BULLISH" and ts >= 0.0 and not is_validated_reversal)):
                 gold_trend_following_valid = False
-            elif tentative_bias == "BUY" and (ts <= -15.0 or (macro_bias == "BEARISH" and not is_validated_reversal)):
+            elif tentative_bias == "BUY" and (ts <= -15.0 or (macro_bias == "BEARISH" and ts <= 0.0 and not is_validated_reversal)):
                 gold_trend_following_valid = False
             elif effective_strat in ("TREND_FOLLOWING", "BREAKDOWN", "MOMENTUM_CONTINUATION", "STRUCTURE"):
                 if tentative_bias == "BUY":

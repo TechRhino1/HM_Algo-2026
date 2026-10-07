@@ -1167,44 +1167,45 @@ class JarvisOrchestrator:
                 f"WinP={best_opportunity.win_prob:.0f}% | EV={best_opportunity.expected_value:.2f}R | Confluence={best_opportunity.confluence_score:.1f}"
             )
 
-            # Autonomous Multi-Style Execution Dispatch
-            d_action = getattr(best_opportunity.decision_obj, "decision", "") if best_opportunity.decision_obj else ""
-            failing_cnt = len(getattr(best_opportunity.decision_obj.quality_gate, "failing_reasons", [])) if (best_opportunity.decision_obj and getattr(best_opportunity.decision_obj, "quality_gate", None)) else 99
+        # Autonomous Multi-Style Execution Dispatch over actionable ranked candidates
+        if ranked_candidates and not dry_run:
+            for candidate in ranked_candidates:
+                d_action = getattr(candidate.decision_obj, "decision", "") if candidate.decision_obj else ""
+                failing_cnt = len(getattr(candidate.decision_obj.quality_gate, "failing_reasons", [])) if (candidate.decision_obj and getattr(candidate.decision_obj, "quality_gate", None)) else 99
 
-            is_exec_ready = (
-                best_opportunity.is_actionable
-                and best_opportunity.setup_grade in ("GRADE A+", "GRADE A", "GRADE B")
-                and best_opportunity.decision_obj
-                and best_opportunity.bias in ("BUY", "SELL")
-                and (
-                    d_action == "EXECUTE"
-                    or (
-                        best_opportunity.setup_grade in ("GRADE A+", "GRADE A")
-                        and best_opportunity.expected_value >= 0.40
-                        and best_opportunity.risk_reward_ratio >= 1.4
-                        and failing_cnt <= 1
-                    )
-                    or (
-                        best_opportunity.setup_grade == "GRADE B"
-                        and best_opportunity.expected_value >= 0.40
-                        and best_opportunity.risk_reward_ratio >= 1.4
-                        and failing_cnt == 0
+                is_exec_ready = (
+                    candidate.is_actionable
+                    and candidate.setup_grade in ("GRADE A+", "GRADE A", "GRADE B")
+                    and candidate.decision_obj
+                    and candidate.bias in ("BUY", "SELL")
+                    and (
+                        d_action == "EXECUTE"
+                        or (
+                            candidate.setup_grade in ("GRADE A+", "GRADE A")
+                            and candidate.expected_value >= 0.40
+                            and candidate.risk_reward_ratio >= 1.4
+                            and failing_cnt <= 1
+                        )
+                        or (
+                            candidate.setup_grade == "GRADE B"
+                            and candidate.expected_value >= 0.40
+                            and candidate.risk_reward_ratio >= 1.4
+                            and failing_cnt == 0
+                        )
                     )
                 )
-            )
 
-            # Execution is the one thing a dry run must not do. The ranking and
-            # the readiness verdict above are computed either way, so the caller
-            # still learns what WOULD have been traded.
-            if is_exec_ready and not dry_run:
-                decision = best_opportunity.decision_obj
-                sym = best_opportunity.symbol
+                if not is_exec_ready:
+                    continue
+
+                decision = candidate.decision_obj
+                sym = candidate.symbol
                 canonical_sym = sym.upper().replace("/", "").replace("_", "").replace("-", "")
 
                 # Check if order execution was already fired in run_cycle_for_symbol
                 already_fired = False
                 for s, st, r in raw_results:
-                    if s == sym and st == best_opportunity.trade_style:
+                    if s == sym and st == candidate.trade_style:
                         exec_item = r.get("execution")
                         if exec_item and exec_item.get("status") == "FILLED":
                             already_fired = True
@@ -1219,80 +1220,82 @@ class JarvisOrchestrator:
                 if (time.time() - last_exec) < self._SAME_SYMBOL_COOLDOWN_SEC:
                     already_fired = True
 
-                if not already_fired:
-                    account = self.state_manager.account or self.mt5_client.get_account_snapshot()
-                    positions = self.state_manager.positions
-                    _spec = _resolve_sym(sym)
-                    if hasattr(self.mt5_client, "get_symbol_trading_spec"):
-                        sym_info = self.mt5_client.get_symbol_trading_spec(sym)
-                    else:
-                        sym_info = {
-                            "name": sym,
-                            "trade_contract_size": _spec.contract_size,
-                            "trade_tick_value": _spec.pip_value_per_lot,
-                            "trade_tick_size": _spec.pip_size,
-                            "volume_min": 0.01,
-                            "volume_max": 100.0,
-                            "volume_step": 0.01
-                        }
-                    ctx = best_opportunity.context
-                    cur_spread = ctx.volatility.current_spread_pips if ctx and hasattr(ctx, "volatility") else _spec.typical_spread_pips
+                if already_fired:
+                    logger.debug(f"Arbiter candidate {canonical_sym} ({candidate.trade_style}) skipped: order already executing or cooldown active.")
+                    continue
 
-                    active_sym_positions = [
-                        p for p in positions if (p.symbol == sym or (sym == "XAUUSD" and "GOLD" in p.symbol)
-                                                  or canonical_sym in p.symbol.upper())
-                    ]
-
-                    if is_exec_ready:
-                        decision.decision = "EXECUTE"
-
-                    auth_res = self.risk_engine.authorize_execution(
-                        decision, account, positions, sym_info,
-                        current_spread_pips=cur_spread,
-                        max_allowed_spread_pips=_spec.max_spread_pips,
-                        context=ctx,
-                        is_second_trade=(len(active_sym_positions) == 1),
-                        entry_authorized_override=True
-                    )
-
-                    if auth_res.get("authorized"):
-                        decision.execution_authorized = True
-                        lots = auth_res.get("lots", 0.01)
-                        if account:
-                            lots = min(lots, get_max_lot_cap(account.equity))
-
-                        risk_dist = abs(decision.entry_price - decision.stop_loss)
-                        tick_v = float(sym_info.get("trade_tick_value", 1.0) or 1.0)
-                        tick_s = float(sym_info.get("trade_tick_size", 0.0001) or 0.0001)
-                        dollar_risk_per_unit = tick_v / max(tick_s, 1e-9)
-                        est_risk_usd = lots * dollar_risk_per_unit * risk_dist
-                        self.risk_engine.reserve_risk(canonical_sym, est_risk_usd)
-
-                        with self._execution_lock:
-                            self._execution_in_progress.add(canonical_sym)
-
-                        exec_res = None
-                        try:
-                            logger.info(f"🚀 Autonomous Multi-Style Execution dispatched for {best_opportunity.symbol} ({best_opportunity.trade_style})")
-                            exec_res = self.execution_engine.execute_decision(decision, lots)
-                            if exec_res and exec_res.get("status") == "FILLED":
-                                self.risk_engine.commit_risk(canonical_sym)
-                            else:
-                                self.risk_engine.release_risk(canonical_sym)
-                        except Exception as e:
-                            self.risk_engine.release_risk(canonical_sym)
-                            logger.error(f"Arbiter execution error for {canonical_sym}: {e}", exc_info=True)
-                        finally:
-                            with self._execution_lock:
-                                self._execution_in_progress.discard(canonical_sym)
-                                if exec_res and exec_res.get("status") == "FILLED":
-                                    self._last_execution_time[canonical_sym] = time.time()
-                                    logger.info(f"Execution lock released for {canonical_sym}. Cooldown {self._SAME_SYMBOL_COOLDOWN_SEC}s started.")
-                    else:
-                        reasons_disp = auth_res.get('reasons') or auth_res.get('reason') or 'Risk constraints'
-                        logger.info(f"Arbiter selection {canonical_sym} ({best_opportunity.trade_style}) withheld by risk engine: {reasons_disp}")
+                account = self.state_manager.account or self.mt5_client.get_account_snapshot()
+                positions = self.state_manager.positions
+                _spec = _resolve_sym(sym)
+                if hasattr(self.mt5_client, "get_symbol_trading_spec"):
+                    sym_info = self.mt5_client.get_symbol_trading_spec(sym)
                 else:
-                    logger.debug(f"Arbiter selection {canonical_sym} skipped: order already executing or cooldown active.")
+                    sym_info = {
+                        "name": sym,
+                        "trade_contract_size": _spec.contract_size,
+                        "trade_tick_value": _spec.pip_value_per_lot,
+                        "trade_tick_size": _spec.pip_size,
+                        "volume_min": 0.01,
+                        "volume_max": 100.0,
+                        "volume_step": 0.01
+                    }
+                ctx = candidate.context
+                cur_spread = ctx.volatility.current_spread_pips if ctx and hasattr(ctx, "volatility") else _spec.typical_spread_pips
+
+                active_sym_positions = [
+                    p for p in positions if (p.symbol == sym or (sym == "XAUUSD" and "GOLD" in p.symbol)
+                                              or canonical_sym in p.symbol.upper())
+                ]
+
+                decision.decision = "EXECUTE"
+
+                auth_res = self.risk_engine.authorize_execution(
+                    decision, account, positions, sym_info,
+                    current_spread_pips=cur_spread,
+                    max_allowed_spread_pips=_spec.max_spread_pips,
+                    context=ctx,
+                    is_second_trade=(len(active_sym_positions) == 1),
+                    entry_authorized_override=True
+                )
+
+                if auth_res.get("authorized"):
+                    decision.execution_authorized = True
+                    lots = auth_res.get("lots", 0.01)
+                    if account:
+                        lots = min(lots, get_max_lot_cap(account.equity))
+
+                    risk_dist = abs(decision.entry_price - decision.stop_loss)
+                    tick_v = float(sym_info.get("trade_tick_value", 1.0) or 1.0)
+                    tick_s = float(sym_info.get("trade_tick_size", 0.0001) or 0.0001)
+                    dollar_risk_per_unit = tick_v / max(tick_s, 1e-9)
+                    est_risk_usd = lots * dollar_risk_per_unit * risk_dist
+                    self.risk_engine.reserve_risk(canonical_sym, est_risk_usd)
+
+                    with self._execution_lock:
+                        self._execution_in_progress.add(canonical_sym)
+
+                    exec_res = None
+                    try:
+                        logger.info(f"🚀 Autonomous Multi-Style Execution dispatched for {candidate.symbol} ({candidate.trade_style})")
+                        exec_res = self.execution_engine.execute_decision(decision, lots)
+                        if exec_res and exec_res.get("status") == "FILLED":
+                            self.risk_engine.commit_risk(canonical_sym)
+                        else:
+                            self.risk_engine.release_risk(canonical_sym)
+                    except Exception as e:
+                        self.risk_engine.release_risk(canonical_sym)
+                        logger.error(f"Arbiter execution error for {canonical_sym}: {e}", exc_info=True)
+                    finally:
+                        with self._execution_lock:
+                            self._execution_in_progress.discard(canonical_sym)
+                            if exec_res and exec_res.get("status") == "FILLED":
+                                self._last_execution_time[canonical_sym] = time.time()
+                                logger.info(f"Execution lock released for {canonical_sym}. Cooldown {self._SAME_SYMBOL_COOLDOWN_SEC}s started.")
+                    # Single trade executed this pass
+                    break
+                else:
+                    reasons_disp = auth_res.get('reasons') or auth_res.get('reason') or 'Risk constraints'
+                    logger.info(f"Arbiter selection {canonical_sym} ({candidate.trade_style}) withheld by risk engine: {reasons_disp}. Evaluating next ranked candidate...")
 
         # 3. Convert ranked opportunities to radar items for state manager and dashboard
         radar_results = [cand.to_radar_item() for cand in ranked_candidates]

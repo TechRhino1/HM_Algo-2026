@@ -187,9 +187,22 @@ class ExposureManager:
 
             notional = long_notional + short_notional
             exposure_pct = (notional / account.equity) * 100.0
-            
-            if exposure_pct >= self.max_notional_exposure_pct:
-                breaches.append(f"Max Notional Exposure reached ({exposure_pct:.1f}% >= {self.max_notional_exposure_pct:.1f}%).")
+
+            # Adaptive notional exposure ceiling based on account tier:
+            # Micro-accounts ($50-$2500) trading retail 0.01 micro-lots need adequate leverage allowance
+            # (e.g. 0.01 lot XAUUSD @ 4150 is $4,150 notional = 876% on a $473 account).
+            # True stop-loss monetary risk is independently capped by calculate_portfolio_monetary_risk and max_portfolio_risk_pct.
+            if account.equity < 500.0:
+                effective_notional_cap = max(self.max_notional_exposure_pct, 2000.0)
+            elif account.equity < 1000.0:
+                effective_notional_cap = max(self.max_notional_exposure_pct, 1500.0)
+            elif account.equity < 2500.0:
+                effective_notional_cap = max(self.max_notional_exposure_pct, 800.0)
+            else:
+                effective_notional_cap = self.max_notional_exposure_pct
+
+            if exposure_pct >= effective_notional_cap:
+                breaches.append(f"Max Notional Exposure reached ({exposure_pct:.1f}% >= {effective_notional_cap:.1f}%).")
 
         return {
             "passed": len(breaches) == 0,
