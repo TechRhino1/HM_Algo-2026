@@ -676,23 +676,36 @@ class DynamicRiskAndLevelsEngine:
                     mtf_data=mtf_data
                 )
                 if inst_res and isinstance(inst_res, dict):
+                    inst_entry = float(inst_res.get("entry_price", entry_price))
+                    inst_risk = float(inst_res.get("risk_dist", risk_dist))
+                    # Clamp institutional risk_dist to the asset-specific min_sl_dist floor
+                    clamped_risk = max(inst_risk, min_sl_dist)
+                    if tentative_bias == "BUY":
+                        clamped_sl = round(inst_entry - clamped_risk, digits)
+                    else:
+                        clamped_sl = round(inst_entry + clamped_risk, digits)
+
+                    inst_tp = float(inst_res.get("tp_price", tp_price))
+                    clamped_tp_dist = abs(inst_tp - inst_entry)
+                    clamped_rr = round(clamped_tp_dist / max(clamped_risk, 1e-9), 2)
+
                     return {
                         "bias": tentative_bias,
-                        "entry_price": inst_res.get("entry_price", entry_price),
-                        "sl_price": inst_res.get("sl_price", sl_price),
-                        "tp_price": inst_res.get("tp_price", tp_price),
+                        "entry_price": inst_entry,
+                        "sl_price": clamped_sl,
+                        "tp_price": inst_tp,
                         "tp1_price": inst_res.get("tp1_price", tp1_price),
                         "tp2_price": inst_res.get("tp2_price", tp2_price),
                         "tp3_price": inst_res.get("tp3_price", tp3_price),
-                        "risk_dist": inst_res.get("risk_dist", risk_dist),
-                        "tp_dist": inst_res.get("tp_dist", tp_dist),
-                        "rr_ratio": inst_res.get("rr_ratio", rr_ratio),
+                        "risk_dist": clamped_risk,
+                        "tp_dist": clamped_tp_dist,
+                        "rr_ratio": clamped_rr,
                         "first_target_price": inst_res.get("tp1_price", first_target_price),
                         "first_target_volume_pct": inst_res.get("first_target_volume_pct", first_target_volume_pct),
                         "runner_trail_distance_atr": inst_res.get("runner_trail_atr", runner_trail_distance_atr),
                         "entry_type": inst_res.get("entry_type", "INSTITUTIONAL"),
                         "protocol_details": inst_res.get("protocol_details", {}),
-                        "as_limit_price": inst_res.get("as_limit_price", entry_price if abs(inst_res.get("entry_price", entry_price) - c_price) > (pip_size * 0.5) else None)
+                        "as_limit_price": inst_res.get("as_limit_price", entry_price if abs(inst_entry - c_price) > (pip_size * 0.5) else None)
                     }
             except Exception as e:
                 logger.warning(f"InstitutionalEntryEngine execution failed: {e}. Falling back to baseline dynamic levels.")

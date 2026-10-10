@@ -755,7 +755,19 @@ class DecisionEngine:
         if is_index_asset:
             is_prime_session_valid = SessionEngine.is_index_prime_session(getattr(context, "timestamp", None))
         elif is_crypto:
-            is_prime_session_valid = (spread <= spec.typical_spread_pips * 1.20) or (ai_score >= 70.0)
+            # Enforce institutional advanced-trading skill §7/§11:
+            # Broker spread must never consume >= 20% of stop distance or ATR.
+            # On weekend / off-hours compression, block scalps where spread >= 0.25 * atr.
+            c_ts = getattr(context, "timestamp", None)
+            now_dt = c_ts if isinstance(c_ts, datetime) else datetime.now(timezone.utc)
+            is_weekend = now_dt.weekday() >= 5
+            atr_val = getattr(context.volatility, "atr", 0.0)
+            spread_dist = spread * spec.pip_size if spec.pip_size > 0 else 0.0
+            
+            if is_weekend and "SCALP" in t_style_check and atr_val > 0 and spread_dist > (0.25 * atr_val):
+                is_prime_session_valid = False
+            else:
+                is_prime_session_valid = (spread <= spec.typical_spread_pips * 1.20) or (ai_score >= 75.0)
         elif is_gold or is_oil_asset:
             is_prime_session_valid = True
         elif is_jpy:

@@ -172,6 +172,7 @@ class InstitutionalEntryEngine:
         # The floor is applied to the stop DISTANCE, then sl_price is derived from it,
         # so sl_price and risk_dist always describe the same level (on every branch).
         sl_buffer = spread_dist + (0.20 * m5_atr)
+        min_sl_floor = self._calculate_structural_sl_floor(context, m5_atr, spread_dist, trade_style="SCALP")
         if bias == "BUY":
             struct_sl = round(sweep_extreme - sl_buffer, digits)
             if struct_sl >= entry_price:
@@ -179,7 +180,7 @@ class InstitutionalEntryEngine:
                 sl_dist = (0.45 * m5_atr) + spread_dist
             else:
                 sl_dist = entry_price - struct_sl
-            sl_dist = max(sl_dist, pip_size * 5)
+            sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
             sl_price = round(entry_price - sl_dist, digits)
             risk_dist = abs(entry_price - sl_price)
         else:
@@ -188,7 +189,7 @@ class InstitutionalEntryEngine:
                 sl_dist = (0.45 * m5_atr) + spread_dist
             else:
                 sl_dist = struct_sl - entry_price
-            sl_dist = max(sl_dist, pip_size * 5)
+            sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
             sl_price = round(entry_price + sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
@@ -295,6 +296,7 @@ class InstitutionalEntryEngine:
         # so sl_price and risk_dist always describe the same level (on every branch).
         origin_swing = self._find_displacement_origin(df_h1, df_m15, context, bias)
         sl_buffer = spread_dist + (0.30 * h1_atr)
+        min_sl_floor = self._calculate_structural_sl_floor(context, h1_atr, spread_dist, trade_style="DAY_TRADING")
 
         if bias == "BUY":
             struct_sl = round(origin_swing - sl_buffer, digits)
@@ -302,7 +304,7 @@ class InstitutionalEntryEngine:
                 sl_dist = (0.80 * h1_atr) + spread_dist
             else:
                 sl_dist = entry_price - struct_sl
-            sl_dist = max(sl_dist, pip_size * 5)
+            sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
             sl_price = round(entry_price - sl_dist, digits)
             risk_dist = abs(entry_price - sl_price)
         else:
@@ -311,7 +313,7 @@ class InstitutionalEntryEngine:
                 sl_dist = (0.80 * h1_atr) + spread_dist
             else:
                 sl_dist = struct_sl - entry_price
-            sl_dist = max(sl_dist, pip_size * 5)
+            sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
             sl_price = round(entry_price + sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
@@ -411,6 +413,7 @@ class InstitutionalEntryEngine:
         # The floor is applied to the stop DISTANCE, then sl_price is derived from it,
         # so sl_price and risk_dist always describe the same level (on every branch).
         sl_buffer = spread_dist + (0.40 * d1_atr)
+        min_sl_floor = self._calculate_structural_sl_floor(context, d1_atr, spread_dist, trade_style="SWING")
         if bias == "BUY":
             outer_swing = range_low
             struct_sl = round(outer_swing - sl_buffer, digits)
@@ -418,7 +421,7 @@ class InstitutionalEntryEngine:
                 sl_dist = (1.20 * d1_atr) + spread_dist
             else:
                 sl_dist = entry_price - struct_sl
-            sl_dist = max(sl_dist, pip_size * 5)
+            sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
             sl_price = round(entry_price - sl_dist, digits)
             risk_dist = abs(entry_price - sl_price)
         else:
@@ -428,7 +431,7 @@ class InstitutionalEntryEngine:
                 sl_dist = (1.20 * d1_atr) + spread_dist
             else:
                 sl_dist = struct_sl - entry_price
-            sl_dist = max(sl_dist, pip_size * 5)
+            sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
             sl_price = round(entry_price + sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
@@ -790,6 +793,56 @@ class InstitutionalEntryEngine:
         elif bias == "SELL" and st.supply_zone[0] > 0:
             return float(st.supply_zone[0])
         return None
+
+    def _calculate_structural_sl_floor(
+        self,
+        context: MarketContext,
+        atr: float,
+        spread_dist: float,
+        trade_style: str = "SWING"
+    ) -> float:
+        """
+        Calculates asset-specific institutional stop loss floor (in price points).
+        Enforces advanced-trading skill rules:
+        - Broker spread must never consume >= 30% of stop distance (sl >= 3.5x spread)
+        - BTC floor: >= $650 ($450 on scalp) and >= 1.8x ATR
+        - ETH floor: >= $30.0 and >= 1.8x ATR
+        - SOL floor: >= $2.50
+        - ETHBTC floor: >= 0.00030
+        - Gold floor: >= $8.00 and >= 3.5x spread
+        - Silver floor: >= $0.35
+        - Oil floor: >= $0.65
+        - FX / Indices: >= 3.5x spread and >= 1.20x ATR
+        """
+        spec = resolve_symbol(context.symbol)
+        sym_name = str(context.symbol).upper()
+        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name)
+        is_silver = ("XAG" in sym_name) or ("SILVER" in sym_name)
+        is_oil = ("WTI" in sym_name) or ("OIL" in sym_name)
+        is_crypto = getattr(spec, "is_crypto", False) or (getattr(spec, "asset_class", "").upper() == "CRYPTO") or ("BTC" in sym_name) or ("ETH" in sym_name) or ("SOL" in sym_name)
+
+        min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
+        if is_gold:
+            min_sl_dist = max(min_sl_dist, 8.0)
+        elif is_silver:
+            min_sl_dist = max(min_sl_dist, 0.35)
+        elif is_oil:
+            min_sl_dist = max(min_sl_dist, 0.65)
+        elif is_crypto:
+            if "ETHBTC" in sym_name:
+                min_crypto_pts = max(3.5 * spread_dist, 0.00030)
+            elif "ETH" in sym_name:
+                min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, 30.0)
+            elif "BTC" in sym_name:
+                btc_base_floor = 450.0 if "SCALP" in trade_style.upper() else 650.0
+                min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, btc_base_floor)
+            elif "SOL" in sym_name:
+                min_crypto_pts = max(3.5 * spread_dist, 2.50)
+            else:
+                min_crypto_pts = max(3.5 * spread_dist, 2.50)
+            min_sl_dist = max(min_sl_dist, min_crypto_pts)
+
+        return float(min_sl_dist)
 
 
 INSTITUTIONAL_ENTRY_ENGINE = InstitutionalEntryEngine()
