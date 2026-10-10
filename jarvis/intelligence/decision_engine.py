@@ -808,24 +808,34 @@ class DecisionEngine:
                     elif not has_gold_sell_confluence:
                         gold_trend_following_valid = False
 
-        # 7. Crypto Macro Trend Filter: Prevent buying into severe macro bear downtrends or shorting macro bull runs
+        # 7. Crypto Macro Trend Filter & Liquidity Sweep Entry Guard
         crypto_macro_trend_valid = True
         if is_crypto:
             ts_val = float(getattr(context.momentum, "trend_score", 0.0)) if hasattr(context, "momentum") else 0.0
             adx_val = float(getattr(context.momentum, "adx", 20.0)) if hasattr(context, "momentum") else 20.0
             min_crypto_adx = 24.0
-            if adx_val < min_crypto_adx and not bool(getattr(context.structure, "choch", False)):
+            st_zone = getattr(context.structure, "discount_premium_zone", "EQUILIBRIUM")
+            has_sweep = bool(getattr(context.liquidity, "sweep_detected", False))
+            has_choch = bool(getattr(context.structure, "choch", False))
+
+            if adx_val < min_crypto_adx and not has_choch:
                 crypto_macro_trend_valid = False
             elif confluence_count < 2 or ai_score < 75.0:
                 crypto_macro_trend_valid = False
+            # Premature Entry Guard (SMC/ICT §4.1): In ranges or scalps, never BUY after expansion without a confirmed sweep or discount retracement
+            elif "SCALP" in t_style_check or "DAY" in t_style_check:
+                if tentative_bias == "BUY" and not (has_sweep or st_zone == "DISCOUNT" or has_choch):
+                    crypto_macro_trend_valid = False
+                elif tentative_bias == "SELL" and not (has_sweep or st_zone == "PREMIUM" or has_choch):
+                    crypto_macro_trend_valid = False
             elif tentative_bias == "BUY":
                 if regime.primary_regime in (MarketRegime.STRONG_TREND_BEAR, MarketRegime.TREND_BEAR) or ts_val <= -15.0:
-                    has_reversal = bool(getattr(context.structure, "choch", False) and getattr(context.liquidity, "sweep_detected", False))
+                    has_reversal = bool(has_choch and has_sweep)
                     if not (has_reversal and ai_score >= 82.0 and calibrated_win_p >= 0.65):
                         crypto_macro_trend_valid = False
             elif tentative_bias == "SELL":
                 if regime.primary_regime in (MarketRegime.STRONG_TREND_BULL, MarketRegime.TREND_BULL) or ts_val >= 15.0:
-                    has_reversal = bool(getattr(context.structure, "choch", False) and getattr(context.liquidity, "sweep_detected", False))
+                    has_reversal = bool(has_choch and has_sweep)
                     if not (has_reversal and ai_score >= 82.0 and calibrated_win_p >= 0.65):
                         crypto_macro_trend_valid = False
 

@@ -141,11 +141,13 @@ class InstitutionalEntryEngine:
         ref_entry = micro_fvg_ce if micro_fvg_ce is not None else ote_level
 
         # Passive Limit vs Sniper Immediate Entry inside Discount/Premium Zone
+        # RULE: Never market enter on a fakeout before the liquidity sweep completes!
+        # If no sweep has completed yet, order MUST be passive limit at discount pullback / FVG CE.
         if bias == "BUY":
             # For BUY: discount zone is <= eq_level
             passive_target = min(ref_entry, eq_level)
             dist_to_ref = abs(c_price - passive_target)
-            if dist_to_ref <= (0.15 * m5_atr) and c_price <= passive_target + (0.15 * m5_atr) and c_price <= eq_level:
+            if sweep_detected and dist_to_ref <= (0.15 * m5_atr) and c_price <= passive_target + (0.15 * m5_atr) and c_price <= eq_level:
                 entry_type = "SNIPER_IMMEDIATE"
                 entry_price = round(context.ask, digits)
             elif micro_fvg_ce is not None and abs(c_price - micro_fvg_ce) < abs(c_price - ote_level):
@@ -158,7 +160,7 @@ class InstitutionalEntryEngine:
             # For SELL: premium zone is >= eq_level
             passive_target = max(ref_entry, eq_level)
             dist_to_ref = abs(c_price - passive_target)
-            if dist_to_ref <= (0.15 * m5_atr) and c_price >= passive_target - (0.15 * m5_atr) and c_price >= eq_level:
+            if sweep_detected and dist_to_ref <= (0.15 * m5_atr) and c_price >= passive_target - (0.15 * m5_atr) and c_price >= eq_level:
                 entry_type = "SNIPER_IMMEDIATE"
                 entry_price = round(context.bid, digits)
             elif micro_fvg_ce is not None and abs(c_price - micro_fvg_ce) < abs(c_price - ote_level):
@@ -279,9 +281,10 @@ class InstitutionalEntryEngine:
         if ref_entry is None:
             ref_entry = c_price
 
-        # Check proximity to refinement level
+        # Proximity to refinement level: Enter passive limit at FVG/Breaker unless already filled into discount/premium
         dist_to_ref = abs(c_price - ref_entry)
-        if dist_to_ref <= (0.35 * h1_atr):
+        is_favorable_fill = (bias == "BUY" and c_price <= ref_entry) or (bias == "SELL" and c_price >= ref_entry)
+        if dist_to_ref <= (0.15 * h1_atr) and is_favorable_fill:
             if in_kill_zone:
                 entry_type = "KILL_ZONE_SNIPER"
             else:
@@ -618,28 +621,42 @@ class InstitutionalEntryEngine:
             opens = df["open"].values.astype(float)
             closes = df["close"].values.astype(float)
 
-            # Check the last 1-3 bars for sweep of the prior 5 bars
-            sweep_window = slice(-bars - 1, -1)
-            prev_low = float(np.min(lows[sweep_window]))
-            prev_high = float(np.max(highs[sweep_window]))
+            # Check the last 1 to 3 completed bars for a sweep of the prior base window
+            base_window = slice(-bars - 3, -3) if len(lows) >= (bars + 4) else slice(-bars - 1, -1)
+            prev_low = float(np.min(lows[base_window]))
+            prev_high = float(np.max(highs[base_window]))
 
-            last_low = float(lows[-1])
-            last_high = float(highs[-1])
-            last_open = float(opens[-1])
-            last_close = float(closes[-1])
-            bar_range = max(last_high - last_low, 1e-6)
+            sweep_found = False
+            best_extreme = 0.0
+            rejection_found = False
 
-            if bias == "BUY":
-                # Swept below prior swing low, but closed back above or created lower rejection wick
-                swept = (last_low < prev_low)
-                lower_wick = min(last_open, last_close) - last_low
-                rejection = (lower_wick / bar_range) >= 0.25 or (last_close > prev_low)
-                return swept and rejection, last_low, rejection
-            else:
-                swept = (last_high > prev_high)
-                upper_wick = last_high - max(last_open, last_close)
-                rejection = (upper_wick / bar_range) >= 0.25 or (last_close < prev_high)
-                return swept and rejection, last_high, rejection
+            # Inspect last 3 bars (from -3 to -1)
+            for idx in range(-min(3, len(lows) - 2), 0):
+                c_low = float(lows[idx])
+                c_high = float(highs[idx])
+                c_open = float(opens[idx])
+                c_close = float(closes[idx])
+                bar_range = max(c_high - c_low, 1e-6)
+
+                if bias == "BUY":
+                    # Swept below prior swing low, but closed back above or created lower rejection wick
+                    swept = (c_low < prev_low)
+                    lower_wick = min(c_open, c_close) - c_low
+                    rejection = (lower_wick / bar_range) >= 0.25 or (c_close > prev_low)
+                    if swept and rejection:
+                        sweep_found = True
+                        best_extreme = min(best_extreme, c_low) if best_extreme > 0 else c_low
+                        rejection_found = True
+                else:
+                    swept = (c_high > prev_high)
+                    upper_wick = c_high - max(c_open, c_close)
+                    rejection = (upper_wick / bar_range) >= 0.25 or (c_close < prev_high)
+                    if swept and rejection:
+                        sweep_found = True
+                        best_extreme = max(best_extreme, c_high) if best_extreme > 0 else c_high
+                        rejection_found = True
+
+            return sweep_found, (best_extreme if sweep_found else (prev_low if bias == "BUY" else prev_high)), rejection_found
         except Exception:
             return False, 0.0, False
 
