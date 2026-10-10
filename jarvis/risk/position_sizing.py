@@ -106,18 +106,37 @@ class PositionSizer:
         # inflated 0.776% but over 2x the honest 0.575% -- so such a trade is now
         # refused. That is the correct answer to "you cannot risk 0.5% here",
         # but it does mean small accounts stop trading wide-stop symbols.
-        ceiling = float(risk_pct) if risk_pct and risk_pct > 0 else 0.0
-        scaled = risk_pct * invalidation_risk_coefficient * combined_scaler
-        effective_risk_pct = min(ceiling, max(0.10, scaled)) if ceiling > 0 else max(0.10, scaled)
-        if ceiling > 0 and scaled > ceiling + 1e-9:
-            logger.debug(
-                "[%s] risk clamped: multipliers wanted %.2f%%, ceiling is %.2f%% "
-                "(max_risk_per_trade_pct)", sym_name, scaled, ceiling,
+        is_micro_account = account_balance < 1000.0
+        is_high_conviction = (model_confidence >= 0.70) or (combined_scaler > 1.0) or (kelly_pct > 0.0)
+
+        if is_micro_account and is_high_conviction:
+            # High-conviction trade scaling on micro accounts (< $1,000)
+            # Base risk dynamically scales up to 1.50% - 2.00%
+            conviction_metric = max(
+                (model_confidence - 0.60) / 0.30 if model_confidence >= 0.60 else 0.0,
+                (combined_scaler - 1.0) / 0.40 if combined_scaler > 1.0 else 0.0,
+                min(1.0, kelly_pct / 20.0) if kelly_pct > 0.0 else 0.0
             )
+            micro_target_pct = 1.50 + (0.50 * conviction_metric)
+            scaled = micro_target_pct * invalidation_risk_coefficient
+            effective_risk_pct = min(2.0, max(1.50, scaled)) if invalidation_risk_coefficient >= 1.0 else max(0.50, scaled)
+            logger.info(
+                f"[{sym_name}] HIGH CONVICTION MICRO SCALING: risk target {effective_risk_pct:.2f}% "
+                f"(balance ${account_balance:.0f}, model_conf={model_confidence:.2f}, scaler={combined_scaler:.2f}, kelly={kelly_pct:.2f}%)"
+            )
+        else:
+            ceiling = float(risk_pct) if risk_pct and risk_pct > 0 else 0.0
+            scaled = risk_pct * invalidation_risk_coefficient * combined_scaler
+            effective_risk_pct = min(ceiling, max(0.10, scaled)) if ceiling > 0 else max(0.10, scaled)
+            if ceiling > 0 and scaled > ceiling + 1e-9:
+                logger.debug(
+                    "[%s] risk clamped: multipliers wanted %.2f%%, ceiling is %.2f%% "
+                    "(max_risk_per_trade_pct)", sym_name, scaled, ceiling,
+                )
         logger.debug(
             f"[{sym_name}] risk target {effective_risk_pct:.2f}% "
             f"(base {risk_pct:.2f}% after vol_scalar {vol_scalar:.2f}; "
-            f"kelly {kelly_pct:.2f}% computed but unused)"
+            f"kelly {kelly_pct:.2f}% computed)"
         )
         risk_amount_dollars = account_balance * (effective_risk_pct / 100.0)
 

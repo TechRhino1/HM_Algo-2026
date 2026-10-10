@@ -34,7 +34,9 @@ class IndiaOptionsEngine:
         """
         sym = (symbol or "NIFTY").upper().strip()
         profile = get_india_profile(sym)
-        base_price = float(profile.get("base_price", 1000.0))
+        base_price = float(profile.get("price") or profile.get("base_price", 1000.0))
+        if base_price <= 0:
+            base_price = float(profile.get("base_price", 1000.0))
         lot_size = NSE_RULES.get_lot_size(sym)
         strike_step = NSE_RULES.get_strike_step(sym, base_price)
         expiry_info = NSE_RULES.get_expiry_schedule(sym)
@@ -280,7 +282,9 @@ class IndiaOptionsEngine:
         Calculates SEBI SPAN + Exposure gross margin, hedge margin benefit, and net margin.
         """
         profile = get_india_profile(symbol)
-        spot = float(profile.get("base_price", 1000.0))
+        spot = float(profile.get("price") or profile.get("base_price", 1000.0))
+        if spot <= 0:
+            spot = float(profile.get("base_price", 1000.0))
         lot_size = NSE_RULES.get_lot_size(symbol)
         expiry_info = NSE_RULES.get_expiry_schedule(symbol)
         days_to_expiry = max(0.5, float(expiry_info["days_to_expiry"]))

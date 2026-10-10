@@ -189,7 +189,49 @@ class DynamicRiskAndLevelsEngine:
 
         # 2. Dynamic Structural Stop Loss & Entry Calculation
         if tentative_bias == "BUY":
-            entry_price = round(context.ask, digits)
+            # Determine impulse swing boundaries for OTE retracement
+            sw_low = float(getattr(st, "swing_low", 0.0) or 0.0)
+            candidate_lows = [sw_low] if 0 < sw_low < c_price else []
+            if st.demand_zone[0] > 0 and st.demand_zone[0] < c_price:
+                candidate_lows.append(float(st.demand_zone[0]))
+            if st.demand_zone[1] > 0 and st.demand_zone[1] < c_price:
+                candidate_lows.append(float(st.demand_zone[1]))
+            for ob in getattr(st, "order_blocks", []):
+                if ob.get("type") == "BULLISH_ORDER_BLOCK" and 0 < ob.get("low", 0) < c_price and not ob.get("mitigated", False):
+                    candidate_lows.append(float(ob["low"]))
+            ch_low = float(getattr(st, "channel_lower", 0.0) or 0.0)
+            if 0 < ch_low < c_price:
+                candidate_lows.append(ch_low)
+
+            ref_low = max(candidate_lows) if candidate_lows else (c_price - (1.5 * atr))
+            sw_high = float(getattr(st, "swing_high", 0.0) or 0.0)
+            ref_high = max(c_price, sw_high if sw_high > 0 else c_price)
+            leg_range = max(ref_high - ref_low, atr * 0.5)
+
+            # 62% - 70.5% OTE retracement (midpoint 66%)
+            ote_calc = ref_high - (leg_range * 0.66)
+
+            # Check for Bullish Fair Value Gap Consequent Encroachment (50% midpoint)
+            fvg_ce = None
+            for fvg in getattr(st, "fair_value_gaps", []):
+                if fvg.get("type") == "BULLISH_FVG" and not fvg.get("mitigated", False):
+                    top = float(fvg.get("top", 0))
+                    bot = float(fvg.get("bottom", 0))
+                    if top > bot > 0 and bot < c_price:
+                        fvg_ce = (top + bot) / 2.0
+                        break
+
+            eq_price = ref_low + (0.50 * leg_range)
+            if fvg_ce is not None and fvg_ce <= eq_price and fvg_ce < c_price:
+                ote_entry = fvg_ce
+            else:
+                ote_entry = min(ote_calc, eq_price)
+
+            # Only use live ask if current price is ALREADY inside the discount/equilibrium zone
+            if c_price <= (ote_entry + (0.15 * atr)) and c_price <= eq_price:
+                entry_price = round(context.ask, digits)
+            else:
+                entry_price = round(ote_entry, digits)
 
             # Support anchors strictly below entry
             candidate_anchors: List[float] = []
@@ -358,7 +400,49 @@ class DynamicRiskAndLevelsEngine:
                 tp3_price = round(entry_price + (risk_dist * tp3_mult), digits)
 
         elif tentative_bias == "SELL":
-            entry_price = round(context.bid, digits)
+            # Determine impulse swing boundaries for OTE retracement
+            sw_high = float(getattr(st, "swing_high", 0.0) or 0.0)
+            candidate_highs = [sw_high] if sw_high > c_price else []
+            if st.supply_zone[0] > c_price:
+                candidate_highs.append(float(st.supply_zone[0]))
+            if st.supply_zone[1] > c_price:
+                candidate_highs.append(float(st.supply_zone[1]))
+            for ob in getattr(st, "order_blocks", []):
+                if ob.get("type") == "BEARISH_ORDER_BLOCK" and ob.get("high", 0) > c_price and not ob.get("mitigated", False):
+                    candidate_highs.append(float(ob["high"]))
+            ch_high = float(getattr(st, "channel_upper", 0.0) or 0.0)
+            if ch_high > c_price:
+                candidate_highs.append(ch_high)
+
+            ref_high = min(candidate_highs) if candidate_highs else (c_price + (1.5 * atr))
+            sw_low = float(getattr(st, "swing_low", 0.0) or 0.0)
+            ref_low = min(c_price, sw_low if sw_low > 0 else c_price)
+            leg_range = max(ref_high - ref_low, atr * 0.5)
+
+            # 62% - 70.5% OTE retracement (midpoint 66%)
+            ote_calc = ref_low + (leg_range * 0.66)
+
+            # Check for Bearish Fair Value Gap Consequent Encroachment (50% midpoint)
+            fvg_ce = None
+            for fvg in getattr(st, "fair_value_gaps", []):
+                if fvg.get("type") == "BEARISH_FVG" and not fvg.get("mitigated", False):
+                    top = float(fvg.get("top", 0))
+                    bot = float(fvg.get("bottom", 0))
+                    if top > bot > 0 and top > c_price:
+                        fvg_ce = (top + bot) / 2.0
+                        break
+
+            eq_price = ref_low + (0.50 * leg_range)
+            if fvg_ce is not None and fvg_ce >= eq_price and fvg_ce > c_price:
+                ote_entry = fvg_ce
+            else:
+                ote_entry = max(ote_calc, eq_price)
+
+            # Only use live bid if current price is ALREADY inside the premium/equilibrium zone
+            if c_price >= (ote_entry - (0.15 * atr)) and c_price >= eq_price:
+                entry_price = round(context.bid, digits)
+            else:
+                entry_price = round(ote_entry, digits)
 
             # Resistance anchors strictly above entry
             candidate_anchors = []
@@ -577,7 +661,8 @@ class DynamicRiskAndLevelsEngine:
             "first_target_volume_pct": first_target_volume_pct,
             "runner_trail_distance_atr": runner_trail_distance_atr,
             "entry_type": "DYNAMIC_STRUCTURAL",
-            "protocol_details": {"protocol": "BASELINE_DYNAMIC_LEVELS"}
+            "protocol_details": {"protocol": "BASELINE_DYNAMIC_LEVELS"},
+            "as_limit_price": entry_price if abs(entry_price - c_price) > (pip_size * 0.5) else None
         }
 
         # Seamless Institutional Entry Engine Integration
@@ -606,7 +691,8 @@ class DynamicRiskAndLevelsEngine:
                         "first_target_volume_pct": inst_res.get("first_target_volume_pct", first_target_volume_pct),
                         "runner_trail_distance_atr": inst_res.get("runner_trail_atr", runner_trail_distance_atr),
                         "entry_type": inst_res.get("entry_type", "INSTITUTIONAL"),
-                        "protocol_details": inst_res.get("protocol_details", {})
+                        "protocol_details": inst_res.get("protocol_details", {}),
+                        "as_limit_price": inst_res.get("as_limit_price", entry_price if abs(inst_res.get("entry_price", entry_price) - c_price) > (pip_size * 0.5) else None)
                     }
             except Exception as e:
                 logger.warning(f"InstitutionalEntryEngine execution failed: {e}. Falling back to baseline dynamic levels.")

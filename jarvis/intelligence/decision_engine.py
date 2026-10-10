@@ -333,6 +333,7 @@ class DecisionEngine:
         trade_style: str = "SWING",
         account_balance: float = 10000.0,
         risk_per_trade_pct: float = 0.5,
+        mtf_data: Optional[Dict[str, Any]] = None,
     ):
         st = context.structure
         c_price = context.current_price
@@ -384,7 +385,8 @@ class DecisionEngine:
             # position sizing and risk being wrong on small accounts.
             account_balance=float(account_balance or 10000.0),
             risk_per_trade_pct=float(risk_per_trade_pct or 0.5),
-            trade_style=style
+            trade_style=style,
+            mtf_data=mtf_data
         )
 
         return LevelsResult(
@@ -982,6 +984,7 @@ class DecisionEngine:
             context, regime, analyst_reports, trade_style=style,
             account_balance=account_balance,
             risk_per_trade_pct=risk_per_trade_pct,
+            mtf_data=mtf_data,
         )
         (
             tentative_bias, entry_price, sl_price, tp_price,
@@ -1563,16 +1566,17 @@ class DecisionEngine:
         cur_mkt_price = getattr(context, "current_price", entry_price)
         price_diff = abs(entry_price - cur_mkt_price)
         spec_info = resolve_symbol(context.symbol)
-        tolerance_pip = spec_info.pip_size * 2.0 if hasattr(spec_info, "pip_size") else 0.0002
+        tolerance_pip = (spec_info.pip_size * 0.5) if hasattr(spec_info, "pip_size") and spec_info.pip_size > 0 else 0.00005
 
         order_type_decision = "MARKET"
-        if price_diff > tolerance_pip:
-            if best_strategy in ("LIQUIDITY_SWEEP_REVERSAL", "CHOCH_STRUCTURAL_REVERSAL", "TREND_PULLBACK", "RANGE_MEAN_REVERSION"):
-                order_type_decision = "LIMIT"
-            elif tentative_bias == "BUY" and entry_price < cur_mkt_price:
-                order_type_decision = "LIMIT"
-            elif tentative_bias == "SELL" and entry_price > cur_mkt_price:
-                order_type_decision = "LIMIT"
+        if tentative_bias == "BUY" and entry_price < (cur_mkt_price - tolerance_pip):
+            order_type_decision = "LIMIT"
+        elif tentative_bias == "SELL" and entry_price > (cur_mkt_price + tolerance_pip):
+            order_type_decision = "LIMIT"
+        elif price_diff > tolerance_pip and best_strategy in (
+            "LIQUIDITY_SWEEP_REVERSAL", "CHOCH_STRUCTURAL_REVERSAL", "TREND_PULLBACK", "RANGE_MEAN_REVERSION"
+        ):
+            order_type_decision = "LIMIT"
 
         return DecisionObject(
             symbol=context.symbol,

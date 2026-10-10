@@ -118,7 +118,7 @@ class InstitutionalEntryEngine:
                 sw_high = getattr(context.structure, "swing_high", 0.0)
                 cand_high = context.liquidity.buy_side_liquidity if context.liquidity.buy_side_liquidity > c_price else (sw_high if sw_high > c_price else c_price + (m5_atr * 1.5))
                 sweep_extreme = cand_high
-            rejection_wick = True
+            rejection_wick = False
 
         # 3. Market Structure Shift (MSS) with Displacement Body Ratio
         has_mss, disp_ratio, disp_low, disp_high = self._detect_mss_displacement(df_m5 if df_m5 is not None and len(df_m5) >= 5 else df_m1, bias)
@@ -129,6 +129,7 @@ class InstitutionalEntryEngine:
         # 4. Entry Refinement: OTE (61.8% - 70.5%) or Micro-FVG CE (50%)
         ote_pct = 0.66  # Midpoint between 61.8% and 70.5%
         disp_range = max(disp_high - disp_low, 1e-6)
+        eq_level = disp_low + (disp_range * 0.50)
         if bias == "BUY":
             ote_level = disp_high - (disp_range * ote_pct)
         else:
@@ -139,17 +140,33 @@ class InstitutionalEntryEngine:
 
         ref_entry = micro_fvg_ce if micro_fvg_ce is not None else ote_level
 
-        # Sniper entry check: if already within 0.20x ATR, trigger immediate sniper entry
-        dist_to_ref = abs(c_price - ref_entry)
-        if dist_to_ref <= (0.20 * m5_atr):
-            entry_type = "SNIPER_IMMEDIATE"
-            entry_price = round(context.ask if bias == "BUY" else context.bid, digits)
-        elif micro_fvg_ce is not None and abs(c_price - micro_fvg_ce) < abs(c_price - ote_level):
-            entry_type = "MICRO_FVG_CE"
-            entry_price = round(micro_fvg_ce, digits)
+        # Passive Limit vs Sniper Immediate Entry inside Discount/Premium Zone
+        if bias == "BUY":
+            # For BUY: discount zone is <= eq_level
+            passive_target = min(ref_entry, eq_level)
+            dist_to_ref = abs(c_price - passive_target)
+            if dist_to_ref <= (0.15 * m5_atr) and c_price <= passive_target + (0.15 * m5_atr) and c_price <= eq_level:
+                entry_type = "SNIPER_IMMEDIATE"
+                entry_price = round(context.ask, digits)
+            elif micro_fvg_ce is not None and abs(c_price - micro_fvg_ce) < abs(c_price - ote_level):
+                entry_type = "MICRO_FVG_CE"
+                entry_price = round(min(passive_target, c_price - spread_dist), digits)
+            else:
+                entry_type = "OTE_REFINED"
+                entry_price = round(min(passive_target, c_price - spread_dist), digits)
         else:
-            entry_type = "OTE_REFINED"
-            entry_price = round(ote_level, digits)
+            # For SELL: premium zone is >= eq_level
+            passive_target = max(ref_entry, eq_level)
+            dist_to_ref = abs(c_price - passive_target)
+            if dist_to_ref <= (0.15 * m5_atr) and c_price >= passive_target - (0.15 * m5_atr) and c_price >= eq_level:
+                entry_type = "SNIPER_IMMEDIATE"
+                entry_price = round(context.bid, digits)
+            elif micro_fvg_ce is not None and abs(c_price - micro_fvg_ce) < abs(c_price - ote_level):
+                entry_type = "MICRO_FVG_CE"
+                entry_price = round(max(passive_target, c_price + spread_dist), digits)
+            else:
+                entry_type = "OTE_REFINED"
+                entry_price = round(max(passive_target, c_price + spread_dist), digits)
 
         # 5. Structural SL: Sweep wick extreme +/- (1.0x spread + 0.20x M5 ATR)
         # The floor is applied to the stop DISTANCE, then sl_price is derived from it,
