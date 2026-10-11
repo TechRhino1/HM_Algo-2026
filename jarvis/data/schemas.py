@@ -129,6 +129,7 @@ class LiquidityContext:
     liquidity_pools: List[Dict[str, Any]] = field(default_factory=list)
     buy_side_liquidity: float = 0.0
     sell_side_liquidity: float = 0.0
+    bars_since_sweep: int = -1
 
 @dataclass
 class VolatilityContext:
@@ -189,6 +190,7 @@ class MarketContext:
     # only: it feeds TRADE_DB.log_trade and UI strings, never a gate, stop or
     # size. `None` means the feed carried no spread column (or it was unusable).
     live_spread_pips: Optional[float] = None
+    candlestick_pattern: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class RegimeOutput:

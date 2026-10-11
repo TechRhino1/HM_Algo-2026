@@ -70,6 +70,7 @@ class MasterConfluenceEngine:
         mo = getattr(context, "momentum", None)
         vol = getattr(context, "volatility", None)
         sess = getattr(context, "session", None)
+        pa = getattr(context, "candlestick_pattern", {}) or {}
         df = self._primary_frame(mtf_data)
 
         try:
@@ -86,6 +87,17 @@ class MasterConfluenceEngine:
             if getattr(st, "bos", False): wyck += 6
             if getattr(st, "choch", False): wyck += 4
             if getattr(st, "bias", "NEUTRAL") != "NEUTRAL": wyck += 2
+            
+            # Candlestick Price Action & VSA Confirmation
+            if pa.get("pattern_detected", False):
+                p_name = pa.get("pattern_name", "")
+                p_conf = float(pa.get("confidence", 0.0))
+                p_vol = float(pa.get("volume_ratio", 1.0))
+                if pa.get("volume_confirmed", False) or p_vol >= 1.3:
+                    wyck += 4
+                else:
+                    wyck += 2
+                details["candlestick"] = f"{p_name} (conf={p_conf:.2f}, vol={p_vol:.1f}x)"
         except Exception:
             logger.warning("master_confluence: wyckoff/ICT scoring failed; scored 0", exc_info=True)
             wyck = 0
@@ -191,6 +203,9 @@ class MasterConfluenceEngine:
             bullish = sum(1 for v in mtf_align.values() if v == "BULLISH")
             bearish = sum(1 for v in mtf_align.values() if v == "BEARISH")
             if max(bullish, bearish) >= 3 and (has_fvg or has_ob): triple += 4
+            if pa.get("at_support_resistance", False):
+                triple += 3
+                details["sr_proximity"] = f"near {pa.get('key_level_type')} @ {pa.get('nearest_level')}"
             if has_fvg and has_ob and has_breaker: triple = 20
         except Exception:
             logger.warning("master_confluence: triple confluence scoring failed; scored 0", exc_info=True)

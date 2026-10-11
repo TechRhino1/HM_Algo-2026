@@ -140,14 +140,17 @@ class InstitutionalEntryEngine:
 
         ref_entry = micro_fvg_ce if micro_fvg_ce is not None else ote_level
 
+        pa_info = getattr(context, "candlestick_pattern", {}) or {}
+        has_candlestick_trigger = bool(pa_info.get("pattern_detected", False) and pa_info.get("bias") == bias)
+
         # Passive Limit vs Sniper Immediate Entry inside Discount/Premium Zone
         # RULE: Never market enter on a fakeout before the liquidity sweep completes!
         # If no sweep has completed yet, order MUST be passive limit at discount pullback / FVG CE.
         if bias == "BUY":
             # For BUY: discount zone is <= eq_level
-            passive_target = min(ref_entry, eq_level)
+            passive_target = min(ref_entry, eq_level) if not has_candlestick_trigger else ref_entry
             dist_to_ref = abs(c_price - passive_target)
-            if sweep_detected and dist_to_ref <= (0.15 * m5_atr) and c_price <= passive_target + (0.15 * m5_atr) and c_price <= eq_level:
+            if sweep_detected and (dist_to_ref <= (0.25 * m5_atr) or has_candlestick_trigger) and (c_price <= eq_level + (0.50 * m5_atr) or has_candlestick_trigger):
                 entry_type = "SNIPER_IMMEDIATE"
                 entry_price = round(context.ask, digits)
             elif micro_fvg_ce is not None and abs(c_price - micro_fvg_ce) < abs(c_price - ote_level):
@@ -158,9 +161,9 @@ class InstitutionalEntryEngine:
                 entry_price = round(min(passive_target, c_price - spread_dist), digits)
         else:
             # For SELL: premium zone is >= eq_level
-            passive_target = max(ref_entry, eq_level)
+            passive_target = max(ref_entry, eq_level) if not has_candlestick_trigger else ref_entry
             dist_to_ref = abs(c_price - passive_target)
-            if sweep_detected and dist_to_ref <= (0.15 * m5_atr) and c_price >= passive_target - (0.15 * m5_atr) and c_price >= eq_level:
+            if sweep_detected and (dist_to_ref <= (0.25 * m5_atr) or has_candlestick_trigger) and (c_price >= eq_level - (0.50 * m5_atr) or has_candlestick_trigger):
                 entry_type = "SNIPER_IMMEDIATE"
                 entry_price = round(context.bid, digits)
             elif micro_fvg_ce is not None and abs(c_price - micro_fvg_ce) < abs(c_price - ote_level):

@@ -598,7 +598,23 @@ class DecisionEngine:
 
         # Risk-Reward minimum & SL multiplier (adapted to trade horizon)
         t_style_check = (getattr(context, "trade_style", None) or getattr(context, "style", "SWING") or "SWING").upper()
-        if "SCALP" in t_style_check:
+        if is_crypto:
+            min_rr = 1.6 if "SCALP" in t_style_check else (1.8 if is_micro_mode else 2.0)
+            min_sl_atr_mult = 0.25 if "SCALP" in t_style_check else (0.40 if is_micro_mode else 0.50)
+            max_spread = spec.max_spread_pips * 0.95
+        elif is_gold:
+            min_rr = 1.4 if "SCALP" in t_style_check else (1.6 if is_micro_mode else 1.8)
+            min_sl_atr_mult = 0.25 if "SCALP" in t_style_check else (0.40 if is_micro_mode else 0.45)
+            max_spread = spec.max_spread_pips
+        elif any(k in sym_name for k in ["US500", "NAS100", "US30", "SPX", "NDX"]):
+            min_rr = 1.4 if "SCALP" in t_style_check else 1.8
+            min_sl_atr_mult = 0.25 if "SCALP" in t_style_check else 0.35
+            max_spread = spec.max_spread_pips * 0.90
+        elif is_jpy:
+            min_rr = 1.4 if "SCALP" in t_style_check else 1.8
+            min_sl_atr_mult = 0.25 if "SCALP" in t_style_check else 0.45
+            max_spread = spec.max_spread_pips
+        elif "SCALP" in t_style_check:
             min_rr = 1.3
             min_sl_atr_mult = 0.20
             max_spread = spec.max_spread_pips
@@ -609,25 +625,9 @@ class DecisionEngine:
         elif is_micro_mode:
             min_rr = 1.5
             min_sl_atr_mult = 0.35
-            max_spread = min(3.0, spec.max_spread_pips * 0.8)
+            max_spread = min(3.5, spec.max_spread_pips * 0.8) if _is_forex(context.symbol) else spec.max_spread_pips * 0.85
             if current_drawdown_pct > 5.0:
                 min_score = max(min_score, 74.0)
-        elif is_gold:
-            min_rr = 1.8
-            min_sl_atr_mult = 0.45
-            max_spread = spec.max_spread_pips
-        elif is_crypto:
-            min_rr = 2.0
-            min_sl_atr_mult = 0.50
-            max_spread = spec.max_spread_pips * 0.95
-        elif any(k in sym_name for k in ["US500", "NAS100", "US30", "SPX", "NDX"]):
-            min_rr = 1.8
-            min_sl_atr_mult = 0.35
-            max_spread = spec.max_spread_pips * 0.90
-        elif is_jpy:
-            min_rr = 1.8
-            min_sl_atr_mult = 0.45
-            max_spread = spec.max_spread_pips
         else:  # Forex Majors
             min_rr = 1.7  # Calibrated for XM Ultra Low tight spreads
             min_sl_atr_mult = 0.40
@@ -764,10 +764,10 @@ class DecisionEngine:
             atr_val = getattr(context.volatility, "atr", 0.0)
             spread_dist = spread * spec.pip_size if spec.pip_size > 0 else 0.0
             
-            if is_weekend and "SCALP" in t_style_check and atr_val > 0 and spread_dist > (0.25 * atr_val):
+            if is_weekend and "SCALP" in t_style_check and atr_val > 0 and spread_dist > (0.65 * atr_val):
                 is_prime_session_valid = False
             else:
-                is_prime_session_valid = (spread <= spec.typical_spread_pips * 1.20) or (ai_score >= 75.0)
+                is_prime_session_valid = (spread <= spec.max_spread_pips) or (ai_score >= 70.0)
         elif is_gold or is_oil_asset:
             is_prime_session_valid = True
         elif is_jpy:
@@ -817,16 +817,22 @@ class DecisionEngine:
             st_zone = getattr(context.structure, "discount_premium_zone", "EQUILIBRIUM")
             has_sweep = bool(getattr(context.liquidity, "sweep_detected", False))
             has_choch = bool(getattr(context.structure, "choch", False))
+            has_bos = bool(getattr(context.structure, "bos", False))
 
-            if adx_val < min_crypto_adx and not has_choch:
+            if adx_val < min_crypto_adx and not has_choch and not has_sweep:
                 crypto_macro_trend_valid = False
             elif confluence_count < 2 or ai_score < 75.0:
                 crypto_macro_trend_valid = False
-            # Premature Entry Guard (SMC/ICT §4.1): In ranges or scalps, never BUY after expansion without a confirmed sweep or discount retracement
+            # Premature Entry Guard (SMC/ICT §4.1): In ranges or scalps, allow entry on sweep, discount/equilibrium, choch, breakout expansion, or candlestick pattern
             elif "SCALP" in t_style_check or "DAY" in t_style_check:
-                if tentative_bias == "BUY" and not (has_sweep or st_zone == "DISCOUNT" or has_choch):
+                vol_state = getattr(context.volatility, "state", "NORMAL") if hasattr(context, "volatility") else "NORMAL"
+                is_breakout_expansion = (has_bos and (adx_val >= 22.0 or vol_state in ("EXPANSION", "EXTREME")))
+                pa_info = getattr(context, "candlestick_pattern", {}) or {}
+                has_pa = bool(pa_info.get("pattern_detected", False) and pa_info.get("bias") == tentative_bias)
+
+                if tentative_bias == "BUY" and not (has_sweep or st_zone in ("DISCOUNT", "EQUILIBRIUM") or has_choch or is_breakout_expansion or has_pa):
                     crypto_macro_trend_valid = False
-                elif tentative_bias == "SELL" and not (has_sweep or st_zone == "PREMIUM" or has_choch):
+                elif tentative_bias == "SELL" and not (has_sweep or st_zone in ("PREMIUM", "EQUILIBRIUM") or has_choch or is_breakout_expansion or has_pa):
                     crypto_macro_trend_valid = False
             elif tentative_bias == "BUY":
                 if regime.primary_regime in (MarketRegime.STRONG_TREND_BEAR, MarketRegime.TREND_BEAR) or ts_val <= -15.0:
@@ -1360,9 +1366,10 @@ class DecisionEngine:
             elif tentative_bias == "SELL" and st.discount_premium_zone == "DISCOUNT" and trend_score_val > -65:
                 premium_discount_valid = False
         elif is_crypto_sym:
-            if tentative_bias == "BUY" and st.discount_premium_zone == "PREMIUM" and trend_score_val < 45:
+            has_crypto_breakout = bool(st.bos or getattr(context.liquidity, "sweep_detected", False) or getattr(context, "candlestick_pattern", {}).get("pattern_detected", False))
+            if tentative_bias == "BUY" and st.discount_premium_zone == "PREMIUM" and trend_score_val < 45 and not has_crypto_breakout:
                 premium_discount_valid = False
-            elif tentative_bias == "SELL" and st.discount_premium_zone == "DISCOUNT" and trend_score_val > -45:
+            elif tentative_bias == "SELL" and st.discount_premium_zone == "DISCOUNT" and trend_score_val > -45 and not has_crypto_breakout:
                 premium_discount_valid = False
         elif is_index_sym:
             if tentative_bias == "BUY" and st.discount_premium_zone == "PREMIUM" and trend_score_val < 40:

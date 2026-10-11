@@ -14,6 +14,7 @@ from jarvis.market.volatility import VolatilityEngine
 from jarvis.market.momentum import MomentumEngine
 from jarvis.market.sessions import SessionEngine
 from jarvis.intelligence.order_flow import InstitutionalVolumeOrderFlowEngine
+from jarvis.market.candlestick_patterns import CandlestickPriceActionEngine
 
 class MarketContextEngine:
     def __init__(
@@ -22,13 +23,15 @@ class MarketContextEngine:
         liquidity_engine: Optional[LiquidityEngine] = None,
         volatility_engine: Optional[VolatilityEngine] = None,
         momentum_engine: Optional[MomentumEngine] = None,
-        order_flow_engine: Optional[InstitutionalVolumeOrderFlowEngine] = None
+        order_flow_engine: Optional[InstitutionalVolumeOrderFlowEngine] = None,
+        candlestick_engine: Optional[CandlestickPriceActionEngine] = None
     ):
         self.structure_engine = structure_engine or MarketStructureEngine()
         self.liquidity_engine = liquidity_engine or LiquidityEngine()
         self.volatility_engine = volatility_engine or VolatilityEngine()
         self.momentum_engine = momentum_engine or MomentumEngine()
         self.order_flow_engine = order_flow_engine or InstitutionalVolumeOrderFlowEngine()
+        self.candlestick_engine = candlestick_engine or CandlestickPriceActionEngine()
 
     @staticmethod
     def _live_spread_pips_from_frame(df: pd.DataFrame, spec) -> Optional[float]:
@@ -257,7 +260,10 @@ class MarketContextEngine:
         # 8. Order Flow & Footprint Delta Analysis (E1)
         order_flow = self.order_flow_engine.analyze_order_flow(df_primary)
 
-        # 9. Context Quality Score
+        # 9. Institutional Candlestick & Price Action Analysis
+        candlestick_pattern = self.candlestick_engine.analyze(df_primary, symbol)
+
+        # 10. Context Quality Score
         quality = 0.0
         available_tfs = sum(1 for d in [df_macro, df_context, df_primary, df_setup, df_timing] if not d.empty)
         quality += (available_tfs / 5.0) * 50.0
@@ -284,5 +290,6 @@ class MarketContextEngine:
             mtf_alignment=mtf_alignment,
             order_flow=order_flow,
             trade_style=style,
-            live_spread_pips=live_spread_pips
+            live_spread_pips=live_spread_pips,
+            candlestick_pattern=candlestick_pattern
         )
