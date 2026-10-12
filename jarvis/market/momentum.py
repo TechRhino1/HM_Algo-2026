@@ -70,34 +70,57 @@ class MomentumEngine:
 
         # Trend Score calculation (-100 to +100)
         score = 0.0
+
+        # Short-term Price Displacement & Velocity (last 3-5 bars)
+        recent_bars = min(5, len(df))
+        short_term_chg = float(close.iloc[-1] - close.iloc[-recent_bars])
+        atr_approx = float(tr.rolling(14, min_periods=1).mean().iloc[-1] + 1e-9)
+        short_term_atr_disp = short_term_chg / atr_approx
+
         # 1. EMA stack
         if c_price > cur_ema_f > cur_ema_m > cur_ema_s:
             score += 45.0
-        elif c_price > cur_ema_f > cur_ema_m:
-            score += 30.0
+        elif c_price > cur_ema_f and c_price > cur_ema_m:
+            score += 35.0
         elif c_price > cur_ema_f:
-            score += 15.0
+            score += 20.0
         elif c_price < cur_ema_f < cur_ema_m < cur_ema_s:
             score -= 45.0
-        elif c_price < cur_ema_f < cur_ema_m:
-            score -= 30.0
+        elif c_price < cur_ema_f and c_price < cur_ema_m:
+            score -= 35.0
         elif c_price < cur_ema_f:
-            score -= 15.0
+            score -= 20.0
 
-        # 2. ADX & Direction
-        if cur_adx >= 22.0:
-            if cur_plus_di > cur_minus_di:
+        # 2. ADX & Direction (with displacement override for lagging Wilder smoothing)
+        if cur_adx >= 20.0:
+            if short_term_atr_disp >= 0.75:
+                # Active upward expansion overrides lagging Wilder -DI
+                score += 25.0
+            elif short_term_atr_disp <= -0.75:
+                # Active downward expansion overrides lagging Wilder +DI
+                score -= 25.0
+            elif cur_plus_di > cur_minus_di:
                 score += 25.0
             else:
                 score -= 25.0
 
-        # 3. Slope
+        # 3. Slope (blend 10-bar baseline with 5-bar ultra-responsive micro-slope)
         window_slope = min(10, len(df))
         y = close.iloc[-window_slope:].values
         x = np.arange(window_slope)
         slope = np.polyfit(x, y, 1)[0]
         norm_slope = (slope / c_price) * 1000.0
-        score += np.clip(norm_slope * 15.0, -30.0, 30.0)
+
+        if len(df) >= 5:
+            y5 = close.iloc[-5:].values
+            x5 = np.arange(5)
+            slope5 = np.polyfit(x5, y5, 1)[0]
+            norm_slope5 = (slope5 / c_price) * 1000.0
+            effective_slope = norm_slope * 0.4 + norm_slope5 * 0.6
+        else:
+            effective_slope = norm_slope
+
+        score += np.clip(effective_slope * 15.0, -30.0, 30.0)
 
         final_trend_score = int(np.clip(score, -100, 100))
 

@@ -202,6 +202,7 @@ class MT5Client:
         """Fetches live broker trading specifications for a symbol with fallback to symbol registry."""
         resolved = self.resolve_symbol_name(symbol)
         spec_dict = {
+            "name": resolved,
             "symbol": resolved,
             "canonical": symbol,
             "trade_contract_size": 100000.0,

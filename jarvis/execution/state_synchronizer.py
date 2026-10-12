@@ -67,7 +67,8 @@ class MT5StateSynchronizer:
                 # Fetch deal history for ML feedback loop (§17)
                 try:
                     import MetaTrader5 as mt5
-                    deals = mt5.history_deals_get(position=t) if self.mt5_client.mode != "paper" else None
+                    with self.mt5_client._shared_lock:
+                        deals = mt5.history_deals_get(position=t) if self.mt5_client.mode != "paper" else None
                     if deals:
                         total_pnl = sum(d.profit + d.swap + d.commission for d in deals)
                         is_win = 1 if total_pnl > 0 else 0

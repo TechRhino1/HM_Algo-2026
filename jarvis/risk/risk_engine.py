@@ -301,8 +301,20 @@ class RiskEngine:
                 p for p in positions if resolve_symbol(p.symbol).canonical == canon
             ]
             symbol_count = len(existing_sym_positions)
-            is_second_trade = symbol_count == 1
-            is_over_hard_limit = symbol_count >= HARD_MAX_TRADES_PER_SYMBOL
+            
+            # Count pending orders on this symbol to prevent duplicate order stacking
+            pending_orders = kwargs.get("pending_orders", [])
+            pending_count = len([
+                o for o in pending_orders if resolve_symbol(o.get("symbol", "")).canonical == canon
+            ])
+            total_symbol_exposure = symbol_count + pending_count
+            is_second_trade = total_symbol_exposure == 1
+            is_over_hard_limit = total_symbol_exposure >= HARD_MAX_TRADES_PER_SYMBOL
+            if is_over_hard_limit:
+                rejection_reasons.append(
+                    f"SYMBOL_EXPOSURE_LIMIT: Symbol {symbol} already has {symbol_count} position(s) "
+                    f"and {pending_count} pending order(s) (limit {HARD_MAX_TRADES_PER_SYMBOL})."
+                )
 
             # 1. Circuit Breaker & Consecutive Loss Cooldown status (Global + Per-Symbol / Per-Regime)
             cb = self.circuit_breaker.check_status()
@@ -433,12 +445,16 @@ class RiskEngine:
             elif account.equity < 1000.0:
                 base_risk = min(base_risk * 1.5, 1.0)   # 0.5% → 0.75% (cap 1.0%)
 
+            sym_info_enriched = dict(symbol_info) if symbol_info else {}
+            if "name" not in sym_info_enriched and "symbol" not in sym_info_enriched:
+                sym_info_enriched["name"] = decision.symbol
+
             lots = self.position_sizer.calculate_lot_size(
                 account_balance=account.equity,
                 entry_price=decision.entry_price,
                 sl_price=decision.stop_loss,
                 risk_pct=base_risk,
-                symbol_info=symbol_info,
+                symbol_info=sym_info_enriched,
                 invalidation_risk_coefficient=1.0 - (decision.adversarial_penalty / 60.0),
                 model_confidence=decision.model_confidence,
                 pattern_sample_size=sample_size,

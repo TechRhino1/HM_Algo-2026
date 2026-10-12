@@ -310,9 +310,7 @@ class DynamicRiskAndLevelsEngine:
                     asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
 
                 if "ETHBTC" in sym_name:
-                    min_floor_sl = max(1.20 * atr + spread_dist, 0.00035)
-                elif is_crypto:
-                    min_floor_sl = max(1.35 * atr + spread_dist, 2.50 if "SOL" in sym_name else (35.0 if "ETH" in sym_name else 700.0))
+                    min_floor_sl = max(1.20 * atr + spread_dist, 0.00030)
                 else:
                     min_floor_sl = max(1.20 * atr + spread_dist, 3.5 * spread_dist)
 
@@ -330,9 +328,11 @@ class DynamicRiskAndLevelsEngine:
                 if "ETHBTC" in sym_name:
                     min_crypto_pts = max(3.5 * spread_dist, 0.00030)
                 elif "ETH" in sym_name:
-                    min_crypto_pts = 30.0
+                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
+                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, eth_base_floor)
                 elif "BTC" in sym_name:
-                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, 650.0)
+                    btc_base_floor = 450.0 if "SCALP" in style.upper() else 650.0
+                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, btc_base_floor)
                 else:
                     min_crypto_pts = 2.50
                 min_sl_dist = max(min_sl_dist, min_crypto_pts)
@@ -375,7 +375,7 @@ class DynamicRiskAndLevelsEngine:
                 max_tp_mult = asym_rr * (1.25 if is_strong_trend else 1.0)
                 tp_dist = min(target_cand - entry_price, risk_dist * max_tp_mult)
             else:
-                tp_dist = risk_dist * asym_rr
+                tp_dist = risk_dist * (2.2 if is_ranging else asym_rr)
 
             tp_price = round(entry_price + tp_dist, digits)
             rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
@@ -512,9 +512,7 @@ class DynamicRiskAndLevelsEngine:
                     asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
 
                 if "ETHBTC" in sym_name:
-                    min_floor_sl = max(1.20 * atr + spread_dist, 0.00035)
-                elif is_crypto:
-                    min_floor_sl = max(1.35 * atr + spread_dist, 2.50 if "SOL" in sym_name else (35.0 if "ETH" in sym_name else 700.0))
+                    min_floor_sl = max(1.20 * atr + spread_dist, 0.00030)
                 else:
                     min_floor_sl = max(1.20 * atr + spread_dist, 3.5 * spread_dist)
 
@@ -532,9 +530,11 @@ class DynamicRiskAndLevelsEngine:
                 if "ETHBTC" in sym_name:
                     min_crypto_pts = max(3.5 * spread_dist, 0.00030)
                 elif "ETH" in sym_name:
-                    min_crypto_pts = 30.0
+                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
+                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, eth_base_floor)
                 elif "BTC" in sym_name:
-                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, 650.0)
+                    btc_base_floor = 450.0 if "SCALP" in style.upper() else 650.0
+                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, btc_base_floor)
                 else:
                     min_crypto_pts = 2.50
                 min_sl_dist = max(min_sl_dist, min_crypto_pts)
@@ -614,9 +614,9 @@ class DynamicRiskAndLevelsEngine:
                 tp_dist = sl_dist * 2.8
                 rr_ratio = 2.8
             else:
-                sl_dist = atr * 1.5
-                tp_dist = sl_dist * 4.2
-                rr_ratio = 4.2
+                sl_dist = atr * (1.2 if is_ranging else 1.5)
+                rr_ratio = 2.2 if is_ranging else 4.2
+                tp_dist = sl_dist * rr_ratio
             sl_price = round(entry_price + sl_dist if is_bear_tilt else entry_price - sl_dist, digits)
             tp_price = round(entry_price - tp_dist if is_bear_tilt else entry_price + tp_dist, digits)
             risk_dist = abs(entry_price - sl_price)
@@ -678,29 +678,56 @@ class DynamicRiskAndLevelsEngine:
                 if inst_res and isinstance(inst_res, dict):
                     inst_entry = float(inst_res.get("entry_price", entry_price))
                     inst_risk = float(inst_res.get("risk_dist", risk_dist))
-                    # Clamp institutional risk_dist to the asset-specific min_sl_dist floor
-                    clamped_risk = max(inst_risk, min_sl_dist)
+                    # Use institutional stop or baseline structural risk floor
+                    base_risk_floor = float(base_result.get("risk_dist", 0.0))
+                    clamped_risk = max(inst_risk, base_risk_floor) if base_risk_floor > 0 else inst_risk
                     if tentative_bias == "BUY":
                         clamped_sl = round(inst_entry - clamped_risk, digits)
                     else:
                         clamped_sl = round(inst_entry + clamped_risk, digits)
 
                     inst_tp = float(inst_res.get("tp_price", tp_price))
+                    inst_tp1 = float(inst_res.get("tp1_price", tp1_price))
+                    inst_tp2 = float(inst_res.get("tp2_price", tp2_price))
+                    inst_tp3 = float(inst_res.get("tp3_price", tp3_price))
                     clamped_tp_dist = abs(inst_tp - inst_entry)
+
+                    # Preserve institutional R:R: If risk was expanded to satisfy broker/crypto floor,
+                    # scale TP levels proportionally to prevent R:R compression below quality gate (>= 1.5)
+                    if clamped_risk > inst_risk and inst_risk > 0:
+                        expansion_ratio = min(clamped_risk / inst_risk, 3.0)
+                        max_tp_dist = round(clamped_risk * 5.0, digits)
+                        clamped_tp_dist = min(round(clamped_tp_dist * expansion_ratio, digits), max_tp_dist)
+                        if tentative_bias == "BUY":
+                            clamped_tp = round(inst_entry + clamped_tp_dist, digits)
+                            clamped_tp1 = round(inst_entry + min(abs(inst_tp1 - inst_entry) * expansion_ratio, max_tp_dist * 0.4), digits)
+                            clamped_tp2 = round(inst_entry + min(abs(inst_tp2 - inst_entry) * expansion_ratio, max_tp_dist * 0.7), digits)
+                            clamped_tp3 = round(inst_entry + min(abs(inst_tp3 - inst_entry) * expansion_ratio, max_tp_dist), digits)
+                        else:
+                            clamped_tp = round(inst_entry - clamped_tp_dist, digits)
+                            clamped_tp1 = round(inst_entry - min(abs(inst_tp1 - inst_entry) * expansion_ratio, max_tp_dist * 0.4), digits)
+                            clamped_tp2 = round(inst_entry - min(abs(inst_tp2 - inst_entry) * expansion_ratio, max_tp_dist * 0.7), digits)
+                            clamped_tp3 = round(inst_entry - min(abs(inst_tp3 - inst_entry) * expansion_ratio, max_tp_dist), digits)
+                    else:
+                        clamped_tp = inst_tp
+                        clamped_tp1 = inst_tp1
+                        clamped_tp2 = inst_tp2
+                        clamped_tp3 = inst_tp3
+
                     clamped_rr = round(clamped_tp_dist / max(clamped_risk, 1e-9), 2)
 
                     return {
                         "bias": tentative_bias,
                         "entry_price": inst_entry,
                         "sl_price": clamped_sl,
-                        "tp_price": inst_tp,
-                        "tp1_price": inst_res.get("tp1_price", tp1_price),
-                        "tp2_price": inst_res.get("tp2_price", tp2_price),
-                        "tp3_price": inst_res.get("tp3_price", tp3_price),
+                        "tp_price": clamped_tp,
+                        "tp1_price": clamped_tp1,
+                        "tp2_price": clamped_tp2,
+                        "tp3_price": clamped_tp3,
                         "risk_dist": clamped_risk,
                         "tp_dist": clamped_tp_dist,
                         "rr_ratio": clamped_rr,
-                        "first_target_price": inst_res.get("tp1_price", first_target_price),
+                        "first_target_price": clamped_tp1,
                         "first_target_volume_pct": inst_res.get("first_target_volume_pct", first_target_volume_pct),
                         "runner_trail_distance_atr": inst_res.get("runner_trail_atr", runner_trail_distance_atr),
                         "entry_type": inst_res.get("entry_type", "INSTITUTIONAL"),

@@ -27,7 +27,10 @@ class PositionSizer:
             return 0.0
 
         # Adjust risk_pct based on volatility and drawdown — softened to preserve profitability
-        sym_name = str(symbol_info.get("name", "") if symbol_info else "").upper()
+        sym_name = str(
+            (symbol_info.get("name") or symbol_info.get("symbol") or symbol_info.get("canonical") or "")
+            if symbol_info else ""
+        ).upper()
         is_high_vol = any(x in sym_name for x in ["XAU", "GOLD", "BTC", "OIL", "US30", "NAS100"])
         if is_high_vol:
             risk_pct *= 0.92  # Was 0.85 — high-vol assets penalized too harshly
@@ -107,7 +110,7 @@ class PositionSizer:
         # refused. That is the correct answer to "you cannot risk 0.5% here",
         # but it does mean small accounts stop trading wide-stop symbols.
         is_micro_account = account_balance < 1000.0
-        is_high_conviction = (model_confidence >= 0.70) or (combined_scaler > 1.0) or (kelly_pct > 0.0)
+        is_high_conviction = (model_confidence >= 0.70) or (combined_scaler >= 1.10)
 
         if is_micro_account and is_high_conviction:
             # High-conviction trade scaling on micro accounts (< $1,000)
@@ -142,7 +145,7 @@ class PositionSizer:
 
         from jarvis.data.symbol_registry import get_dollar_risk_per_price_unit
         
-        sym_key = sym_name if sym_name else "XAUUSD"
+        sym_key = sym_name if sym_name else (str(symbol_info.get("canonical", "EURUSD")).upper() if symbol_info else "EURUSD")
         dollar_risk_per_unit = get_dollar_risk_per_price_unit(sym_key, symbol_info)
         dollar_risk_per_lot = risk_distance * dollar_risk_per_unit
 
@@ -178,12 +181,28 @@ class PositionSizer:
             else:
                 tier_cap = 2.0 * effective_risk_pct  # large accounts: strict
 
-            # For very small accounts, also allow by dollar amount:
-            # If the actual dollar risk is small in absolute terms (≤ $15),
-            # it's acceptable even if the percentage looks high.
-            dollar_floor_ok = (actual_risk_dollars <= 15.0 and account_balance < 500.0)
+            # For micro accounts (< $1000), minimum broker lot (0.01) on Gold or Crypto
+            # forces an absolute dollar risk dictated by market volatility ($20-$35).
+            # Allowing up to $35 absolute risk (or up to 8.5% risk cap for Gold/Crypto)
+            # ensures viable high-EV institutional setups on Gold are not deadlock-rejected.
+            is_gold_asset = any(k in sym_key for k in ("XAU", "GOLD"))
+            is_crypto_asset = any(k in sym_key for k in ("BTC", "ETH", "SOL"))
 
-            max_acceptable_risk_pct = max(tier_cap, 2.0 * effective_risk_pct)
+            if (is_gold_asset or is_crypto_asset) and account_balance < 1000.0:
+                tier_cap = max(tier_cap, 8.5)
+
+            # For very small accounts, also allow by dollar amount:
+            # If the actual dollar risk is small in absolute terms (≤ $35 for Gold/Crypto, ≤ $15 for FX),
+            # it's acceptable even if the percentage looks high.
+            dollar_floor_ok = (
+                (actual_risk_dollars <= 35.0 and 150.0 <= account_balance < 1000.0 and (is_gold_asset or is_crypto_asset))
+                or (actual_risk_dollars <= 15.0 and 150.0 <= account_balance < 500.0)
+            )
+
+            if is_micro_account and is_high_conviction:
+                max_acceptable_risk_pct = max(tier_cap, 2.0 * effective_risk_pct)
+            else:
+                max_acceptable_risk_pct = 2.0 * effective_risk_pct
             if actual_risk_pct > max_acceptable_risk_pct and not dollar_floor_ok:
                 logger.error(
                     f"REJECTED [{sym_key}]: Minimum lot size ({min_vol}) would force "

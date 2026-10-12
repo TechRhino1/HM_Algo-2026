@@ -379,6 +379,7 @@ class PositionMonitorEngine:
                     target_pct = PARTIAL_CLOSE_PCT
 
                 risk_dist_init = abs(pos.open_price - pos.sl) if pos.sl > 0 else (atr * 1.5)
+                current_r = ((c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)) / max(risk_dist_init, 1e-6)
                 if first_target is None:
                     first_target = (pos.open_price + (risk_dist_init * PARTIAL_TP_TRIGGER_R)) if pos.type == "BUY" else (pos.open_price - (risk_dist_init * PARTIAL_TP_TRIGGER_R))
 
@@ -390,22 +391,19 @@ class PositionMonitorEngine:
                         p_res = self.mt5_client.close_position(pos.ticket, volume=close_volume)
                         if p_res and p_res.get("status") in ("PARTIALLY_CLOSED", "CLOSED"):
                             self._partially_closed_tickets.add(pos.ticket)
-                            logger.info(f"🎯 PARTIAL TP HIT: #{pos.ticket} {symbol} closed {close_volume} lots @ {c_price:.4f}. Remaining: {remaining_volume}")
-                            # Institutional Runner Protection: Do NOT prematurely choke the remaining runner
-                            # back to entry on partial TP. Only lock BE once price reaches >=1.8R or policy threshold.
+                            # Lock breakeven buffer on remaining runner to secure risk-free trade
                             _p = self._exit_policy.get(pos.ticket) or ExitPolicy.for_symbol(symbol, spec)
-                            if current_r >= getattr(_p, "be_trigger_r", 1.80):
-                                _be_buf = _p.buffer_distance(risk_dist_init)
-                                be_candidate = round(
-                                    pos.open_price + _be_buf if pos.type == "BUY" else pos.open_price - _be_buf,
-                                    digits,
-                                )
-                                if pos.type == "BUY" and be_candidate > new_sl and be_candidate < c_price:
-                                    new_sl = be_candidate
-                                    actions.append(f"PARTIAL_BE@{new_sl:.4f}")
-                                elif pos.type == "SELL" and (new_sl == 0 or be_candidate < new_sl) and be_candidate > c_price:
-                                    new_sl = be_candidate
-                                    actions.append(f"PARTIAL_BE@{new_sl:.4f}")
+                            _be_buf = _p.buffer_distance(risk_dist_init)
+                            be_candidate = round(
+                                pos.open_price + _be_buf if pos.type == "BUY" else pos.open_price - _be_buf,
+                                digits,
+                            )
+                            if pos.type == "BUY" and be_candidate > new_sl and be_candidate < c_price:
+                                new_sl = be_candidate
+                                actions.append(f"PARTIAL_BE@{new_sl:.4f}")
+                            elif pos.type == "SELL" and (new_sl == 0 or be_candidate < new_sl) and be_candidate > c_price:
+                                new_sl = be_candidate
+                                actions.append(f"PARTIAL_BE@{new_sl:.4f}")
 
             # ── 1.5 Adversarial Order Flow Shield (Suppressed in Grace Period) ────
             if not in_grace_period:

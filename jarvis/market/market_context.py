@@ -169,14 +169,14 @@ class MarketContextEngine:
                 c_last = float(c.iloc[-1])
                 ema20 = float(c.ewm(span=20, adjust=False).mean().iloc[-1])
                 ema50 = float(c.ewm(span=min(50, len(df)), adjust=False).mean().iloc[-1])
-                if c_last > ema20 > ema50 and bias == "BEARISH":
-                    return "BULLISH" if (c_last > ema20 * 1.002) else "NEUTRAL"
-                elif c_last < ema20 < ema50 and bias == "BULLISH":
-                    return "BEARISH" if (c_last < ema20 * 0.998) else "NEUTRAL"
+                if bias == "BEARISH" and (c_last > max(ema20, ema50) or (c_last > ema20 and c_last > c.iloc[-5:].min() * 1.003)):
+                    return "BULLISH" if (c_last > ema20 and (c_last > ema50 or ema20 > ema50 or c_last > ema20 * 1.002)) else "NEUTRAL"
+                elif bias == "BULLISH" and (c_last < min(ema20, ema50) or (c_last < ema20 and c_last < c.iloc[-5:].max() * 0.997)):
+                    return "BEARISH" if (c_last < ema20 and (c_last < ema50 or ema20 < ema50 or c_last < ema20 * 0.998)) else "NEUTRAL"
             return bias
 
         if style in ("DAY_TRADING", "INTRADAY", "DAY"):
-            # When trade_style == "DAY_TRADING": H4 (40%), H1 (35%), M15 (25%)
+            # When trade_style == "DAY_TRADING": M15 primary (40%), H1 context (35%), H4 macro (25%)
             raw_h4 = self.structure_engine.analyze_structure(df_macro).bias if not df_macro.empty else "NEUTRAL"
             raw_h1 = self.structure_engine.analyze_structure(df_context).bias if not df_context.empty else "NEUTRAL"
             raw_m15 = structure_primary.bias if not df_primary.empty else "NEUTRAL"
@@ -193,9 +193,9 @@ class MarketContextEngine:
             mtf_alignment["M5"] = m5_bias
 
             weighted_score = (
-                _score_bias(h4_bias) * 0.40 +
+                _score_bias(m15_bias) * 0.40 +
                 _score_bias(h1_bias) * 0.35 +
-                _score_bias(m15_bias) * 0.25
+                _score_bias(h4_bias) * 0.25
             )
         elif style == "SCALP":
             raw_h1 = self.structure_engine.analyze_structure(df_macro).bias if not df_macro.empty else "NEUTRAL"
@@ -213,10 +213,11 @@ class MarketContextEngine:
             mtf_alignment["M5"] = m5_bias
             mtf_alignment["M1"] = m1_bias
 
+            # Scalp: Execution frame M5 (40%) and M15 (30%) hold precedence over macro H1 (20%)
             weighted_score = (
-                _score_bias(h1_bias) * 0.40 +
+                _score_bias(m5_bias) * 0.40 +
                 _score_bias(m15_bias) * 0.30 +
-                _score_bias(m5_bias) * 0.20 +
+                _score_bias(h1_bias) * 0.20 +
                 _score_bias(m1_bias) * 0.10
             )
         else:  # SWING (default): D1 (40%), H4 (30%), H1 (20%), M15 (10%)

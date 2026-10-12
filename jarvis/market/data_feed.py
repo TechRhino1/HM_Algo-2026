@@ -254,7 +254,14 @@ def first_unusable_frame(mtf_data) -> tuple:
 
 
 class DataFeedEngine:
-    _mt5_fetch_lock = threading.Lock()
+    _mt5_fetch_lock = None
+
+    @classmethod
+    def get_mt5_fetch_lock(cls):
+        if cls._mt5_fetch_lock is None:
+            from jarvis.execution.mt5_client import MT5Client
+            cls._mt5_fetch_lock = MT5Client._shared_lock
+        return cls._mt5_fetch_lock
 
     def __init__(self, mt5_client: Any = None, timeout_sec: float = 3.0):
         self.mt5_client = mt5_client
@@ -394,7 +401,7 @@ class DataFeedEngine:
             _broker_sym = resolve_broker_symbol(resolved_sym) or resolved_sym
 
             def _read():
-                with DataFeedEngine._mt5_fetch_lock:
+                with DataFeedEngine.get_mt5_fetch_lock():
                     r = mt5.copy_rates_from_pos(_broker_sym, mt5_tf, start_pos, num_bars)
                     if r is None or len(r) == 0:
                         # Fallback to pos 0 if start_pos returns empty
@@ -563,8 +570,10 @@ class DataFeedEngine:
             timeframes = style_timeframes(trade_style)
 
         result = {}
+        is_intraday = trade_style.upper() in ("SCALP", "DAY_TRADING", "INTRADAY", "DAY")
         for role, tf in timeframes.items():
-            result[role] = self.fetch_rates(symbol, timeframe=tf, num_bars=num_bars)
+            inc_cur = True if (is_intraday and role in ("primary", "timing", "setup")) else False
+            result[role] = self.fetch_rates(symbol, timeframe=tf, num_bars=num_bars, include_current_bar=inc_cur)
         return result
 
     def _generate_realistic_rates(self, symbol: str, timeframe: str, num_bars: int) -> pd.DataFrame:

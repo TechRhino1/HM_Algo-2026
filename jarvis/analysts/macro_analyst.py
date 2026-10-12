@@ -64,7 +64,7 @@ class MacroAnalyst(BaseAnalyst):
         if self.news_calendar is None:
             try:
                 from jarvis.market.news import GLOBAL_NEWS_ENGINE
-                active_news = GLOBAL_NEWS_ENGINE.get_news_calendar()
+                active_news = GLOBAL_NEWS_ENGINE.get_news_calendar(max_wait=1.5)
             except Exception:
                 active_news = []
         else:

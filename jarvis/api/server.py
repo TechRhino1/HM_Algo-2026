@@ -695,7 +695,8 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                             and getattr(self.mt5_client, "is_connected", False)
                             and (origin_filter is None or "broker" in origin_filter)):
                         import MetaTrader5 as _mt5
-                        mt5_deals = _mt5.history_deals_get(datetime.now() - timedelta(days=days), datetime.now())
+                        with self.mt5_client._shared_lock:
+                            mt5_deals = _mt5.history_deals_get(datetime.now() - timedelta(days=days), datetime.now())
                         if mt5_deals:
                             existing_tickets = {int(t.get("ticket", 0)) for t in trades if t.get("ticket")}
                             for d in reversed(list(mt5_deals)):

@@ -28,8 +28,8 @@ def get_account_tier(equity: float) -> AccountTier:
         return AccountTier.INSTITUTIONAL
 
 def is_micro_account(equity: float) -> bool:
-    """True if account is in micro/small retail mode (< $1,000 equity)."""
-    return float(equity) < 1000.0
+    """True if account is in ultra-survival or micro-growth mode (< $100 equity)."""
+    return float(equity) < 100.0
 
 def get_max_lot_cap(equity: float) -> float:
     """Returns hard lot cap for risk protection on smaller accounts."""

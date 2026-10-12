@@ -65,12 +65,12 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         canonical="BTCUSD",
         asset_class="CRYPTO",
         strategy_weights={
-            "RANGE_MEAN_REVERSION": 3.5,       # Empirically profitable (+8.94) on range wicks
-            "CHOCH_STRUCTURAL_REVERSAL": 3.0,  # Reversal confirmation after liquidity sweep
-            "LIQUIDITY_SWEEP_REVERSAL": 2.5,   # Fading fakeout liquidity runs
-            "TREND_PULLBACK": 1.5,             # Deep pullbacks only (in discount/premium)
-            "TREND_FOLLOWING": 0.5,            # Demote blind breakout chasing (-$56.87 loss)
-            "BREAKOUT_EXPANSION": 0.5,
+            "TREND_FOLLOWING": 2.8,            # Prioritize institutional trend continuation
+            "TREND_PULLBACK": 2.6,             # Deep pullbacks into discount/premium OTE
+            "BREAKOUT_EXPANSION": 2.2,         # Volumetric expansion breakouts
+            "CHOCH_STRUCTURAL_REVERSAL": 1.8,  # Confirmed structural shifts only
+            "RANGE_MEAN_REVERSION": 1.2,       # Demote range fades on macro trending crypto
+            "LIQUIDITY_SWEEP_REVERSAL": 0.5,   # Avoid counter-trend sweep fades in crypto
         },
         banned_strategies=[],
         sl_atr_multiplier=2.50,                # Widen from 1.80 to give BTC breathing room
@@ -123,7 +123,7 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         typical_spread_pips=120.0,
         max_allowed_spread_pips=300.0,
         commission_per_lot=0.0,
-        min_volume=0.01,
+        min_volume=0.02,
         volume_step=0.01,
         margin_pct=0.5
     ),

@@ -842,7 +842,7 @@ class InstitutionalEntryEngine:
         is_crypto = getattr(spec, "is_crypto", False) or (getattr(spec, "asset_class", "").upper() == "CRYPTO") or ("BTC" in sym_name) or ("ETH" in sym_name) or ("SOL" in sym_name)
 
         min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
-        if is_gold:
+        if is_gold and atr >= 2.0:
             min_sl_dist = max(min_sl_dist, 8.0)
         elif is_silver:
             min_sl_dist = max(min_sl_dist, 0.35)
@@ -852,7 +852,8 @@ class InstitutionalEntryEngine:
             if "ETHBTC" in sym_name:
                 min_crypto_pts = max(3.5 * spread_dist, 0.00030)
             elif "ETH" in sym_name:
-                min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, 30.0)
+                eth_base_floor = 10.0 if "SCALP" in trade_style.upper() else (20.0 if any(x in trade_style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
+                min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, eth_base_floor)
             elif "BTC" in sym_name:
                 btc_base_floor = 450.0 if "SCALP" in trade_style.upper() else 650.0
                 min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, btc_base_floor)

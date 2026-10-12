@@ -108,8 +108,9 @@ class StrategySelector:
             for banned in cfg.banned_strategies:
                 prior_weights[banned] = 0.0
 
+        canonical_sym = getattr(cfg, "canonical", symbol_name).upper()
         # Asset-Class Prior Calibration (Fallback only if symbol not explicitly profiled in SYMBOL_PROFILES)
-        if symbol_name not in SYMBOL_PROFILES and not is_gold:
+        if canonical_sym not in SYMBOL_PROFILES and not is_gold:
             if is_index:
                 # Equity Indices: Liquidity sweep reversals (3.2), CHOCH (2.6), and range reversion (2.0) dominate
                 prior_weights["LIQUIDITY_SWEEP_REVERSAL"] = 3.2
@@ -303,33 +304,45 @@ class StrategySelector:
                 prior_weights["BREAKOUT_EXPANSION"] *= 1.5
 
         # 2.5 Strict Strategy Blacklists & Safeguards
-        # Zero out BREAKOUT_EXPANSION unless momentum ADX >= 28 and BOS confirmed
+        # Breakout expansion active when regime is BREAKOUT/HIGH_VOLATILITY or ADX >= 25 with BOS
         if context:
             adx_val = getattr(context.momentum, "adx", 0.0) if hasattr(context, "momentum") else 0.0
             bos_val = bool(getattr(context.structure, "bos", False)) if hasattr(context, "structure") else False
-            if not (adx_val >= 28.0 and bos_val):
+            is_breakout_reg = r in (MarketRegime.BREAKOUT, MarketRegime.POST_BREAKOUT, MarketRegime.HIGH_VOLATILITY)
+            if not ((adx_val >= 25.0 and bos_val) or is_breakout_reg):
                 prior_weights["BREAKOUT_EXPANSION"] = 0.0
 
         # Eliminate BREAKOUT_EXPANSION on Forex majors and GBP
         if is_forex_major or is_gbp:
             prior_weights["BREAKOUT_EXPANSION"] = 0.0
 
+        # Dynamic Regime Mutual Exclusion: In strong trends (or high ADX >= 25), RANGE_MEAN_REVERSION must be strictly 0.0
+        # Fading a strong institutional trend is prohibited.
+        if (
+            r in (MarketRegime.TREND_BULL, MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BULL, MarketRegime.STRONG_TREND_BEAR)
+            or (context and getattr(context.momentum, "adx", 0.0) >= 25.0)
+        ):
+            if not (is_forex_major and (is_chf or ("AUD" in symbol_name))):
+                prior_weights["RANGE_MEAN_REVERSION"] = 0.0
+                prior_weights["LIQUIDITY_SWEEP_REVERSAL"] = 0.0
+
         # Master-Trader: For XAUUSD, BTCUSD, GBPUSD - zero out naked TREND_FOLLOWING
-        # unless liquidity sweep detected or (BOS confirmed with strong trend_score >= 30.0)
+        # unless liquidity sweep detected, or BOS confirmed with trend_score >= 15.0, or trend/breakout regime
         if is_commodity or is_crypto or is_gbp:
             sweep_detected = False
             bos_and_trend = False
+            is_bo = r in (MarketRegime.BREAKOUT, MarketRegime.POST_BREAKOUT, MarketRegime.TREND_BULL, MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BULL, MarketRegime.STRONG_TREND_BEAR)
             if context:
                 sweep_detected = bool(getattr(context.liquidity, "sweep_detected", False)) if hasattr(context, "liquidity") else False
                 bos = bool(getattr(context.structure, "bos", False)) if hasattr(context, "structure") else False
                 trend_score = abs(float(getattr(context.momentum, "trend_score", 0.0))) if hasattr(context, "momentum") else 0.0
-                bos_and_trend = bos and (trend_score >= 30.0)
+                bos_and_trend = (bos and (trend_score >= 15.0)) or (trend_score >= 25.0)
 
-            if not (sweep_detected or bos_and_trend):
+            if not (sweep_detected or bos_and_trend or is_bo):
                 prior_weights["TREND_FOLLOWING"] = 0.0
 
         # Master-Trader Strategy Weighting Calibration (Fallback for unprofiled symbols or Gold preservation):
-        if symbol_name not in SYMBOL_PROFILES or is_gold:
+        if canonical_sym not in SYMBOL_PROFILES or is_gold:
             if is_jpy:
                 prior_weights["TREND_FOLLOWING"] = max(prior_weights.get("TREND_FOLLOWING", 0.0), 2.6)
                 prior_weights["TREND_PULLBACK"] = max(prior_weights.get("TREND_PULLBACK", 0.0), 2.4)

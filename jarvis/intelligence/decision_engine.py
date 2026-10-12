@@ -35,15 +35,12 @@ from jarvis.data.symbol_registry import resolve as resolve_symbol
 from jarvis.risk.account_tier import is_micro_account, get_effective_min_ev
 from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config
 
-from jarvis.learning.fractional_diff import FractionalDifferentiationTransformer
-from jarvis.learning.ensemble_bandit import EnsembleStrategyBandit
 from jarvis.intelligence.meta_labeler import MetaLabeler
 from jarvis.intelligence.gate_policy import AdaptiveGatePolicy
 from jarvis.intelligence.ai_dissector import AIDissector
 from jarvis.intelligence.realtime_optimizer import RealtimeOptimizer
 from jarvis.intelligence.master_confluence import MasterConfluenceEngine
 from jarvis.market.fair_value_gap import FairValueGapEngine
-from jarvis.intelligence.mean_reversion import MeanReversionEngine
 from jarvis.intelligence.dynamic_levels import DynamicRiskAndLevelsEngine
 
 
@@ -131,14 +128,13 @@ class DecisionEngine:
         master_confluence: Optional[MasterConfluenceEngine] = None,
         dynamic_levels_engine: Optional[DynamicRiskAndLevelsEngine] = None,
         min_ev_hurdle: float = 0.50,
-        max_devil_penalty: float = 50.0
+        max_devil_penalty: float = 50.0,
+        strategy_bandit: Optional[Any] = None
     ):
-        self.strategy_selector = strategy_selector or StrategySelector()
+        self.strategy_selector = strategy_selector or StrategySelector(bandit=strategy_bandit)
         self.hypothesis_engine = hypothesis_engine or HypothesisEngine()
         self.calibrator = calibrator or ConfidenceCalibrationEngine()
         self.ml_predictor = ml_predictor or OnlineMLPredictor()
-        self.ensemble_bandit = EnsembleStrategyBandit()
-        self.frac_diff = FractionalDifferentiationTransformer()
         self.min_ev_hurdle = min_ev_hurdle
         self.max_devil_penalty = max_devil_penalty
         self.order_flow = InstitutionalVolumeOrderFlowEngine()
@@ -149,7 +145,6 @@ class DecisionEngine:
         self.realtime_optimizer = realtime_optimizer or RealtimeOptimizer()
         self.master_confluence = master_confluence or MasterConfluenceEngine()
         self.fvg_engine = FairValueGapEngine()
-        self.mean_reversion_engine = MeanReversionEngine()
         self.dynamic_levels_engine = dynamic_levels_engine or DynamicRiskAndLevelsEngine()
         from jarvis.scalping.scalp_execution_engine import ScalpExecutionEngine
         self.scalp_engine = ScalpExecutionEngine()
@@ -187,12 +182,15 @@ class DecisionEngine:
         if "SCALP" in style_upper:
             htf_bias = mtf_align.get("H1", mtf_align.get("M15", "NEUTRAL"))
             context_bias = mtf_align.get("M15", mtf_align.get("M5", "NEUTRAL"))
+            primary_tf_bias = mtf_align.get("M5", getattr(st, "bias", "NEUTRAL"))
         elif any(x in style_upper for x in ("DAY", "INTRADAY")):
             htf_bias = mtf_align.get("H4", mtf_align.get("H1", "NEUTRAL"))
             context_bias = mtf_align.get("H1", mtf_align.get("M15", "NEUTRAL"))
+            primary_tf_bias = mtf_align.get("M15", getattr(st, "bias", "NEUTRAL"))
         else:  # SWING
             htf_bias = mtf_align.get("D1", mtf_align.get("H4", "NEUTRAL"))
             context_bias = mtf_align.get("H4", mtf_align.get("H1", "NEUTRAL"))
+            primary_tf_bias = mtf_align.get("H1", getattr(st, "bias", "NEUTRAL"))
 
         mtf_score = float(getattr(context, "mtf_confluence_score", 0.0) or 0.0)
 
@@ -200,110 +198,139 @@ class DecisionEngine:
         reg_obj = regime.primary_regime if hasattr(regime, "primary_regime") else None
         is_bull_regime = reg_obj in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL)
         is_bear_regime = reg_obj in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR)
+        is_breakout_regime = reg_obj in (MarketRegime.BREAKOUT, MarketRegime.POST_BREAKOUT, MarketRegime.HIGH_VOLATILITY)
         is_range_regime = reg_obj in (MarketRegime.RANGE, MarketRegime.CONSOLIDATION, MarketRegime.COMPRESSION)
 
         # 3. Decoupled Analyst Votes (excluding NEUTRAL)
         bull_votes = sum(1 for r in analyst_reports.values() if r.bias == "BULLISH")
         bear_votes = sum(1 for r in analyst_reports.values() if r.bias == "BEARISH")
 
-        # 4. Authenticated Reversal Conditions
+        # 4. Authenticated Reversal & Order Flow Conditions
         has_bull_sweep = bool(getattr(context.liquidity, "sweep_detected", False) and "BULLISH" in getattr(context.liquidity, "sweep_type", ""))
         has_bear_sweep = bool(getattr(context.liquidity, "sweep_detected", False) and "BEARISH" in getattr(context.liquidity, "sweep_type", ""))
         has_bull_div = bool(getattr(mom, "bullish_divergence", False)) if mom else False
         has_bear_div = bool(getattr(mom, "bearish_divergence", False)) if mom else False
         dp_zone = getattr(st, "discount_premium_zone", "EQUILIBRIUM")
 
+        of_data = getattr(context, "order_flow", {}) or {}
+        delta_score = float(of_data.get("delta_score", 0.0)) if isinstance(of_data, dict) else getattr(of_data, "delta_score", 0.0)
+
         authenticated_bull_reversal = (
-            (has_bull_sweep or st.choch_type == "BULLISH")
-            and (has_bull_div or dp_zone == "DISCOUNT")
-            and trend_score >= -35.0  # Not in an extreme free-fall without floor
+            (has_bull_sweep or st.choch_type == "BULLISH" or (st.bias == "BULLISH" and has_bull_div))
+            and (has_bull_div or dp_zone in ("DISCOUNT", "EQUILIBRIUM"))
+            and trend_score >= -80.0
         )
         authenticated_bear_reversal = (
-            (has_bear_sweep or st.choch_type == "BEARISH")
-            and (has_bear_div or dp_zone == "PREMIUM")
-            and trend_score <= 35.0   # Not in an extreme parabolic rally without ceiling
+            (has_bear_sweep or st.choch_type == "BEARISH" or (st.bias == "BEARISH" and has_bear_div))
+            and (has_bear_div or dp_zone in ("PREMIUM", "EQUILIBRIUM"))
+            and trend_score <= 80.0
         )
 
         # 5. Hierarchical Resolution
+        # CASE 0: Volatility Breakout & Expansion (Momentum takes precedence over HTF lag)
+        if is_breakout_regime:
+            if trend_score >= 10.0 or st.bias == "BULLISH" or primary_tf_bias == "BULLISH" or bull_votes > bear_votes:
+                return "BUY"
+            elif trend_score <= -10.0 or st.bias == "BEARISH" or primary_tf_bias == "BEARISH" or bear_votes > bull_votes:
+                return "SELL"
+            elif st.bos:
+                return "BUY" if trend_score >= 0.0 else "SELL"
+            return "BUY" if bull_votes >= bear_votes else "SELL"
+
         # CASE A: Strong Bullish Macro / Regime / D1 Anchor
-        if (
+        elif (
             is_bull_regime
             or (htf_bias == "BULLISH" and not is_bear_regime)
             or (d1_anchor_bias == "BULLISH" and not is_bear_regime)
             or mtf_score >= 35.0
         ):
-            # Authenticated reversal: allow SELL when lower TFs have flipped bearish
-            # (Strictly forbidden on Gold when D1 is bullish to prevent counter-trend tops)
-            if authenticated_bear_reversal and (d1_anchor_bias != "BULLISH" and not is_gold) and (
-                mtf_score <= -20.0
-                or (trend_score <= -25.0 and context_bias == "BEARISH")
-            ):
-                return "SELL"
-            # Strong analyst consensus override (>=3 bearish votes with neutral/bearish D1)
-            if bear_votes >= 3 and d1_anchor_bias != "BULLISH" and not is_gold and trend_score <= 0.0:
-                return "SELL"
+            is_intraday = trade_style in ("SCALP", "DAY_TRADING")
 
-            # Momentum Immunity Guard: In a macro bull regime, if intraday momentum is free-falling, do NOT buy blindly!
-            if trend_score <= -15.0 or (context_bias == "BEARISH" and trend_score < -5.0):
-                if authenticated_bear_reversal and (mtf_score <= -20.0 or (trend_score <= -25.0 and context_bias == "BEARISH")):
+            # 1. Structural / Momentum Guard: If primary timeframe is breaking down with negative momentum, do NOT buy blindly!
+            if (st.bias == "BEARISH" or st.bos_type == "BEARISH" or primary_tf_bias == "BEARISH") and (trend_score <= -10.0 or delta_score <= -20.0):
+                if (
+                    authenticated_bear_reversal
+                    or (trend_score <= -15.0 and (context_bias == "BEARISH" or st.bias == "BEARISH"))
+                    or (st.bos and trend_score <= 0.0)
+                    or (bear_votes >= 2 and bear_votes > bull_votes)
+                ):
                     return "SELL"
                 return "HOLD"
 
-            # In a macro bull trend, look for BUY continuation or pullback completion
+            # 2. Authenticated reversal: allow SELL when lower TFs have flipped bearish
+            if authenticated_bear_reversal and (
+                mtf_score <= -15.0
+                or (trend_score <= -15.0 and context_bias == "BEARISH")
+                or primary_tf_bias == "BEARISH"
+            ):
+                return "SELL"
+
+            # 3. Strong analyst consensus override (>=3 bearish votes with negative momentum)
+            if bear_votes >= 3 and trend_score <= -10.0:
+                return "SELL"
+
+            # 4. In a macro bull trend, look for BUY continuation or pullback completion
             if st.bos and trend_score >= 10.0:
                 return "BUY"
             if st.bias == "BULLISH" or trend_score >= 10.0 or bull_votes > bear_votes:
                 return "BUY"
-            if dp_zone in ("DISCOUNT", "EQUILIBRIUM") and (has_bull_sweep or bull_votes >= 1):
+            if dp_zone in ("DISCOUNT", "EQUILIBRIUM") and (has_bull_sweep or bull_votes >= 1 or is_bull_regime):
                 return "BUY"
-            return "BUY" if ((htf_bias == "BULLISH" or d1_anchor_bias == "BULLISH") and trend_score >= -5.0) else "HOLD"
+            return "BUY" if ((htf_bias == "BULLISH" or d1_anchor_bias == "BULLISH") and (bull_votes >= 1 or not is_intraday) and trend_score >= 0.0) else "HOLD"
 
-        # CASE B: Strong Bearish Macro / Regime (Forbidden when D1 Anchor is Bullish)
+        # CASE B: Strong Bearish Macro / Regime
         elif (
-            (is_bear_regime and d1_anchor_bias != "BULLISH")
-            or (htf_bias == "BEARISH" and not is_bull_regime and d1_anchor_bias != "BULLISH")
+            is_bear_regime
+            or (htf_bias == "BEARISH" and not is_bull_regime)
             or mtf_score <= -35.0
         ):
-            # Momentum Immunity Guard: If intraday momentum is strongly bullish (trend_score >= 15.0 or positive with bullish context),
-            # STRICTLY PROHIBIT SELL orders across all symbols. Fading an explosive bull rally is prohibited.
-            if trend_score >= 15.0 or (context_bias == "BULLISH" and trend_score > 5.0):
-                if authenticated_bull_reversal or (trend_score >= 25.0 and (context_bias == "BULLISH" or st.bias == "BULLISH")):
+            is_intraday = trade_style in ("SCALP", "DAY_TRADING")
+
+            # 1. Structural / Momentum Guard for Intraday (SCALP & DAY_TRADING):
+            # If the primary execution timeframe is actively expanding BULLISH with positive momentum,
+            # STRICTLY PROHIBIT selling! Either flip to BUY if confirmed, or HOLD.
+            if is_intraday and (st.bias == "BULLISH" or st.bos_type == "BULLISH" or primary_tf_bias == "BULLISH" or trend_score >= 15.0 or delta_score >= 20.0):
+                if (
+                    authenticated_bull_reversal
+                    or (trend_score >= 10.0 and (context_bias == "BULLISH" or st.bias == "BULLISH" or primary_tf_bias == "BULLISH"))
+                    or (st.bos and trend_score >= 0.0)
+                    or (bull_votes >= 2 and bull_votes > bear_votes)
+                ):
                     return "BUY"
                 return "HOLD"
 
-            # Authenticated reversal: allow BUY when lower TFs have flipped bullish
-            # even if overall MTF score can't reach +20 due to HTF bearish inertia.
+            # 2. Authenticated Reversal
             if authenticated_bull_reversal and (
-                mtf_score >= 20.0
-                or (trend_score >= 25.0 and context_bias == "BULLISH")
+                mtf_score >= 15.0
+                or (trend_score >= 15.0 and (context_bias == "BULLISH" or primary_tf_bias == "BULLISH"))
+                or (is_intraday and primary_tf_bias == "BULLISH")
             ):
                 return "BUY"
-            # Additional: strong momentum reversal on the primary timeframe
-            # with structural confirmation, even without a full authenticated reversal
-            if (
-                trend_score >= 30.0
-                and context_bias == "BULLISH"
-                and st.bias == "BULLISH"
-                and bull_votes > bear_votes
-                and adx_val >= 20.0
-            ):
-                return "BUY"
-            # In a bear trend, look for SELL continuation or rally completion (Requires trend_score not actively surging)
-            if trend_score <= 5.0:
+
+            # 3. Swing Trading Alignment:
+            # If trade_style is SWING and both HTF (D1) and Context (H4) are BEARISH,
+            # SWING trades the HTF downtrend (selling bounces to premium / continuation), unless confirmed reversal.
+            if not is_intraday and htf_bias == "BEARISH":
+                if trend_score <= 5.0 or dp_zone in ("PREMIUM", "EQUILIBRIUM") or is_bear_regime:
+                    return "SELL"
+
+            # 4. Sell Continuation / Retracement short
+            if trend_score <= 5.0 and st.bias != "BULLISH" and not (st.bos and trend_score > 0):
                 if st.bos and trend_score <= -10.0:
                     return "SELL"
                 if st.bias == "BEARISH" or trend_score <= -10.0 or bear_votes > bull_votes:
                     return "SELL"
-                if dp_zone in ("PREMIUM", "EQUILIBRIUM") and (has_bear_sweep or bear_votes >= 1):
+                if dp_zone in ("PREMIUM", "EQUILIBRIUM") and (has_bear_sweep or bear_votes >= 1 or is_bear_regime):
                     return "SELL"
-                return "SELL" if htf_bias == "BEARISH" else "HOLD"
+                if htf_bias == "BEARISH" and (bear_votes >= 1 or is_bear_regime) and trend_score <= -5.0:
+                    return "SELL"
             return "HOLD"
 
         # CASE C: Ranging / Compression / Consolidation
         elif is_range_regime or abs(trend_score) < 20.0:
-            if dp_zone == "DISCOUNT" and (has_bull_sweep or st.bias == "BULLISH" or bull_votes > bear_votes):
+            if dp_zone in ("DISCOUNT", "EQUILIBRIUM") and (has_bull_sweep or (st.bias == "BULLISH" and (getattr(st, "choch", False) or trend_score >= 0)) or bull_votes > bear_votes):
                 return "BUY"
-            elif dp_zone == "PREMIUM" and (has_bear_sweep or st.bias == "BEARISH" or bear_votes > bull_votes):
+            elif dp_zone in ("PREMIUM", "EQUILIBRIUM") and (has_bear_sweep or (st.bias == "BEARISH" and (getattr(st, "choch", False) or trend_score <= 0)) or bear_votes > bull_votes):
                 return "SELL"
             elif st.bos and abs(trend_score) >= 20.0:
                 return "BUY" if trend_score > 0 else "SELL"
@@ -705,10 +732,10 @@ class DecisionEngine:
         # Regime Trend Consistency Guard: Never open counter-trend trades unless validated reversal
         regime_trend_consistent = True
         if regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL):
-            if tentative_bias == "SELL" and (not is_validated_reversal or d1_anchor_bias == "BULLISH"):
+            if tentative_bias == "SELL" and not is_validated_reversal:
                 regime_trend_consistent = False
         elif regime.primary_regime in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR):
-            if tentative_bias == "BUY" and (not is_validated_reversal or d1_anchor_bias == "BEARISH"):
+            if tentative_bias == "BUY" and not is_validated_reversal:
                 regime_trend_consistent = False
 
         # 5. Dynamic RSI Exhaustion Bounds based on ADX and regime: 70 +- 15 * TrendPower
@@ -803,7 +830,7 @@ class DecisionEngine:
                         gold_trend_following_valid = False
                 elif tentative_bias == "SELL":
                     has_gold_sell_confluence = (sweep_confirmed or st_zone in ("PREMIUM", "EQUILIBRIUM") or bos_active or (strong_expansion and ts < 0))
-                    if (macro_bias == "BULLISH" or d1_anchor_bias == "BULLISH") and not sweep_confirmed:
+                    if (macro_bias == "BULLISH" or d1_anchor_bias == "BULLISH") and not (sweep_confirmed or (bos_active and ts <= -10.0) or is_validated_reversal):
                         gold_trend_following_valid = False
                     elif not has_gold_sell_confluence:
                         gold_trend_following_valid = False

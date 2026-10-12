@@ -357,10 +357,21 @@ class UniversalOpportunityArbiter:
         if isinstance(mtf_data, dict):
             macro_d1 = str(mtf_data.get("D1", "")).upper()
             macro_h4 = str(mtf_data.get("H4", "")).upper()
+            m15_bias = str(mtf_data.get("M15", "")).upper()
+            m5_bias = str(mtf_data.get("M5", "")).upper()
+
             if bias == "BUY" and ("BEAR" in macro_d1 or "BEAR" in macro_h4):
                 utility_score = round(utility_score * 0.65, 4)
             elif bias == "SELL" and ("BULL" in macro_d1 or "BULL" in macro_h4):
                 utility_score = round(utility_score * 0.65, 4)
+
+            # Institutional Rule R2: Never short into active M15/M5 upward expansion or buy into active downward flush
+            if bias == "SELL" and ("BULL" in m15_bias and "BULL" in m5_bias):
+                utility_score = round(utility_score * 0.45, 4)
+                logger.info(f"🛡️ Arbiter: Severely penalizing {symbol} SELL by 0.45x: M15 and M5 are actively BULLISH.")
+            elif bias == "BUY" and ("BEAR" in m15_bias and "BEAR" in m5_bias):
+                utility_score = round(utility_score * 0.45, 4)
+                logger.info(f"🛡️ Arbiter: Severely penalizing {symbol} BUY by 0.45x: M15 and M5 are actively BEARISH.")
 
         # Setup Grade Assignment:
         # GRADE A+ if Utility >= 1.80, Win Prob >= 70%, Confluence >= 75, EV >= 0.85R

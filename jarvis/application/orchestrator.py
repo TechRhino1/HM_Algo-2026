@@ -106,17 +106,11 @@ class JarvisOrchestrator:
 
         self.ml_predictor = OnlineMLPredictor()
         self.strategy_bandit = StrategyBandit()
-        # These are the orchestrator's OWN backstop gate (checked just before
-        # execution, alongside the one inside RiskEngine). They are separate
-        # objects from RiskEngine's, so they need the same mode scoping — leaving
-        # them on the bare filenames would let a paper run's baselines gate the
-        # live account through this path even after RiskEngine was fixed.
-        self.circuit_breaker = CircuitBreaker(
-            db_path=mode_scoped_db_path("jarvis_circuit_state.db", self.mode)
-        )
-        self.drawdown_guard = DrawdownGuard(
-            db_path=mode_scoped_db_path("jarvis_drawdown_state.db", self.mode)
-        )
+        self.risk_engine = RiskEngine(mode=self.mode)
+        # Share the exact same CircuitBreaker and DrawdownGuard instances with RiskEngine
+        # so pause states, consecutive loss counts, and drawdown limits stay 100% in sync.
+        self.circuit_breaker = self.risk_engine.circuit_breaker
+        self.drawdown_guard = self.risk_engine.drawdown_guard
         self._pending_features = {}
 
         # ── In-process execution guard ─────────────────────────────────────
@@ -160,13 +154,12 @@ class JarvisOrchestrator:
         self.context_engine = MarketContextEngine()
         self.regime_classifier = MarketRegimeClassifier()
         self.analyst_cluster = ParallelAnalystCluster()
-        self.decision_engine = DecisionEngine(ml_predictor=self.ml_predictor)
+        self.decision_engine = DecisionEngine(ml_predictor=self.ml_predictor, strategy_bandit=self.strategy_bandit)
         self.opportunity_arbiter = UniversalOpportunityArbiter(
             ml_predictor=self.ml_predictor,
             bandit=self.strategy_bandit,
             self_learning=getattr(self.decision_engine, "self_learning", None)
         )
-        self.risk_engine = RiskEngine(mode=self.mode)
         self.order_manager = OrderManager(self.mt5_client)
         self.execution_engine = ExecutionEngine(self.mt5_client, self.state_manager)
         self.trade_memory = TradeMemory()
@@ -875,15 +868,19 @@ class JarvisOrchestrator:
             p for p in positions if (p.symbol == symbol or (symbol == "XAUUSD" and "GOLD" in p.symbol)
                                       or canonical_sym in p.symbol.upper())
         ]
+        all_pending_orders = self.mt5_client.get_pending_orders() if hasattr(self.mt5_client, "get_pending_orders") else []
+        active_sym_pending = [
+            o for o in all_pending_orders if (getattr(o, "symbol", "") == symbol or (symbol == "XAUUSD" and "GOLD" in getattr(o, "symbol", "")) or canonical_sym in getattr(o, "symbol", "").upper())
+        ]
 
         # Asian Pre-Market Blackout Rule (01:00 to 05:00 UTC) for Live Execution
         now_utc_hour = datetime.now(timezone.utc).hour
         is_asian_blackout = (1 <= now_utc_hour < 5) and not is_crypto(symbol) and self.mode == "live"
 
         # Active Open Position Trailing & Profit Lock Management
-        # Suppressed on a dry run: trailing MODIFIES live stop levels, which is a
-        # side effect a read-only preview must never have.
-        if not dry_run:
+        # Suppressed on a dry run. When PositionMonitorEngine is actively running,
+        # defer to it to prevent race-condition collisions on MT5 modify_position.
+        if not dry_run and not (hasattr(self, "position_monitor") and getattr(self.position_monitor, "_running", False)):
             for pos in active_sym_positions:
                 try:
                     manage_res = self.order_manager.manage_position(pos, context)
@@ -911,11 +908,15 @@ class JarvisOrchestrator:
             decision.decision = "WAIT"
             decision.execution_authorized = False
             auth_res = {"authorized": False, "reason": "IN_PROCESS_LOCK: Execution already in progress for this symbol."}
-        elif len(active_sym_positions) >= 2 and wants_entry:
+        elif (len(active_sym_positions) + len(active_sym_pending)) >= 2 and wants_entry:
             decision.decision = "WAIT"
             decision.execution_authorized = False
-            auth_res = {"authorized": False, "reason": f"HARD_SYMBOL_LIMIT: Symbol {symbol} already has 2 active positions (Max 2)."}
-        elif cooldown_active and len(active_sym_positions) == 0 and wants_entry:
+            auth_res = {"authorized": False, "reason": f"HARD_SYMBOL_LIMIT: Symbol {symbol} already has {len(active_sym_positions)} active positions and {len(active_sym_pending)} pending orders (Max 2)."}
+        elif len(active_sym_pending) >= 1 and wants_entry:
+            decision.decision = "WAIT"
+            decision.execution_authorized = False
+            auth_res = {"authorized": False, "reason": f"PENDING_ORDER_EXISTS: Symbol {symbol} already has an active pending order."}
+        elif cooldown_active and (len(active_sym_positions) + len(active_sym_pending)) == 0 and wants_entry:
             remaining = int(self._SAME_SYMBOL_COOLDOWN_SEC - (time.time() - last_exec_time))
             decision.decision = "WAIT"
             decision.execution_authorized = False
@@ -932,6 +933,7 @@ class JarvisOrchestrator:
                 max_allowed_spread_pips=_spec.max_spread_pips,
                 context=context,
                 is_second_trade=(len(active_sym_positions) == 1),
+                pending_orders=self.mt5_client.get_pending_orders() if hasattr(self.mt5_client, "get_pending_orders") else [],
                 # Only set when the calibrated policy is the authority. None
                 # leaves the risk engine reading the legacy verdict, which is
                 # what it has always done; True stops the guard re-imposing the
@@ -999,7 +1001,7 @@ class JarvisOrchestrator:
                 try:
                     exec_res = self.execution_engine.execute_decision(decision, lots)
                     status = (exec_res or {}).get("status")
-                    if status == "FILLED":
+                    if status in ("FILLED", "PLACED"):
                         self.risk_engine.commit_risk(canonical_sym)
                     elif status == "UNKNOWN":
                         # The order may be live at the broker. Keep the risk
@@ -1020,12 +1022,12 @@ class JarvisOrchestrator:
                     logger.error(f"Execution error for {canonical_sym}: {e}", exc_info=True)
                 finally:
                     # Always release in-progress lock. Start the cooldown for a
-                    # fill AND for an unknown outcome -- an unconfirmed order
+                    # fill, placed pending order, AND for an unknown outcome -- an unconfirmed order
                     # must not be re-sent on the next sweep.
                     with self._execution_lock:
                         self._execution_in_progress.discard(canonical_sym)
                         _st = (exec_res or {}).get("status")
-                        if _st in ("FILLED", "UNKNOWN"):
+                        if _st in ("FILLED", "UNKNOWN", "PLACED"):
                             self._last_execution_time[canonical_sym] = time.time()
                             logger.info(f"Execution lock released for {canonical_sym}. Cooldown {self._SAME_SYMBOL_COOLDOWN_SEC}s started.")
             # Record pending features for online learning and journal entry (§17)
@@ -1207,7 +1209,7 @@ class JarvisOrchestrator:
                 for s, st, r in raw_results:
                     if s == sym and st == candidate.trade_style:
                         exec_item = r.get("execution")
-                        if exec_item and exec_item.get("status") == "FILLED":
+                        if exec_item and exec_item.get("status") in ("FILLED", "PLACED"):
                             already_fired = True
                         break
 
@@ -1242,10 +1244,32 @@ class JarvisOrchestrator:
                 ctx = candidate.context
                 cur_spread = ctx.volatility.current_spread_pips if ctx and hasattr(ctx, "volatility") else _spec.typical_spread_pips
 
+                with self._execution_lock:
+                    already_executing = canonical_sym in self._execution_in_progress
+                    last_exec_time = self._last_execution_time.get(canonical_sym, 0.0)
+                    cooldown_active = (time.time() - last_exec_time) < self._SAME_SYMBOL_COOLDOWN_SEC
+
                 active_sym_positions = [
                     p for p in positions if (p.symbol == sym or (sym == "XAUUSD" and "GOLD" in p.symbol)
                                               or canonical_sym in p.symbol.upper())
                 ]
+                all_pending_orders = self.mt5_client.get_pending_orders() if hasattr(self.mt5_client, "get_pending_orders") else []
+                active_sym_pending = [
+                    o for o in all_pending_orders if (getattr(o, "symbol", "") == sym or (sym == "XAUUSD" and "GOLD" in getattr(o, "symbol", "")) or canonical_sym in getattr(o, "symbol", "").upper())
+                ]
+
+                if already_executing:
+                    logger.info(f"Arbiter skipping {canonical_sym}: execution already in progress.")
+                    continue
+                if (len(active_sym_positions) + len(active_sym_pending)) >= 2:
+                    logger.info(f"Arbiter skipping {canonical_sym}: max symbol limit reached ({len(active_sym_positions)} pos, {len(active_sym_pending)} pending).")
+                    continue
+                if len(active_sym_pending) >= 1:
+                    logger.info(f"Arbiter skipping {canonical_sym}: pending order already resting.")
+                    continue
+                if cooldown_active and (len(active_sym_positions) + len(active_sym_pending)) == 0:
+                    logger.info(f"Arbiter skipping {canonical_sym}: cooldown active.")
+                    continue
 
                 decision.decision = "EXECUTE"
 
@@ -1255,6 +1279,7 @@ class JarvisOrchestrator:
                     max_allowed_spread_pips=_spec.max_spread_pips,
                     context=ctx,
                     is_second_trade=(len(active_sym_positions) == 1),
+                    pending_orders=all_pending_orders,
                     entry_authorized_override=True
                 )
 
@@ -1278,7 +1303,7 @@ class JarvisOrchestrator:
                     try:
                         logger.info(f"🚀 Autonomous Multi-Style Execution dispatched for {candidate.symbol} ({candidate.trade_style})")
                         exec_res = self.execution_engine.execute_decision(decision, lots)
-                        if exec_res and exec_res.get("status") == "FILLED":
+                        if exec_res and exec_res.get("status") in ("FILLED", "PLACED"):
                             self.risk_engine.commit_risk(canonical_sym)
                         else:
                             self.risk_engine.release_risk(canonical_sym)
@@ -1288,7 +1313,7 @@ class JarvisOrchestrator:
                     finally:
                         with self._execution_lock:
                             self._execution_in_progress.discard(canonical_sym)
-                            if exec_res and exec_res.get("status") == "FILLED":
+                            if exec_res and exec_res.get("status") in ("FILLED", "UNKNOWN", "PLACED"):
                                 self._last_execution_time[canonical_sym] = time.time()
                                 logger.info(f"Execution lock released for {canonical_sym}. Cooldown {self._SAME_SYMBOL_COOLDOWN_SEC}s started.")
                     # Single trade executed this pass

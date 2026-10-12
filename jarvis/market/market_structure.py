@@ -72,13 +72,14 @@ class MarketStructureEngine:
         choch_bearish = (hh and hl) and (latest_close < recent_sl)
 
         bias = "NEUTRAL"
-        if hh and hl:
+        # Institutional Rule: Active structural breaks (BOS / CHoCH) immediately supersede historical pivots
+        if choch_bullish or bos_bullish:
+            bias = "BULLISH"
+        elif choch_bearish or bos_bearish:
+            bias = "BEARISH"
+        elif hh and hl:
             bias = "BULLISH"
         elif lh and ll:
-            bias = "BEARISH"
-        elif bos_bullish or choch_bullish:
-            bias = "BULLISH"
-        elif bos_bearish or choch_bearish:
             bias = "BEARISH"
 
         # Dynamic Momentum & Price Location Override:
@@ -91,12 +92,14 @@ class MarketStructureEngine:
             swing_range = max(recent_sh - recent_sl, 1e-9)
             rebound_pct = (latest_close - recent_sl) / swing_range
 
-            # Price surging upward through EMAs and past equilibrium of swing range
-            if bias == "BEARISH" and latest_close > ema20 and ema20 >= ema50 and rebound_pct >= 0.55:
-                bias = "BULLISH" if rebound_pct >= 0.75 else "NEUTRAL"
-            # Price collapsing downward through EMAs and below equilibrium of swing range
-            elif bias == "BULLISH" and latest_close < ema20 and ema20 <= ema50 and rebound_pct <= 0.45:
-                bias = "BEARISH" if rebound_pct <= 0.25 else "NEUTRAL"
+            # Price surging upward through EMA20 and past equilibrium of swing range
+            # Note: Do not require ema20 >= ema50 because in an impulse V-rally,
+            # price surges past ema20 well before ema50 has time to cross!
+            if bias == "BEARISH" and latest_close > ema20 and rebound_pct >= 0.50:
+                bias = "BULLISH" if (rebound_pct >= 0.65 or latest_close > ema50) else "NEUTRAL"
+            # Price collapsing downward through EMA20 and below equilibrium of swing range
+            elif bias == "BULLISH" and latest_close < ema20 and rebound_pct <= 0.50:
+                bias = "BEARISH" if (rebound_pct <= 0.35 or latest_close < ema50) else "NEUTRAL"
 
         # Premium / Discount / Equilibrium Zones
         recent_max = float(highs[-200:].max()) if len(highs) >= 200 else float(highs.max())

@@ -172,6 +172,17 @@ class ExecutionEngine:
         _order_timer = ORDER_LATENCY.time(route="pending" if use_limit else "market")
 
         if use_limit:
+            # Task 1: Deduplication Guard — Block duplicate pending limit orders on the same symbol
+            if hasattr(self.mt5_client, "get_pending_orders"):
+                existing_pending = self.mt5_client.get_pending_orders(decision.symbol)
+                if existing_pending:
+                    logger.info(
+                        f"🛡️ PENDING ORDER DEDUPLICATION: Symbol {decision.symbol} already has "
+                        f"{len(existing_pending)} open pending order(s) (Ticket #{existing_pending[0].get('ticket')}). "
+                        f"Suppressing duplicate limit order dispatch."
+                    )
+                    return {"status": "BLOCKED", "reason": "Existing pending order active"}
+
             # Task 2b: Direction-vs-price sanity check for resting limit orders
             ctx = getattr(decision, "context", None)
             cur_price = getattr(ctx, "current_price", decision.entry_price) if ctx else decision.entry_price

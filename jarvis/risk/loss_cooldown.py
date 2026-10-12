@@ -15,6 +15,8 @@ class LossCooldownManager:
     def __init__(self):
         self.consecutive_losses = 0
         self.consecutive_wins = 0
+        self.consecutive_losses_by_symbol: Dict[str, int] = {}
+        self.cooldown_expiry_by_symbol: Dict[str, float] = {}
         self.daily_pnl = 0.0
         self.cooldown_bars_remaining = 0
         self.trades_today = 0
@@ -24,45 +26,63 @@ class LossCooldownManager:
 
     def record_trade_result(self, pnl: float, is_win: bool, symbol: str = "", current_date=None) -> None:
         """Record trade outcome and update streak tracking."""
+        import time
         if current_date is not None and current_date != self.current_date:
             self.reset_daily(current_date)
             
         self.daily_pnl += pnl
         self.trades_today += 1
-        if symbol:
-            self.trades_today_by_symbol[symbol] = self.trades_today_by_symbol.get(symbol, 0) + 1
+        sym_key = str(symbol).strip().upper() if symbol else ""
+        if sym_key:
+            self.trades_today_by_symbol[sym_key] = self.trades_today_by_symbol.get(sym_key, 0) + 1
             
         if is_win:
             self.consecutive_wins += 1
             self.consecutive_losses = 0
+            if sym_key:
+                self.consecutive_losses_by_symbol[sym_key] = 0
+                self.cooldown_expiry_by_symbol.pop(sym_key, None)
         else:
             self.consecutive_losses += 1
             self.consecutive_wins = 0
+            if sym_key:
+                cur_sym_losses = self.consecutive_losses_by_symbol.get(sym_key, 0) + 1
+                self.consecutive_losses_by_symbol[sym_key] = cur_sym_losses
+                if cur_sym_losses == 3:
+                    self.cooldown_expiry_by_symbol[sym_key] = time.time() + 900.0  # 15 minutes cooldown
+                    logger.info(f"LossCooldownManager: 3 consecutive losses for {sym_key}. Pausing {sym_key} for 15 minutes.")
+                elif cur_sym_losses >= 5:
+                    self.cooldown_expiry_by_symbol[sym_key] = time.time() + 1800.0  # 30 minutes cooldown
+                    logger.info(f"LossCooldownManager: 5 consecutive losses for {sym_key}. Pausing {sym_key} for 30 minutes.")
             
+        # Backtest bar tracking (only applies when tick_bar is actively called)
         if self.consecutive_losses == 3:
             self.cooldown_bars_remaining = 2
-            logger.info("LossCooldownManager: 3 consecutive losses. Pausing for 2 bars.")
         elif self.consecutive_losses >= 5:
             self.cooldown_bars_remaining = 4
-            logger.info("LossCooldownManager: 5 consecutive losses. Pausing for 4 bars.")
 
     def should_skip_trade(self, symbol: str = "") -> Tuple[bool, str]:
         """Check if we should skip the next trade.
         Returns (should_skip, reason)."""
-        if self.cooldown_bars_remaining > 0:
-            return True, f"Cooldown active for {self.cooldown_bars_remaining} more bars."
-            
-        # Max 4% daily drawdown
+        import time
+        sym_key = str(symbol).strip().upper() if symbol else ""
+        
+        # 1. Per-symbol time-based cooldown (Isolated per asset)
+        if sym_key:
+            expiry = self.cooldown_expiry_by_symbol.get(sym_key, 0.0)
+            if time.time() < expiry:
+                remaining_sec = int(expiry - time.time())
+                return True, f"Symbol {sym_key} loss cooldown active ({remaining_sec}s remaining)."
+        
+        # 2. Daily Drawdown safe guard (Max 4% daily drawdown)
         if self.peak_equity > 0:
             daily_dd = self.daily_pnl / self.peak_equity
             if daily_dd <= -0.04:
                 return True, "Max daily drawdown (4%) reached."
                 
-        # Max 8 trades per day per symbol
-        if symbol and self.trades_today_by_symbol.get(symbol, 0) >= 8:
-            return True, f"Max 8 trades per day reached for symbol {symbol}."
-        elif not symbol and self.trades_today >= 8:
-            return True, "Max 8 trades per day reached."
+        # 3. Max trades per day per symbol
+        if sym_key and self.trades_today_by_symbol.get(sym_key, 0) >= 12:
+            return True, f"Max 12 trades per day reached for symbol {sym_key}."
             
         return False, ""
 
