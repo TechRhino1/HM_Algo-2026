@@ -175,10 +175,11 @@ class ExecutionEngine:
             # Task 1: Deduplication Guard — Block duplicate pending limit orders on the same symbol
             if hasattr(self.mt5_client, "get_pending_orders"):
                 existing_pending = self.mt5_client.get_pending_orders(decision.symbol)
-                if existing_pending:
+                if isinstance(existing_pending, (list, tuple)) and len(existing_pending) > 0:
+                    ticket_id = existing_pending[0].get('ticket') if isinstance(existing_pending[0], dict) else getattr(existing_pending[0], 'ticket', '?')
                     logger.info(
                         f"🛡️ PENDING ORDER DEDUPLICATION: Symbol {decision.symbol} already has "
-                        f"{len(existing_pending)} open pending order(s) (Ticket #{existing_pending[0].get('ticket')}). "
+                        f"{len(existing_pending)} open pending order(s) (Ticket #{ticket_id}). "
                         f"Suppressing duplicate limit order dispatch."
                     )
                     return {"status": "BLOCKED", "reason": "Existing pending order active"}

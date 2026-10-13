@@ -214,6 +214,9 @@ class PositionMonitorEngine:
             time.sleep(sleep_time)
 
     def _run_monitor_tick(self):
+        # 1. Continuous Pending Order Staleness & Invalidation Management (every 2s)
+        self._manage_pending_orders_tick()
+
         positions: List[PositionSnapshot] = self.state_manager.positions
         if not positions:
             return
@@ -289,6 +292,80 @@ class PositionMonitorEngine:
             self._remember_closed_excursions(pos.ticket)
             return True
         return False
+
+    def _manage_pending_orders_tick(self):
+        """Scans resting pending orders every 2s for TTL expiration, runaway price, or structural invalidation."""
+        if not hasattr(self.mt5_client, "get_pending_orders"):
+            return
+        try:
+            pending = self.mt5_client.get_pending_orders()
+            if not pending:
+                return
+
+            now = time.time()
+            for o in pending:
+                ticket = o.get("ticket")
+                setup_time = o.get("time_setup", 0)
+                age = (now - setup_time) if setup_time > 0 else 0
+                sym = o.get("symbol", "UNKNOWN")
+                otype = str(o.get("type", "")).upper()
+                open_price = float(o.get("price_open", 0.0) or 0.0)
+                sl_price = float(o.get("sl", 0.0) or 0.0)
+                tp_price = float(o.get("tp", 0.0) or 0.0)
+                comment = str(o.get("comment", "")).upper()
+
+                # Dynamic TTL: Scalp orders expire in 5m (300s), Day Trading in 10m (600s), Swing in 20m (1200s)
+                allowed_age = 600.0
+                if "SCALP" in comment:
+                    allowed_age = 300.0
+                elif "DAY" in comment:
+                    allowed_age = 600.0
+                elif "SWING" in comment:
+                    allowed_age = 1200.0
+
+                cancel_reason = None
+                if age > allowed_age:
+                    cancel_reason = f"TTL expired ({age / 60.0:.1f}m > {allowed_age / 60.0:.1f}m)"
+
+                ctx = self._get_context(sym)
+                if ctx and not cancel_reason and open_price > 0:
+                    c_price = ctx.current_price
+                    atr = getattr(ctx.volatility, "atr", 0.0) or (c_price * 0.005)
+                    st = getattr(ctx, "structure", None)
+                    mom = getattr(ctx, "momentum", None)
+                    trend_score = float(getattr(mom, "trend_score", 0.0) or 0.0) if mom else 0.0
+
+                    if "BUY" in otype:
+                        # Invalidation 1: Price has dumped below stop loss before order filled
+                        if sl_price > 0 and c_price <= sl_price:
+                            cancel_reason = f"Structural invalidation: price ({c_price:.4f}) dropped below SL ({sl_price:.4f})"
+                        # Invalidation 2: Price ran away to target or > 1.5 ATR without filling limit
+                        elif tp_price > 0 and c_price >= tp_price:
+                            cancel_reason = f"Runaway target reached without fill ({c_price:.4f} >= TP {tp_price:.4f})"
+                        elif (c_price - open_price) >= (1.5 * atr):
+                            cancel_reason = f"Runaway excursion (+{c_price - open_price:.4f} >= 1.5 ATR)"
+                        # Invalidation 3: Bearish structure shift or severe adverse momentum
+                        elif (getattr(st, "choch", False) and getattr(st, "bias", "") == "BEARISH") or trend_score <= -30.0:
+                            cancel_reason = f"Adverse market structure shift (choch_bear, trend_score={trend_score:.1f})"
+
+                    elif "SELL" in otype:
+                        # Invalidation 1: Price has spiked above stop loss before order filled
+                        if sl_price > 0 and c_price >= sl_price:
+                            cancel_reason = f"Structural invalidation: price ({c_price:.4f}) surged above SL ({sl_price:.4f})"
+                        # Invalidation 2: Price ran away to target or > 1.5 ATR without filling limit
+                        elif tp_price > 0 and c_price <= tp_price:
+                            cancel_reason = f"Runaway target reached without fill ({c_price:.4f} <= TP {tp_price:.4f})"
+                        elif (open_price - c_price) >= (1.5 * atr):
+                            cancel_reason = f"Runaway excursion (-{open_price - c_price:.4f} >= 1.5 ATR)"
+                        # Invalidation 3: Bullish structure shift or severe adverse momentum
+                        elif (getattr(st, "choch", False) and getattr(st, "bias", "") == "BULLISH") or trend_score >= 30.0:
+                            cancel_reason = f"Adverse market structure shift (choch_bull, trend_score={trend_score:.1f})"
+
+                if cancel_reason:
+                    logger.info(f"⏳ Auto-cancelling pending limit order #{ticket} ({sym} {otype}): {cancel_reason}")
+                    self.mt5_client.cancel_pending_order(ticket)
+        except Exception as e:
+            logger.debug(f"_manage_pending_orders_tick error: {e}")
 
     # ─── Single-Position Logic ──────────────────────────────────────────────────
 
@@ -560,6 +637,9 @@ class PositionMonitorEngine:
             for act in exit_dec.actions:
                 actions.append(f"{act}@{new_sl:.{digits}f}")
 
+            # Compute current R-multiple for early defense and milestone evaluation
+            current_r = ((c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)) / max(risk_dist, 1e-6)
+
             # ── 3.5 Live MFE Scale-Out & Retracement Protection (E2) ───────────
             if pos.type == "BUY":
                 peak_mfe = self._peak_favorable_price[pos.ticket] - pos.open_price
@@ -581,6 +661,30 @@ class PositionMonitorEngine:
                         if (new_sl == 0 or mfe_locked_sl < new_sl) and mfe_locked_sl > c_price:
                             new_sl = mfe_locked_sl
                             actions.append(f"MFE_RETRACE_50%_LOCK@{new_sl:.4f}")
+
+            # ── 3.8 Market Direction Reversal & Structural Invalidation Guard ────
+            if not in_grace_period:
+                rev_sl, rev_act, should_close, rev_reason = self._check_market_direction_reversal(
+                    pos=pos,
+                    ctx=ctx,
+                    c_price=c_price,
+                    atr=atr,
+                    risk_dist=risk_dist,
+                    current_r=current_r,
+                    digits=digits,
+                    current_sl=new_sl,
+                    policy=policy,
+                )
+                if should_close:
+                    logger.warning(
+                        f"🚨 MARKET DIRECTION REVERSAL EXIT: Closing #{pos.ticket} {pos.symbol} {pos.type} "
+                        f"at {c_price:.5f} | Profit: +{current_r:.2f}R | Reason: {rev_reason}"
+                    )
+                    if self._execute_exit(pos, reason=rev_reason):
+                        return
+                elif rev_sl != new_sl and rev_act:
+                    new_sl = rev_sl
+                    actions.append(rev_act)
 
             # ── 4. Regime, VWAP & Momentum discretionary checks (Suppressed in Grace Period) ──
             if not in_grace_period:
@@ -1008,8 +1112,8 @@ class PositionMonitorEngine:
             if is_invalidated:
                 profit_pips = (c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)
                 risk_dist = self._initial_risk_dist.get(pos.ticket, atr * 1.5)
-                # Only ratchet on regime invalidation if already secured >= 1.80R profit
-                if profit_pips >= (risk_dist * 1.80):
+                # Ratchet on regime invalidation once secured >= 0.75R profit
+                if profit_pips >= (risk_dist * 0.75):
                     if pos.type == "BUY":
                         candidate = pos.open_price + (profit_pips * 0.50)
                         if candidate > current_sl:
@@ -1047,7 +1151,7 @@ class PositionMonitorEngine:
             return current_sl, None
 
         risk_dist = self._initial_risk_dist.get(pos.ticket, atr * 1.5)
-        min_profit_dist = max(risk_dist * 1.5, atr * 1.0)
+        min_profit_dist = max(risk_dist * 0.80, atr * 0.60)
 
         if pos.type == "BUY" and c_price < vwap:
             profit_pips = c_price - pos.open_price
@@ -1085,7 +1189,7 @@ class PositionMonitorEngine:
             else (pos.open_price - c_price)
         )
         risk_dist = self._initial_risk_dist.get(pos.ticket, atr * 1.5)
-        min_profit_dist = max(risk_dist * 1.5, atr * 1.0)
+        min_profit_dist = max(risk_dist * 0.65, atr * 0.50)
 
         if profit_pips < min_profit_dist:
             return current_sl, None
@@ -1103,6 +1207,144 @@ class PositionMonitorEngine:
                 return candidate, f"MOMENTUM_EXHAUST@{candidate:.4f}"
 
         return current_sl, None
+
+    # ─── Market Direction Reversal & Structural Invalidation Guard ───────────
+
+    def _check_market_direction_reversal(
+        self,
+        pos: PositionSnapshot,
+        ctx: Optional[MarketContext],
+        c_price: float,
+        atr: float,
+        risk_dist: float,
+        current_r: float,
+        digits: int,
+        current_sl: float,
+        policy: Any,
+    ) -> Tuple[float, Optional[str], bool, Optional[str]]:
+        """
+        Institutional Profit Booking & Direction Reversal Defense:
+        Detects Change of Character (CHoCH), Break of Structure (BOS),
+        candlestick reversal, macro divergence, and momentum shifts against an active trade.
+
+        Guarantees:
+        - Phase 1 (+0.50R <= current_r < 1.0R): On opposite CHoCH / structural shift or
+          adverse momentum, immediately move SL to breakeven + buffer (locks zero-loss).
+        - Phase 2 (+1.0R <= current_r < 1.80R): On multi-factor reversal (e.g. CHoCH +
+          divergence/momentum), executes discretionary market exit to BANK solid profit.
+          On single reversal factor, ratchets SL to lock >= +0.50R profit.
+        - Phase 3 (current_r >= 1.80R): On opposite structural shift, executes discretionary
+          market exit or locks >= 70% of peak floating profit.
+
+        Returns: (candidate_sl, action_str, should_close, close_reason)
+        """
+        if ctx is None or current_r < 0.50:
+            return current_sl, None, False, None
+
+        try:
+            is_buy = (pos.type == "BUY")
+            reversal_signals: List[str] = []
+
+            # 1. Structure: Change of Character (CHoCH) or Break of Structure (BOS)
+            struct = getattr(ctx, "structure", None)
+            if struct is not None:
+                choch = getattr(struct, "choch", False)
+                choch_type = str(getattr(struct, "choch_type", "NONE") or "").upper()
+                bos = getattr(struct, "bos", False)
+                bos_type = str(getattr(struct, "bos_type", "NONE") or "").upper()
+                struct_bias = str(getattr(struct, "bias", "NEUTRAL") or "").upper()
+
+                if is_buy:
+                    if choch and ("BEAR" in choch_type):
+                        reversal_signals.append(f"BEARISH_CHOCH({choch_type})")
+                    if bos and ("BEAR" in bos_type):
+                        reversal_signals.append(f"BEARISH_BOS({bos_type})")
+                    if struct_bias == "BEARISH":
+                        reversal_signals.append("STRUCT_BIAS_BEARISH")
+                else:
+                    if choch and ("BULL" in choch_type):
+                        reversal_signals.append(f"BULLISH_CHOCH({choch_type})")
+                    if bos and ("BULL" in bos_type):
+                        reversal_signals.append(f"BULLISH_BOS({bos_type})")
+                    if struct_bias == "BULLISH":
+                        reversal_signals.append("STRUCT_BIAS_BULLISH")
+
+            # 2. Momentum: Strong Trend Score Inversion & Divergence
+            mom = getattr(ctx, "momentum", None)
+            if mom is not None:
+                trend_score = float(getattr(mom, "trend_score", 0.0) or 0.0)
+                divergence = str(getattr(mom, "divergence", "NONE") or "").upper()
+
+                if is_buy:
+                    if trend_score <= -25.0:
+                        reversal_signals.append(f"ADVERSE_MOMENTUM({trend_score:.0f})")
+                    if "BEAR" in divergence:
+                        reversal_signals.append(f"DIVERGENCE({divergence})")
+                else:
+                    if trend_score >= 25.0:
+                        reversal_signals.append(f"ADVERSE_MOMENTUM(+{trend_score:.0f})")
+                    if "BULL" in divergence:
+                        reversal_signals.append(f"DIVERGENCE({divergence})")
+
+            # 3. Candlestick Price Action Reversal
+            candle = getattr(ctx, "candlestick_pattern", {})
+            if isinstance(candle, dict) and candle:
+                c_dir = str(candle.get("direction", "") or candle.get("bias", "")).upper()
+                c_pat = candle.get("pattern", "UNKNOWN")
+                if is_buy and "BEAR" in c_dir:
+                    reversal_signals.append(f"CANDLE_REVERSAL({c_pat})")
+                elif (not is_buy) and "BULL" in c_dir:
+                    reversal_signals.append(f"CANDLE_REVERSAL({c_pat})")
+
+            # 4. Multi-Timeframe Alignment Flip
+            mtf = getattr(ctx, "mtf_alignment", {})
+            if isinstance(mtf, dict) and mtf:
+                m5_bias = str(mtf.get("M5", "")).upper()
+                m15_bias = str(mtf.get("M15", "")).upper()
+                if is_buy and ("BEAR" in m5_bias and "BEAR" in m15_bias):
+                    reversal_signals.append("MTF_M5_M15_BEARISH")
+                elif (not is_buy) and ("BULL" in m5_bias and "BULL" in m15_bias):
+                    reversal_signals.append("MTF_M5_M15_BULLISH")
+
+            if not reversal_signals:
+                return current_sl, None, False, None
+
+            sig_summary = ", ".join(reversal_signals)
+            has_structural_break = any("CHOCH" in s or "BOS" in s for s in reversal_signals)
+            signal_count = len(reversal_signals)
+
+            # ── PHASE 3: High Profit Runner (current_r >= 1.80R) ─────────────────
+            if current_r >= 1.80:
+                if has_structural_break or signal_count >= 2:
+                    return current_sl, None, True, f"RUNNER_REVERSAL_EXIT(+{current_r:.2f}R | {sig_summary})"
+                profit_dist = (c_price - pos.open_price) if is_buy else (pos.open_price - c_price)
+                lock_dist = profit_dist * 0.70
+                candidate = round(pos.open_price + lock_dist if is_buy else pos.open_price - lock_dist, digits)
+                if (is_buy and candidate > current_sl) or ((not is_buy) and (current_sl == 0 or candidate < current_sl)):
+                    return candidate, f"RUNNER_REVERSAL_LOCK_70%@{candidate:.4f}", False, None
+
+            # ── PHASE 2: Solid Profit (1.0R <= current_r < 1.80R) ────────────────
+            elif current_r >= 1.0:
+                if (has_structural_break and signal_count >= 2) or signal_count >= 3:
+                    return current_sl, None, True, f"DIRECTION_REVERSAL_BANK(+{current_r:.2f}R | {sig_summary})"
+
+                profit_dist = (c_price - pos.open_price) if is_buy else (pos.open_price - c_price)
+                lock_dist = max(risk_dist * 0.50, profit_dist * 0.50)
+                candidate = round(pos.open_price + lock_dist if is_buy else pos.open_price - lock_dist, digits)
+                if (is_buy and candidate > current_sl) or ((not is_buy) and (current_sl == 0 or candidate < current_sl)):
+                    return candidate, f"REVERSAL_LOCK_50%@{candidate:.4f}", False, None
+
+            # ── PHASE 1: Early Profit (+0.50R <= current_r < 1.0R) ───────────────
+            else:
+                buf = policy.buffer_distance(risk_dist) if hasattr(policy, "buffer_distance") else min(atr * 0.10, risk_dist * 0.10)
+                be_sl = round(pos.open_price + buf if is_buy else pos.open_price - buf, digits)
+                if (is_buy and be_sl > current_sl) or ((not is_buy) and (current_sl == 0 or be_sl < current_sl)):
+                    return be_sl, f"REVERSAL_DEFENSE_BE@{be_sl:.4f}({sig_summary})", False, None
+
+        except Exception as e:
+            logger.debug(f"_check_market_direction_reversal error for #{pos.ticket}: {e}")
+
+        return current_sl, None, False, None
 
     # ─── Emergency Breakeven ───────────────────────────────────────────────────
 

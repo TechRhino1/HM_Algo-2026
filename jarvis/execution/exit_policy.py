@@ -235,7 +235,8 @@ def evaluate_exit(
     # than the initial stop or the trail sits behind the stop and never ratchets.
     if r_multiple >= policy.trail_activation_r and atr > 0:
         dec.trail_active = True
-        raw_trail_dist = atr * policy.runner_trail_atr
+        effective_mult = min(policy.runner_trail_atr, 1.50) if r_multiple >= 1.80 else policy.runner_trail_atr
+        raw_trail_dist = atr * effective_mult
         # Cap trail distance so it cannot lag behind entry on high-ATR instruments (e.g. Gold where runner_trail_atr=2.6)
         trail_dist = min(raw_trail_dist, max(risk_dist * 1.5, atr * 0.8))
         trail_sl = round(price - trail_dist, digits) if is_buy else round(price + trail_dist, digits)
@@ -244,11 +245,11 @@ def evaluate_exit(
             # Only trail once it is above entry, otherwise it cannot lock profit.
             if trail_sl > entry and trail_sl > dec.new_sl and trail_sl < price:
                 dec.new_sl = trail_sl
-                dec.actions.append(f"TRAIL_ATR_{policy.runner_trail_atr:.2f}")
+                dec.actions.append(f"TRAIL_ATR_{effective_mult:.2f}")
         else:
             if trail_sl < entry and (dec.new_sl == 0 or trail_sl < dec.new_sl) and trail_sl > price:
                 dec.new_sl = trail_sl
-                dec.actions.append(f"TRAIL_ATR_{policy.runner_trail_atr:.2f}")
+                dec.actions.append(f"TRAIL_ATR_{effective_mult:.2f}")
 
     # ── 5. Structural ratchet ───────────────────────────────────────────────
     # MUST be gated (>= 1.50R) to prevent suffocating trades in entry noise/spread!

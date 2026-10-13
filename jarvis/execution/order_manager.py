@@ -37,8 +37,13 @@ class OrderManager:
         self._exit_policy: Dict[int, ExitPolicy] = {}
         self._be_locked: set = set()
 
-    def cleanup_stale_pending_orders(self, max_age_sec: int = 1800, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Scans pending orders and auto-cancels any order exceeding max_age_sec (default 30 mins)."""
+    def cleanup_stale_pending_orders(
+        self,
+        max_age_sec: int = 600,
+        symbol: Optional[str] = None,
+        context_map: Optional[Dict[str, MarketContext]] = None
+    ) -> List[Dict[str, Any]]:
+        """Scans pending orders and auto-cancels stale, structurally invalidated, or runaway orders."""
         pending = self.mt5_client.get_pending_orders(symbol=symbol)
         if not pending:
             return []
@@ -49,9 +54,63 @@ class OrderManager:
             ticket = o.get("ticket")
             setup_time = o.get("time_setup", 0)
             age = (now - setup_time) if setup_time > 0 else 0
-            if age > max_age_sec:
-                sym = o.get("symbol", "UNKNOWN")
-                logger.info(f"⏳ Auto-cancelling stale pending order #{ticket} ({sym}) after {age / 60.0:.1f} mins.")
+            sym = o.get("symbol", "UNKNOWN")
+            otype = str(o.get("type", "")).upper()
+            open_price = float(o.get("price_open", 0.0) or 0.0)
+            sl_price = float(o.get("sl", 0.0) or 0.0)
+            tp_price = float(o.get("tp", 0.0) or 0.0)
+            comment = str(o.get("comment", "")).upper()
+
+            # Dynamic TTL: Scalp orders expire in 5 mins, Day Trading in 10 mins, Swing in 20 mins
+            allowed_age = max_age_sec
+            if "SCALP" in comment:
+                allowed_age = min(allowed_age, 300)
+            elif "DAY" in comment:
+                allowed_age = min(allowed_age, 600)
+            elif "SWING" in comment:
+                allowed_age = min(allowed_age, 1200)
+
+            cancel_reason = None
+            if age > allowed_age:
+                cancel_reason = f"TTL expired ({age / 60.0:.1f}m > {allowed_age / 60.0:.1f}m)"
+
+            # Structural Invalidation & Runaway Protection using live context
+            ctx = context_map.get(sym) if context_map else None
+            if ctx and not cancel_reason and open_price > 0:
+                c_price = ctx.current_price
+                atr = getattr(ctx.volatility, "atr", 0.0) or (c_price * 0.005)
+                st = getattr(ctx, "structure", None)
+                mom = getattr(ctx, "momentum", None)
+                trend_score = float(getattr(mom, "trend_score", 0.0) or 0.0) if mom else 0.0
+
+                if "BUY" in otype:
+                    # Invalidation 1: Price has dumped below stop loss before order filled
+                    if sl_price > 0 and c_price <= sl_price:
+                        cancel_reason = f"Structural invalidation: price ({c_price:.4f}) dropped below SL ({sl_price:.4f})"
+                    # Invalidation 2: Price ran away to target or > 1.5 ATR without filling limit
+                    elif tp_price > 0 and c_price >= tp_price:
+                        cancel_reason = f"Runaway target reached ({c_price:.4f} >= TP {tp_price:.4f})"
+                    elif (c_price - open_price) >= (1.5 * atr):
+                        cancel_reason = f"Runaway excursion without fill (+{c_price - open_price:.4f} >= 1.5 ATR)"
+                    # Invalidation 3: Bearish structure shift or severe adverse momentum
+                    elif (getattr(st, "choch", False) and getattr(st, "bias", "") == "BEARISH") or trend_score <= -35.0:
+                        cancel_reason = f"Adverse market structure shift (choch_bear={getattr(st, 'choch', False)}, trend_score={trend_score:.1f})"
+
+                elif "SELL" in otype:
+                    # Invalidation 1: Price has spiked above stop loss before order filled
+                    if sl_price > 0 and c_price >= sl_price:
+                        cancel_reason = f"Structural invalidation: price ({c_price:.4f}) surged above SL ({sl_price:.4f})"
+                    # Invalidation 2: Price ran away to target or > 1.5 ATR without filling limit
+                    elif tp_price > 0 and c_price <= tp_price:
+                        cancel_reason = f"Runaway target reached ({c_price:.4f} <= TP {tp_price:.4f})"
+                    elif (open_price - c_price) >= (1.5 * atr):
+                        cancel_reason = f"Runaway excursion without fill (-{open_price - c_price:.4f} >= 1.5 ATR)"
+                    # Invalidation 3: Bullish structure shift or severe adverse momentum
+                    elif (getattr(st, "choch", False) and getattr(st, "bias", "") == "BULLISH") or trend_score >= 35.0:
+                        cancel_reason = f"Adverse market structure shift (choch_bull={getattr(st, 'choch', False)}, trend_score={trend_score:.1f})"
+
+            if cancel_reason:
+                logger.info(f"⏳ Auto-cancelling pending order #{ticket} ({sym} {otype}): {cancel_reason}")
                 res = self.mt5_client.cancel_pending_order(ticket)
                 if res and res.get("status") == "CANCELLED":
                     cancelled.append(o)

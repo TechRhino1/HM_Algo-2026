@@ -1618,20 +1618,49 @@ class DecisionEngine:
         is_extreme_val = 1.0 if vol_state == "EXTREME" else 0.0
         runner_trail_distance_atr = round(1.0 + (0.4 * is_expansion_val) + (0.8 * is_extreme_val), 2)
 
-        # Task 2a: Determine MARKET vs LIMIT order type
+        # Task 2a: Adaptive Institutional MARKET vs LIMIT order type routing
         cur_mkt_price = getattr(context, "current_price", entry_price)
         price_diff = abs(entry_price - cur_mkt_price)
         spec_info = resolve_symbol(context.symbol)
-        tolerance_pip = (spec_info.pip_size * 0.5) if hasattr(spec_info, "pip_size") and spec_info.pip_size > 0 else 0.00005
+        digits = getattr(spec_info, "digits", 5) or 5
+        pip_size = getattr(spec_info, "pip_size", 0.0001) or 0.0001
+        tolerance_pip = (pip_size * 0.5) if pip_size > 0 else 0.00005
+        atr_val = getattr(context.volatility, "atr", 0.0) or (cur_mkt_price * 0.005)
+        spread_dist = max(0.0, context.ask - context.bid) if (context.ask > 0 and context.bid > 0) else (getattr(context.volatility, "current_spread_pips", 1.0) * pip_size)
+
+        # Institutional Execution Rule: In active expansion, high momentum, or confirmed breakouts,
+        # waiting for a deep limit order either causes missed trades or toxic fills on reversal.
+        # Use MARKET order if price is within execution proximity (<= 0.40 ATR or <= 5x spread),
+        # or if regime/momentum is actively trending.
+        is_trending_momentum = abs(trend_score_val) >= 20.0 or is_expansion_val > 0 or is_extreme_val > 0 or best_strategy in ("TREND_FOLLOWING", "BREAKOUT_EXPANSION")
+        is_close_proximity = price_diff <= max(0.40 * atr_val, spread_dist * 5.0)
 
         order_type_decision = "MARKET"
-        if tentative_bias == "BUY" and entry_price < (cur_mkt_price - tolerance_pip):
-            order_type_decision = "LIMIT"
-        elif tentative_bias == "SELL" and entry_price > (cur_mkt_price + tolerance_pip):
-            order_type_decision = "LIMIT"
-        elif price_diff > tolerance_pip and best_strategy in (
-            "LIQUIDITY_SWEEP_REVERSAL", "CHOCH_STRUCTURAL_REVERSAL", "TREND_PULLBACK", "RANGE_MEAN_REVERSION"
-        ):
+        if is_trending_momentum or is_close_proximity:
+            # Execute at market to capture the move without hanging pending orders
+            order_type_decision = "MARKET"
+            if price_diff > 1e-5:
+                # Re-anchor entry to observed market price and preserve structural risk distance
+                live_market_entry = round(context.ask if tentative_bias == "BUY" and context.ask > 0 else (context.bid if tentative_bias == "SELL" and context.bid > 0 else cur_mkt_price), digits)
+                entry_delta = live_market_entry - entry_price
+                entry_price = live_market_entry
+                sl_price = round(sl_price + entry_delta, digits)
+                tp_price = round(tp_price + entry_delta, digits)
+                if tp1_price is not None:
+                    tp1_price = round(tp1_price + entry_delta, digits)
+                if tp2_price is not None:
+                    tp2_price = round(tp2_price + entry_delta, digits)
+                if tp3_price is not None:
+                    tp3_price = round(tp3_price + entry_delta, digits)
+                risk_dist = abs(entry_price - sl_price)
+                if threat_lvl is not None and isinstance(threat_lvl, (int, float)) and threat_lvl > 0:
+                    if tentative_bias == "BUY" and entry_price < threat_lvl < tp_price:
+                        tp_price = round(threat_lvl - (atr_val * 0.1), digits)
+                    elif tentative_bias == "SELL" and tp_price < threat_lvl < entry_price:
+                        tp_price = round(threat_lvl + (atr_val * 0.1), digits)
+                tp_dist = abs(tp_price - entry_price)
+        elif price_diff > max(0.40 * atr_val, tolerance_pip * 8):
+            # Only use LIMIT order when price is resting genuinely far away in a calm market
             order_type_decision = "LIMIT"
 
         return DecisionObject(
