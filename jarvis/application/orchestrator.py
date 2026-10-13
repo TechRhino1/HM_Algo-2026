@@ -260,6 +260,75 @@ class JarvisOrchestrator:
         self.mt5_client.shutdown()
         logger.info("HM Algo 2.0 Orchestrator stopped.")
 
+    def _record_open_trade_context(
+        self,
+        exec_res: Optional[Dict[str, Any]],
+        decision: Any,
+        context: Any,
+        trade_style: str,
+        lots: float,
+    ) -> None:
+        """Persists open-time ML features and trade memory for FILLED and PLACED orders."""
+        if not exec_res or exec_res.get("status") not in ("FILLED", "PLACED"):
+            return
+
+        ticket = exec_res.get("ticket")
+        if not ticket:
+            return
+
+        fill_price = float(exec_res.get("price", decision.entry_price))
+        actual_sl = float(exec_res.get("sl", decision.stop_loss))
+        actual_tp = float(exec_res.get("tp", decision.take_profit))
+        regime = decision.regime or getattr(context, "regime", None)
+
+        try:
+            ml_feat = self.ml_predictor.extract_feature_vector(
+                context=context,
+                regime=regime,
+                tentative_bias=decision.bias,
+                devil_penalty=decision.adversarial_penalty,
+                target_rr=decision.risk_reward_ratio
+            )
+        except Exception as e:
+            logger.debug(f"Could not extract ML feature vector: {e}")
+            ml_feat = []
+
+        regime_str = (
+            regime.primary_regime.value
+            if (regime and hasattr(regime.primary_regime, "value"))
+            else (str(regime.primary_regime) if regime else "UNKNOWN")
+        )
+
+        self._pending_features[ticket] = {
+            "features": ml_feat,
+            "strategy": decision.strategy,
+            "regime": regime_str,
+            "trade_style": trade_style,
+            "type": decision.bias,
+            "entry": fill_price,
+            "sl": actual_sl,
+            "risk_dist": abs(fill_price - actual_sl),
+            "symbol": decision.symbol
+        }
+
+        self.trade_memory.record_trade({
+            "ticket": ticket,
+            "symbol": decision.symbol,
+            "type": decision.bias,
+            "entry": fill_price,
+            "sl": actual_sl,
+            "tp": actual_tp,
+            "lots": lots,
+            "regime": regime_str,
+            "strategy": decision.strategy,
+            "model_confidence": float(decision.model_confidence) if isinstance(decision.model_confidence, (int, float)) else 0.5,
+            "raw_win_prob": float(decision.raw_win_prob) if isinstance(getattr(decision, "raw_win_prob", None), (int, float)) else None,
+            "adversarial_penalty": float(decision.adversarial_penalty) if isinstance(decision.adversarial_penalty, (int, float)) else 0.0,
+            "expected_value": float(decision.expected_value) if isinstance(decision.expected_value, (int, float)) else 0.0,
+            "ml_features": ml_feat.tolist() if hasattr(ml_feat, "tolist") else list(ml_feat)
+        })
+        logger.info(f"📝 Recorded open-time context for Trade #{ticket} ({decision.symbol} {decision.bias} {trade_style})")
+
     def _recover_pending_features(self, ticket):
         """Rebuild the open-time context for `ticket` from the trade journal.
 
@@ -1103,52 +1172,13 @@ class JarvisOrchestrator:
                             self._last_execution_time[canonical_sym] = time.time()
                             logger.info(f"Execution lock released for {canonical_sym}. Cooldown {self._SAME_SYMBOL_COOLDOWN_SEC}s started.")
             # Record pending features for online learning and journal entry (§17)
-            if exec_res and exec_res.get("status") == "FILLED":
-                ticket = exec_res.get("ticket")
-                fill_price = float(exec_res.get("price", decision.entry_price))
-                actual_sl = float(exec_res.get("sl", decision.stop_loss))
-                actual_tp = float(exec_res.get("tp", decision.take_profit))
-
-                ml_feat = self.ml_predictor.extract_feature_vector(
-                    context=context,
-                    regime=regime,
-                    tentative_bias=decision.bias,
-                    devil_penalty=decision.adversarial_penalty,
-                    target_rr=decision.risk_reward_ratio
-                )
-
-                if ticket:
-                    self._pending_features[ticket] = {
-                        "features": ml_feat,
-                        "strategy": decision.strategy,
-                        "regime": regime.primary_regime.value if hasattr(regime.primary_regime, "value") else str(regime.primary_regime),
-                        "trade_style": active_trade_style,
-                        "type": decision.bias,
-                        "entry": fill_price,
-                        "sl": actual_sl,
-                        "risk_dist": abs(fill_price - actual_sl),
-                        "symbol": symbol
-                    }
-
-                self.trade_memory.record_trade({
-                    "ticket": ticket,
-                    "symbol": symbol,
-                    "type": decision.bias,
-                    "entry": fill_price,
-                    "sl": actual_sl,
-                    "tp": actual_tp,
-                    "lots": lots,
-                    "regime": regime.primary_regime.value,
-                    "strategy": decision.strategy,
-                    "model_confidence": decision.model_confidence,
-                    # AI10: the pre-calibration forecast. Without it the reliability
-                    # curve can only be refit from `model_confidence`, which is the
-                    # pipeline's own output — a curve fitting itself.
-                    "raw_win_prob": getattr(decision, "raw_win_prob", None),
-                    "adversarial_penalty": decision.adversarial_penalty,
-                    "expected_value": decision.expected_value,
-                    "ml_features": ml_feat.tolist() if hasattr(ml_feat, "tolist") else list(ml_feat)
-                })
+            self._record_open_trade_context(
+                exec_res=exec_res,
+                decision=decision,
+                context=context,
+                trade_style=active_trade_style,
+                lots=lots
+            )
 
         return {
             "symbol": symbol,
@@ -1377,6 +1407,13 @@ class JarvisOrchestrator:
                         exec_res = self.execution_engine.execute_decision(decision, lots)
                         if exec_res and exec_res.get("status") in ("FILLED", "PLACED"):
                             self.risk_engine.commit_risk(canonical_sym)
+                            self._record_open_trade_context(
+                                exec_res=exec_res,
+                                decision=decision,
+                                context=ctx,
+                                trade_style=candidate.trade_style,
+                                lots=lots
+                            )
                         else:
                             self.risk_engine.release_risk(canonical_sym)
                     except Exception as e:

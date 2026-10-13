@@ -8,6 +8,7 @@ Validates:
 """
 import time
 import unittest
+from unittest.mock import MagicMock
 from datetime import datetime, timezone
 
 from jarvis.execution.mt5_client import MT5Client
@@ -167,6 +168,81 @@ class TestPendingOrders(unittest.TestCase):
         # Test cancellation handler
         cancel_res = handler.mt5_client.cancel_pending_order(ticket)
         self.assertEqual(cancel_res.get("status"), "CANCELLED")
+
+    def test_pending_order_feature_persistence_on_placed_status(self):
+        """Validates that PLACED pending limit orders persist open-time features and trade memory."""
+        from jarvis.application.orchestrator import JarvisOrchestrator
+
+        orchestrator = JarvisOrchestrator(mode="demo")
+
+        fake_decision = MagicMock()
+        fake_decision.symbol = "BTCUSD"
+        fake_decision.bias = "SELL"
+        fake_decision.strategy = "SMC_ORDER_BLOCK"
+        fake_decision.entry_price = 83500.0
+        fake_decision.stop_loss = 83800.0
+        fake_decision.take_profit = 82500.0
+        fake_decision.risk_reward_ratio = 3.33
+        fake_decision.model_confidence = 0.72
+        fake_decision.adversarial_penalty = 0.0
+        fake_decision.expected_value = 2.4
+        fake_decision.raw_win_prob = 0.68
+        fake_decision.regime = MagicMock()
+        fake_decision.regime.primary_regime.value = "TREND_BEAR"
+
+        fake_exec_res = {
+            "status": "PLACED",
+            "ticket": 962799999,
+            "price": 83500.0,
+            "sl": 83800.0,
+            "tp": 82500.0
+        }
+
+        fake_ctx = MagicMock()
+        orchestrator._record_open_trade_context(
+            exec_res=fake_exec_res,
+            decision=fake_decision,
+            context=fake_ctx,
+            trade_style="DAY_TRADING",
+            lots=0.01
+        )
+
+        # Context MUST be registered under ticket 962799999
+        self.assertIn(962799999, orchestrator._pending_features)
+        pending_data = orchestrator._pending_features[962799999]
+        self.assertEqual(pending_data["symbol"], "BTCUSD")
+        self.assertEqual(pending_data["strategy"], "SMC_ORDER_BLOCK")
+        self.assertEqual(pending_data["entry"], 83500.0)
+        self.assertEqual(pending_data["risk_dist"], 300.0)
+
+    def test_pending_order_integer_type_and_price_open_invalidation(self):
+        """Validates that OrderManager parses integer MT5 order types and price_open for runaway invalidation."""
+        mock_client = MagicMock()
+        # Mock pending order with MT5 integer type 3 (SELL_LIMIT) and price_open
+        mock_client.get_pending_orders.return_value = [{
+            "ticket": 771122,
+            "symbol": "GOLD",
+            "type": 3,  # ORDER_TYPE_SELL_LIMIT as raw integer
+            "price_open": 2400.0,
+            "sl": 2420.0,
+            "tp": 2350.0,
+            "comment": "HMA2_DAY_SMC_DEMO",
+            "time_setup": time.time()  # fresh setup
+        }]
+        mock_client.cancel_pending_order.return_value = {"status": "CANCELLED", "ticket": 771122}
+
+        om = OrderManager(mock_client)
+        # Context where price surged above stop loss (2425 > 2420)
+        ctx = MagicMock()
+        ctx.current_price = 2425.0
+        ctx.volatility.atr = 5.0
+        ctx.structure = None
+        ctx.momentum = None
+
+        cancelled = om.cleanup_stale_pending_orders(max_age_sec=600, context_map={"GOLD": ctx})
+        self.assertEqual(len(cancelled), 1)
+        self.assertEqual(cancelled[0]["ticket"], 771122)
+        mock_client.cancel_pending_order.assert_called_with(771122)
 
 
 if __name__ == "__main__":

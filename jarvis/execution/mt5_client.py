@@ -796,6 +796,7 @@ class MT5Client:
                 "type": order_type,
                 "volume": volume,
                 "price": price,
+                "price_open": price,
                 "sl": sl_price,
                 "tp": tp_price,
                 "comment": f"[PAPER] {comment}",
@@ -874,16 +875,29 @@ class MT5Client:
             return []
         ord_symbols = [str(o.symbol) for o in orders]
         offset = broker_utc_offset(mt5_module=mt5, symbols=ord_symbols)
+        type_name_map = {
+            0: "BUY",
+            1: "SELL",
+            2: "BUY_LIMIT",
+            3: "SELL_LIMIT",
+            4: "BUY_STOP",
+            5: "SELL_STOP",
+        }
         res = []
         for o in orders:
             raw_setup = int(getattr(o, "time_setup", 0) or 0)
             utc_setup = (raw_setup - offset) if raw_setup > 0 else int(time.time())
+            raw_type = getattr(o, "type", 0)
+            otype_str = type_name_map.get(raw_type, str(raw_type))
+            p_open = float(getattr(o, "price_open", 0.0) or 0.0)
             res.append({
                 "ticket": o.ticket,
                 "symbol": o.symbol,
-                "type": o.type,
+                "type": otype_str,
+                "type_raw": raw_type,
                 "volume": o.volume_initial,
-                "price": o.price_open,
+                "price": p_open,
+                "price_open": p_open,
                 "sl": o.sl,
                 "tp": o.tp,
                 "comment": o.comment,

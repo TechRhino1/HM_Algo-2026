@@ -56,7 +56,11 @@ class OrderManager:
             age = (now - setup_time) if setup_time > 0 else 0
             sym = o.get("symbol", "UNKNOWN")
             otype = str(o.get("type", "")).upper()
-            open_price = float(o.get("price_open", 0.0) or 0.0)
+            if otype in ("2", "0") or otype == "ORDER_TYPE_BUY_LIMIT":
+                otype = "BUY_LIMIT"
+            elif otype in ("3", "1") or otype == "ORDER_TYPE_SELL_LIMIT":
+                otype = "SELL_LIMIT"
+            open_price = float(o.get("price_open") or o.get("price", 0.0) or 0.0)
             sl_price = float(o.get("sl", 0.0) or 0.0)
             tp_price = float(o.get("tp", 0.0) or 0.0)
             comment = str(o.get("comment", "")).upper()

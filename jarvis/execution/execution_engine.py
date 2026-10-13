@@ -273,7 +273,10 @@ class ExecutionEngine:
             )
 
         # §2: Re-anchor SL/TP to actual fill price if slippage occurred & validate post-fill risk
-        if res and (res.get("status") == "FILLED" or _order_status == "FILLED"):
+        is_fill = res and (res.get("status") == "FILLED" or _order_status == "FILLED")
+        is_placed = res and (res.get("status") == "PLACED" or _order_status == "ACCEPTED")
+
+        if is_fill:
             ticket = res.get("ticket")
             fill_price = float(res.get("price", decision.entry_price))
             sl_dist = getattr(decision, "sl_distance", 0.0)
@@ -325,7 +328,10 @@ class ExecutionEngine:
                         f"(Lots: {lots}, Stop Dist: {abs(fill_price - actual_sl_final):.5f}). "
                         f"Structural SL preserved — position sizer approved this geometry."
                     )
-                    
+
+        if is_fill or is_placed:
+            ticket = (res or {}).get("ticket")
+            fill_price = float((res or {}).get("price", decision.entry_price))
             try:
                 import json
                 from jarvis.data.database import TRADE_DB
