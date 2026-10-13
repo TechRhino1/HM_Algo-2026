@@ -1637,11 +1637,49 @@ class DecisionEngine:
         # waiting for a deep limit order either causes missed trades or toxic fills on reversal.
         # Use MARKET order if price is within execution proximity (<= 0.40 ATR or <= 5x spread),
         # or if regime/momentum is actively trending.
+        # Institutional Rule (§4.1 SMC/ICT & algo_methods_and_tricks.md):
+        # "Sell from the Top" & "Buy from the Bottom" Execution:
+        # A market order should NOT sell into an oversold discount floor (RSI < 32 or Discount zone)
+        # or buy into an overbought premium roof (RSI > 68 or Premium zone), unless it is a verified momentum breakout expansion.
+        st_zone = getattr(context.structure, "discount_premium_zone", "EQUILIBRIUM") if hasattr(context, "structure") else "EQUILIBRIUM"
+        rsi_val = float(getattr(context.momentum, "rsi", 50.0) or 50.0) if hasattr(context, "momentum") else 50.0
+        is_breakout_mode = best_strategy in ("BREAKOUT_EXPANSION", "BREAKDOWN") or is_expansion_val > 0 or is_extreme_val > 0
+
+        # Chasing warning flags:
+        is_chasing_discount_floor = (tentative_bias == "SELL" and (st_zone == "DISCOUNT" or rsi_val < 32.0) and not is_breakout_mode)
+        is_chasing_premium_roof = (tentative_bias == "BUY" and (st_zone == "PREMIUM" or rsi_val > 68.0) and not is_breakout_mode)
+
         is_trending_momentum = abs(trend_score_val) >= 20.0 or is_expansion_val > 0 or is_extreme_val > 0 or best_strategy in ("TREND_FOLLOWING", "BREAKOUT_EXPANSION")
         is_close_proximity = price_diff <= max(0.40 * atr_val, spread_dist * 5.0)
 
         order_type_decision = "MARKET"
-        if is_trending_momentum or is_close_proximity:
+        if is_chasing_discount_floor:
+            # Sell from the top: Route to LIMIT order placed at Premium / Bearish Order Block / Retest Level
+            order_type_decision = "LIMIT"
+            ob_list = getattr(context.structure, "order_blocks", []) or []
+            bear_obs = [ob for ob in ob_list if isinstance(ob, dict) and "BEAR" in str(ob.get("type", "")).upper()]
+            if bear_obs:
+                entry_price = round(float(bear_obs[0].get("low", cur_mkt_price + 0.4 * atr_val)), digits)
+            elif hasattr(context.structure, "equilibrium_price") and context.structure.equilibrium_price > cur_mkt_price:
+                entry_price = round(context.structure.equilibrium_price, digits)
+            else:
+                entry_price = round(cur_mkt_price + (0.4 * atr_val), digits)
+            sl_price = round(entry_price + risk_dist, digits)
+            tp_price = round(entry_price - tp_dist, digits)
+        elif is_chasing_premium_roof:
+            # Buy from the bottom: Route to LIMIT order placed at Discount / Bullish Order Block / Retest Level
+            order_type_decision = "LIMIT"
+            ob_list = getattr(context.structure, "order_blocks", []) or []
+            bull_obs = [ob for ob in ob_list if isinstance(ob, dict) and "BULL" in str(ob.get("type", "")).upper()]
+            if bull_obs:
+                entry_price = round(float(bull_obs[0].get("high", cur_mkt_price - 0.4 * atr_val)), digits)
+            elif hasattr(context.structure, "equilibrium_price") and 0 < context.structure.equilibrium_price < cur_mkt_price:
+                entry_price = round(context.structure.equilibrium_price, digits)
+            else:
+                entry_price = round(cur_mkt_price - (0.4 * atr_val), digits)
+            sl_price = round(entry_price - risk_dist, digits)
+            tp_price = round(entry_price + tp_dist, digits)
+        elif is_trending_momentum or is_close_proximity:
             # Execute at market to capture the move without hanging pending orders
             order_type_decision = "MARKET"
             if price_diff > 1e-5:

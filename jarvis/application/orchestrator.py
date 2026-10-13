@@ -900,8 +900,43 @@ class JarvisOrchestrator:
         # stack said about it -- and the calibrated policy exists precisely to
         # take some of those. Keying the in-process lock, the symbol limit, the
         # cooldown and the Asian blackout on the legacy verdict would skip all
-        # four for exactly the candidates the policy adds.
         wants_entry = bool(auth_res.get("authorized"))
+
+        # ── Institutional Stop-and-Reverse (SAR) / Position Flip Protocol ───────
+        # When the AI resolves a high-conviction setup in the OPPOSITE direction of an active trade,
+        # and the opposing trade is flat or in drawdown (< 0.50R), do NOT let Base Exposure (1 >= 1)
+        # block the reversal. Close the failing opposing trade first and execute the reversal cleanly.
+        opposing_positions = [
+            p for p in active_sym_positions
+            if getattr(p, "type", "").upper() != str(decision.bias).upper()
+        ]
+        if not dry_run and wants_entry and decision.decision == "EXECUTE" and opposing_positions:
+            opp_pos = opposing_positions[0]
+            opp_open_price = float(getattr(opp_pos, "open_price", 0.0) or 0.0)
+            opp_sl_price = float(getattr(opp_pos, "sl", 0.0) or 0.0)
+            opp_risk_dist = abs(opp_open_price - opp_sl_price) if opp_sl_price > 0 else (context.volatility.atr * 2.0)
+            cur_price_val = float(getattr(context, "current_price", opp_open_price) or opp_open_price)
+            opp_r = ((cur_price_val - opp_open_price) if opp_pos.type == "BUY" else (opp_open_price - cur_price_val)) / max(opp_risk_dist, 1e-6)
+
+            # High-conviction reversal signal with positive EV & acceptable RR
+            is_flip_eligible = (
+                (decision.model_confidence >= 0.52 or entry_override is True)
+                and decision.expected_value > 0.0
+                and decision.risk_reward_ratio >= 1.3
+                and opp_r < 0.50
+            )
+            if is_flip_eligible:
+                logger.info(
+                    f"🔄 STOP-AND-REVERSE (POSITION FLIP): High-conviction {decision.bias} signal "
+                    f"({decision.model_confidence*100:.1f}%, EV=${decision.expected_value:.2f}) "
+                    f"invalidates opposing #{opp_pos.ticket} {opp_pos.symbol} {opp_pos.type} ({opp_r:.2f}R). "
+                    f"Closing opposing trade to reverse position."
+                )
+                close_res = self.mt5_client.close_position(opp_pos.ticket)
+                if close_res and close_res.get("status") in ("CLOSED", "PARTIALLY_CLOSED"):
+                    self.risk_engine.release_risk(canonical_sym)
+                    active_sym_positions = [p for p in active_sym_positions if p.ticket != opp_pos.ticket]
+                    positions = [p for p in positions if p.ticket != opp_pos.ticket]
 
         if not is_exec_style_match:
             pass

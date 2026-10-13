@@ -186,6 +186,108 @@ class TestMarketDirectionReversalGuard(unittest.TestCase):
         self.assertTrue(should_close, "Opposite structural break at +2.20R must bank runner profit")
         self.assertIn("RUNNER_REVERSAL_EXIT", reason)
 
+    def test_phase0_underwater_gold_sell_thesis_invalidation(self):
+        """Phase 0 (-0.50R): Gold SELL with Bullish CHoCH + SSL Sweep Rejection cuts loss early."""
+        pos = PositionSnapshot(
+            ticket=962551759,
+            symbol="XAUUSD",
+            type="SELL",
+            volume=0.01,
+            open_price=4150.36,
+            current_price=4160.50,  # Underwater by $10.14 (-0.50R on $20.27 risk)
+            sl=4170.63,
+            tp=4105.77,
+            profit=-10.14,
+            swap=0.0,
+            commission=0.0,
+            open_time=datetime.now(timezone.utc).isoformat(),
+            magic=JARVIS_MAGIC_NUMBER,
+        )
+
+        ctx = MarketContext(
+            symbol="XAUUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=4160.50,
+            bid=4160.30,
+            ask=4160.70,
+            structure=StructureContext(bias="BULLISH", choch=True, choch_type="BULLISH_CHOCH"),
+            liquidity=LiquidityContext(sweep_detected=True, sweep_type="BULLISH_SWEEP"),
+            volatility=VolatilityContext(atr=5.0),
+            momentum=MomentumContext(trend_score=35.0),
+            session=SessionContext(is_prime_session=True),
+        )
+
+        risk_dist = 20.27
+        current_r = -0.50
+
+        new_sl, action, should_close, reason = self.monitor._check_market_direction_reversal(
+            pos=pos,
+            ctx=ctx,
+            c_price=4160.50,
+            atr=5.0,
+            risk_dist=risk_dist,
+            current_r=current_r,
+            digits=2,
+            current_sl=4170.63,
+            policy=ExitPolicy.for_symbol("XAUUSD"),
+        )
+
+        self.assertTrue(should_close, "Phase 0 must trigger early exit on confirmed structural thesis failure")
+        self.assertIn("STRUCTURAL_THESIS_INVALIDATION", reason)
+        self.assertIn("-0.50R", reason)
+        self.assertIn("BULLISH_CHOCH", reason)
+        self.assertIn("SSL_SWEEP_REJECTION", reason)
+
+    def test_phase0_breathing_room_without_reversal(self):
+        """Phase 0 (-0.30R): Normal adverse fluctuation without opposite CHoCH does NOT exit."""
+        pos = PositionSnapshot(
+            ticket=962551760,
+            symbol="XAUUSD",
+            type="SELL",
+            volume=0.01,
+            open_price=4150.36,
+            current_price=4156.44,  # Underwater by $6.08 (-0.30R)
+            sl=4170.63,
+            tp=4105.77,
+            profit=-6.08,
+            swap=0.0,
+            commission=0.0,
+            open_time=datetime.now(timezone.utc).isoformat(),
+            magic=JARVIS_MAGIC_NUMBER,
+        )
+
+        ctx = MarketContext(
+            symbol="XAUUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=4156.44,
+            bid=4156.20,
+            ask=4156.60,
+            structure=StructureContext(bias="BEARISH", choch=False, choch_type="NONE"),
+            liquidity=LiquidityContext(sweep_detected=False),
+            volatility=VolatilityContext(atr=5.0),
+            momentum=MomentumContext(trend_score=-15.0),
+            session=SessionContext(is_prime_session=True),
+        )
+
+        risk_dist = 20.27
+        current_r = -0.30
+
+        new_sl, action, should_close, reason = self.monitor._check_market_direction_reversal(
+            pos=pos,
+            ctx=ctx,
+            c_price=4156.44,
+            atr=5.0,
+            risk_dist=risk_dist,
+            current_r=current_r,
+            digits=2,
+            current_sl=4170.63,
+            policy=ExitPolicy.for_symbol("XAUUSD"),
+        )
+
+        self.assertFalse(should_close, "Normal drawdown without structural invalidation must NOT close")
+        self.assertIsNone(action)
+
 
 if __name__ == "__main__":
     unittest.main()
+

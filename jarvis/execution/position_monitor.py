@@ -1230,9 +1230,12 @@ class PositionMonitorEngine:
         """
         Institutional Profit Booking & Direction Reversal Defense:
         Detects Change of Character (CHoCH), Break of Structure (BOS),
-        candlestick reversal, macro divergence, and momentum shifts against an active trade.
+        candlestick reversal, macro divergence, liquidity sweeps, and momentum shifts against an active trade.
 
         Guarantees:
+        - Phase 0 (-0.75R <= current_r < 0.20R): Early Structural Thesis Invalidation.
+          If an open trade suffers confirmed opposite CHoCH/BOS + sweep rejection/adverse momentum,
+          executes early discretionary market exit to CUT LOSS EARLY (saving 60-75% stop loss capital).
         - Phase 1 (+0.50R <= current_r < 1.0R): On opposite CHoCH / structural shift or
           adverse momentum, immediately move SL to breakeven + buffer (locks zero-loss).
         - Phase 2 (+1.0R <= current_r < 1.80R): On multi-factor reversal (e.g. CHoCH +
@@ -1243,7 +1246,7 @@ class PositionMonitorEngine:
 
         Returns: (candidate_sl, action_str, should_close, close_reason)
         """
-        if ctx is None or current_r < 0.50:
+        if ctx is None:
             return current_sl, None, False, None
 
         try:
@@ -1311,12 +1314,47 @@ class PositionMonitorEngine:
                 elif (not is_buy) and ("BULL" in m5_bias and "BULL" in m15_bias):
                     reversal_signals.append("MTF_M5_M15_BULLISH")
 
+            # 5. Liquidity Sweep Rejection (SMC/ICT §1)
+            liq = getattr(ctx, "liquidity", None)
+            if liq is not None and getattr(liq, "sweep_detected", False):
+                sweep_type = str(getattr(liq, "sweep_type", "") or "").upper()
+                if is_buy and "BEARISH_SWEEP" in sweep_type:
+                    reversal_signals.append("BSL_SWEEP_REJECTION")
+                elif (not is_buy) and "BULLISH_SWEEP" in sweep_type:
+                    reversal_signals.append("SSL_SWEEP_REJECTION")
+
+            # 6. Order Flow Counter-Delta & Absorption (Institutional Tape)
+            of_data = getattr(ctx, "order_flow", {})
+            if isinstance(of_data, dict) and of_data:
+                delta_score = float(of_data.get("delta_score", 0.0) or 0.0)
+                absorption_trap = str(of_data.get("absorption_trap", "") or "").upper()
+                if is_buy and (delta_score <= -45.0 or "SELLER_ABSORPTION" in absorption_trap or "BEARISH_ABSORPTION" in absorption_trap):
+                    reversal_signals.append(f"ORDER_FLOW_ABSORPTION({delta_score:.0f})")
+                elif (not is_buy) and (delta_score >= 45.0 or "BUYER_ABSORPTION" in absorption_trap or "BULLISH_ABSORPTION" in absorption_trap):
+                    reversal_signals.append(f"ORDER_FLOW_ABSORPTION(+{delta_score:.0f})")
+
             if not reversal_signals:
                 return current_sl, None, False, None
 
             sig_summary = ", ".join(reversal_signals)
             has_structural_break = any("CHOCH" in s or "BOS" in s for s in reversal_signals)
             signal_count = len(reversal_signals)
+
+            # ── PHASE 0: Early Structural Thesis Invalidation (-0.75R <= current_r < 0.20R) ──
+            if -0.75 <= current_r < 0.20:
+                # Decisive structural breakdown of the trade's premise:
+                # Requires confirmed CHoCH/BOS against the trade, plus at least one of:
+                # (1) Liquidity sweep in opposite direction (e.g. SSL swept & reclaimed for a short)
+                # (2) Significant adverse momentum / trend score inversion (|score| >= 25)
+                # (3) Multi-timeframe reversal (M5 & M15 flipped against trade)
+                # (4) Strong candlestick reversal or order flow absorption trap
+                if has_structural_break and signal_count >= 2:
+                    return current_sl, None, True, f"STRUCTURAL_THESIS_INVALIDATION({current_r:.2f}R | {sig_summary})"
+                return current_sl, None, False, None
+
+            # Normal breathing room zone (+0.20R <= current_r < +0.50R)
+            if current_r < 0.50:
+                return current_sl, None, False, None
 
             # ── PHASE 3: High Profit Runner (current_r >= 1.80R) ─────────────────
             if current_r >= 1.80:
