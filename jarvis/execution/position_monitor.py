@@ -316,12 +316,18 @@ class PositionMonitorEngine:
 
                 # Dynamic TTL: Scalp orders expire in 5m (300s), Day Trading in 10m (600s), Swing in 20m (1200s)
                 allowed_age = 600.0
-                if "SCALP" in comment:
+                if "SCALP" in comment or "SCLP" in comment:
                     allowed_age = 300.0
                 elif "DAY" in comment:
                     allowed_age = 600.0
-                elif "SWING" in comment:
+                elif "SWING" in comment or "SWNG" in comment:
                     allowed_age = 1200.0
+
+                # Defensively handle raw broker server timestamps (GMT+3 offset) if skew occurred
+                if age < -3600:
+                    age = max(0.0, age + 10800.0)
+                elif age < 0:
+                    age = 0.0
 
                 cancel_reason = None
                 if age > allowed_age:
@@ -805,18 +811,18 @@ class PositionMonitorEngine:
             # ── 7. Horizon-Adaptive Stagnation & Time-Decay Auto-Exit ────────
             open_dur_sec = self._get_position_duration_sec(pos)
             if open_dur_sec > 0:
-                # Scalp: 45 min max hold without progress (R < 0.50R) -> Close position
-                if style == "SCALP" and open_dur_sec >= 2700.0 and current_r < 0.50:
+                # Scalp: 45 min max hold without progress (R <= 0.0) -> Close position
+                if style == "SCALP" and open_dur_sec >= 2700.0 and current_r <= 0.0:
                     self._execute_exit(pos, reason="SCALP_STAGNATION")
                     return
 
-                # Day: 6 hours max hold without progress (R < 0.75R) -> Close position
-                elif style in ("DAY_TRADING", "DAY", "INTRADAY") and open_dur_sec >= 21600.0 and current_r < 0.75:
+                # Day: 14 hours (full session) max hold without progress (R < 0.10R) -> Close position
+                elif style in ("DAY_TRADING", "DAY", "INTRADAY") and open_dur_sec >= 50400.0 and current_r < 0.10:
                     self._execute_exit(pos, reason="DAY_STAGNATION")
                     return
 
-                # Swing: 36 hours max hold in compression -> Close position
-                elif style == "SWING" and open_dur_sec >= 129600.0:
+                # Swing: 48 hours max hold in compression -> Close position
+                elif style == "SWING" and open_dur_sec >= 172800.0:
                     is_comp = (
                         getattr(ctx.volatility, "state", "").upper() == "COMPRESSION"
                         or (regime and hasattr(regime, "primary_regime") and regime.primary_regime in (
@@ -1426,25 +1432,37 @@ class PositionMonitorEngine:
 
     def _determine_position_style(self, pos: PositionSnapshot, ctx: Optional[MarketContext] = None) -> str:
         """
-        Determine position style (SCALP, DAY_TRADING, SWING) from comment, tag, or duration.
+        Determine position style (SCALP, DAY_TRADING, SWING) from comment, tag, duration, or structural geometry.
         """
         comment = (pos.comment or "").upper()
         tag = str(getattr(pos, "tag", "") or "").upper()
         trade_style = str(getattr(pos, "trade_style", "") or "").upper()
 
         for text in (comment, tag, trade_style):
-            if "SCALP" in text:
+            if "SCALP" in text or "SCLP" in text:
                 return "SCALP"
-            if "SWING" in text:
+            if "SWING" in text or "SWNG" in text:
                 return "SWING"
             if "DAY" in text or "INTRADAY" in text:
                 return "DAY_TRADING"
+
+        # Check structural risk and target geometry (Swing orders have wide stops and targets)
+        if pos.sl > 0 and pos.open_price > 0:
+            risk_dist = abs(pos.open_price - pos.sl)
+            if pos.tp > 0:
+                tp_dist = abs(pos.tp - pos.open_price)
+                if (tp_dist / max(risk_dist, 1e-6)) >= 2.5:
+                    return "SWING"
+            if ctx is not None:
+                atr = getattr(ctx.volatility, "atr", 0.0) or 0.0
+                if atr > 0 and risk_dist >= (2.5 * atr):
+                    return "SWING"
 
         # Check duration
         dur_sec = self._get_position_duration_sec(pos)
         if dur_sec > 24.0 * 3600:
             return "SWING"
-        elif dur_sec > 2.0 * 3600:
+        elif dur_sec > 4.0 * 3600:
             return "DAY_TRADING"
 
         return "LEGACY"

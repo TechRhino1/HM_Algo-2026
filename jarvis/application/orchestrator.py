@@ -918,18 +918,54 @@ class JarvisOrchestrator:
             cur_price_val = float(getattr(context, "current_price", opp_open_price) or opp_open_price)
             opp_r = ((cur_price_val - opp_open_price) if opp_pos.type == "BUY" else (opp_open_price - cur_price_val)) / max(opp_risk_dist, 1e-6)
 
-            # High-conviction reversal signal with positive EV & acceptable RR
-            is_flip_eligible = (
-                (decision.model_confidence >= 0.52 or entry_override is True)
+            # Check open duration of opposing trade to give it minimum breathing room
+            opp_open_time = getattr(opp_pos, "open_time", None)
+            opp_age_sec = 0.0
+            if opp_open_time:
+                try:
+                    if isinstance(opp_open_time, str):
+                        open_dt = datetime.fromisoformat(opp_open_time.replace("Z", "+00:00")) if "T" in opp_open_time else datetime.strptime(opp_open_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    elif isinstance(opp_open_time, datetime):
+                        open_dt = opp_open_time if opp_open_time.tzinfo else opp_open_time.replace(tzinfo=timezone.utc)
+                    else:
+                        open_dt = None
+                    if open_dt:
+                        opp_age_sec = max(0.0, (datetime.now(timezone.utc) - open_dt).total_seconds())
+                except Exception:
+                    opp_age_sec = 0.0
+
+            # Style alignment: lower timeframe noise (e.g. SCALP) cannot flip higher timeframe positions (DAY / SWING)
+            opp_comment = str(getattr(opp_pos, "comment", "") or "").upper()
+            opp_is_swing = "SWNG" in opp_comment or "SWING" in opp_comment
+            opp_is_day = "DAY" in opp_comment or "INTRADAY" in opp_comment
+            new_is_scalp = str(getattr(decision, "trade_style", "")).upper() == "SCALP"
+
+            # Reversal criteria:
+            # 1. Opposing trade must have had breathing room (> 300s) UNLESS severe structural invalidation (opp_r <= -0.50R)
+            has_breathing_room = (opp_age_sec >= 300.0) or (opp_r <= -0.50)
+            # 2. Scalp noise cannot kill Day/Swing positions
+            horizon_allowed = not (new_is_scalp and (opp_is_swing or opp_is_day))
+            # 3. High conviction institutional signal
+            struct_choch = bool(getattr(context.structure, "choch", False)) if hasattr(context, "structure") else False
+            high_conviction = (
+                (decision.model_confidence >= 0.60 or entry_override is True or getattr(decision, "grade", "") == "GRADE_A_PLUS")
                 and decision.expected_value > 0.0
                 and decision.risk_reward_ratio >= 1.3
-                and opp_r < 0.50
+            )
+            # 4. Opposing position must be truly underwater (opp_r <= -0.15R) or confirmed opposite CHoCH
+            opp_is_failing = (opp_r <= -0.15) or (struct_choch and opp_r <= 0.10)
+
+            is_flip_eligible = (
+                high_conviction
+                and has_breathing_room
+                and horizon_allowed
+                and opp_is_failing
             )
             if is_flip_eligible:
                 logger.info(
                     f"🔄 STOP-AND-REVERSE (POSITION FLIP): High-conviction {decision.bias} signal "
                     f"({decision.model_confidence*100:.1f}%, EV=${decision.expected_value:.2f}) "
-                    f"invalidates opposing #{opp_pos.ticket} {opp_pos.symbol} {opp_pos.type} ({opp_r:.2f}R). "
+                    f"invalidates opposing #{opp_pos.ticket} {opp_pos.symbol} {opp_pos.type} ({opp_r:.2f}R, age={opp_age_sec:.0f}s). "
                     f"Closing opposing trade to reverse position."
                 )
                 close_res = self.mt5_client.close_position(opp_pos.ticket)

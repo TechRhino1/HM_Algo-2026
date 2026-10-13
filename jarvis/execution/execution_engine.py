@@ -112,7 +112,17 @@ class ExecutionEngine:
         setup_id = setup_id_val
 
         mode = self.state_manager.execution_mode
-        comment = f"HMA2_{decision.strategy[:6]}_{mode.value}"
+        trade_style = getattr(decision, "trade_style", "") or "DAY"
+        ts_str = str(trade_style).upper()
+        if "SWING" in ts_str:
+            style_code = "SWNG"
+        elif "SCALP" in ts_str:
+            style_code = "SCLP"
+        else:
+            style_code = "DAY"
+        strat_code = str(getattr(decision, "strategy", "TRND") or "TRND")[:4].upper()
+        mode_code = getattr(mode, "value", str(mode))[:4].upper()
+        comment = f"HMA2_{style_code}_{strat_code}_{mode_code}"
 
         # ── Pre-fill Broker-Safe Sizing and SL Distance Calculation (Spec v2.1 Refinement 1) ──
         sym_spec = {}

@@ -872,8 +872,12 @@ class MT5Client:
         orders = mt5.orders_get(symbol=resolved) if resolved else mt5.orders_get()
         if not orders:
             return []
+        ord_symbols = [str(o.symbol) for o in orders]
+        offset = broker_utc_offset(mt5_module=mt5, symbols=ord_symbols)
         res = []
         for o in orders:
+            raw_setup = int(getattr(o, "time_setup", 0) or 0)
+            utc_setup = (raw_setup - offset) if raw_setup > 0 else int(time.time())
             res.append({
                 "ticket": o.ticket,
                 "symbol": o.symbol,
@@ -883,7 +887,7 @@ class MT5Client:
                 "sl": o.sl,
                 "tp": o.tp,
                 "comment": o.comment,
-                "time_setup": o.time_setup
+                "time_setup": utc_setup
             })
         return res
 
