@@ -519,7 +519,7 @@ class PositionMonitorEngine:
             # *current* stop and the thresholds would silently drift.
             if pos.ticket not in self._initial_risk_dist:
                 self._initial_risk_dist[pos.ticket] = (
-                    abs(pos.open_price - pos.sl) if pos.sl > 0 else (1.5 * atr)
+                    abs(pos.open_price - pos.sl) if pos.sl > 0 else (EMERGENCY_SL_ATR_MULT * atr)
                 )
             risk_dist = max(self._initial_risk_dist[pos.ticket], pip_size * 5)
 
@@ -605,6 +605,7 @@ class PositionMonitorEngine:
             except Exception:
                 struct_level = None
 
+            regime_str = (regime.primary_regime.value if hasattr(regime, "primary_regime") else str(regime)) if regime else None
             exit_dec = evaluate_exit(
                 side=pos.type,
                 entry=pos.open_price,
@@ -618,6 +619,7 @@ class PositionMonitorEngine:
                 partial_already_taken=pos.ticket in self._partially_closed_tickets,
                 be_already_locked=pos.ticket in self._be_locked,
                 struct_level=struct_level,
+                regime=regime_str,
             )
 
             if exit_dec.partial_close_pct > 0.0 and pos.ticket not in self._partially_closed_tickets:

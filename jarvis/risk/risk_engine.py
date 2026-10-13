@@ -222,8 +222,14 @@ class RiskEngine:
         total_projected_risk_usd = open_risk_usd + self.get_total_reserved_risk_usd() + est_new_risk_usd
         if account.equity > 0:
             proj_risk_pct = (total_projected_risk_usd / account.equity) * 100.0
-            if proj_risk_pct > self.max_portfolio_risk_pct:
-                breaches.append(f"ADAPTIVE_GATE_8: Projected portfolio risk ({proj_risk_pct:.2f}%) exceeds budget ({self.max_portfolio_risk_pct}%).")
+            effective_portfolio_risk_cap = self.max_portfolio_risk_pct
+            if account.equity < 500.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 10.0)
+            elif account.equity < 1000.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 6.0)
+
+            if proj_risk_pct > effective_portfolio_risk_cap:
+                breaches.append(f"ADAPTIVE_GATE_8: Projected portfolio risk ({proj_risk_pct:.2f}%) exceeds budget ({effective_portfolio_risk_cap:.1f}%).")
 
         # Condition 9: Margin Utilization Safe
         if account.equity > 0:

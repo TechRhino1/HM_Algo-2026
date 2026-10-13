@@ -144,9 +144,20 @@ class ExposureManager:
             if not is_derisked:
                 active_risk_positions.append(p)
 
-        max_total_ceiling = self.max_open_positions + 2
-        if len(active_risk_positions) >= self.max_open_positions or len(positions) >= max_total_ceiling:
-            breaches.append(f"Max Concurrent Positions reached ({len(active_risk_positions)} active risk / {len(positions)} total >= {self.max_open_positions} allowed).")
+        # Adaptive portfolio risk & position limits for retail micro accounts constrained by 0.01 min lots
+        effective_max_open_positions = self.max_open_positions
+        effective_portfolio_risk_cap = self.max_portfolio_risk_pct
+        if account and account.equity > 0:
+            if account.equity < 500.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 10.0)
+                effective_max_open_positions = max(self.max_open_positions, 4)
+            elif account.equity < 1000.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 6.0)
+                effective_max_open_positions = max(self.max_open_positions, 4)
+
+        max_total_ceiling = effective_max_open_positions + 2
+        if len(active_risk_positions) >= effective_max_open_positions or len(positions) >= max_total_ceiling:
+            breaches.append(f"Max Concurrent Positions reached ({len(active_risk_positions)} active risk / {len(positions)} total >= {effective_max_open_positions} allowed).")
 
         # 2. Per-Symbol Exposure (Soft Limit = 1, Hard Limit = 2)
         symbol_count = sum(1 for p in positions if resolve_symbol(p.symbol).canonical == target_canon)
@@ -160,8 +171,8 @@ class ExposureManager:
         total_risk_usd = open_risk_usd + incoming_risk_usd
         if account and account.equity > 0:
             total_risk_pct = (total_risk_usd / account.equity) * 100.0
-            if total_risk_pct > self.max_portfolio_risk_pct:
-                breaches.append(f"Portfolio Risk Budget exceeded ({total_risk_pct:.2f}% > {self.max_portfolio_risk_pct}% max portfolio risk).")
+            if total_risk_pct > effective_portfolio_risk_cap:
+                breaches.append(f"Portfolio Risk Budget exceeded ({total_risk_pct:.2f}% > {effective_portfolio_risk_cap:.1f}% max portfolio risk).")
 
         # 4. Margin Utilization & Notional Exposure
         exposure_pct = 0.0

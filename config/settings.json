@@ -17,6 +17,7 @@
   },
   "risk": {
     "max_risk_per_trade_pct": 0.5,
+    "max_portfolio_risk_pct": 10.0,
     "max_daily_loss_pct": 5.0,
     "max_drawdown_pct": 15.0,
     "max_open_positions": 4,

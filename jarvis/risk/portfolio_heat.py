@@ -68,10 +68,21 @@ class PortfolioHeatEngine:
         equity = account.equity
         balance = account.balance
 
+        # Adaptive micro-account scaling for heat calculation
+        effective_portfolio_risk_cap = self.max_portfolio_risk_pct
+        effective_max_open_positions = self.max_open_positions
+        if equity > 0:
+            if equity < 500.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 10.0)
+                effective_max_open_positions = max(self.max_open_positions, 4)
+            elif equity < 1000.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 6.0)
+                effective_max_open_positions = max(self.max_open_positions, 4)
+
         # 1. Open Risk Component (Weight: 30%)
         # Open risk as % of equity compared to max portfolio risk
         open_risk_pct = (open_monetary_risk_usd / equity) * 100.0 if equity > 0 else 0.0
-        c_risk = min(100.0, (open_risk_pct / self.max_portfolio_risk_pct) * 100.0)
+        c_risk = min(100.0, (open_risk_pct / effective_portfolio_risk_cap) * 100.0)
 
         # 2. Drawdown Component (Weight: 25%)
         # Floating or daily drawdown compared to max daily loss limit
@@ -85,7 +96,7 @@ class PortfolioHeatEngine:
 
         # 4. Position Density Component (Weight: 15%)
         num_pos = len(positions)
-        c_pos = min(100.0, (num_pos / self.max_open_positions) * 100.0)
+        c_pos = min(100.0, (num_pos / effective_max_open_positions) * 100.0)
 
         # 5. Correlation & Volatility Stress Component (Weight: 10%)
         c_corr = min(100.0, max(0.0, correlation_penalty * 100.0))

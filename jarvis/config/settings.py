@@ -103,6 +103,7 @@ class JarvisConfig:
                 # rest. Keep the mapping explicit so the contract is obvious.
                 risk_keys = (
                     ("max_risk_per_trade_pct", "max_risk_per_trade_pct", float),
+                    ("max_portfolio_risk_pct", "max_portfolio_risk_pct", float),
                     ("max_daily_loss_pct", "max_daily_loss_pct", float),
                     ("max_drawdown_pct", "max_drawdown_pct", float),
                     ("max_open_positions", "max_open_positions", int),

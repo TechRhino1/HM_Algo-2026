@@ -157,6 +157,7 @@ def evaluate_exit(
     partial_already_taken: bool = False,
     be_already_locked: bool = False,
     struct_level: Optional[float] = None,
+    regime: Optional[str] = None,
 ) -> ExitDecision:
     """Compute the stop-loss / partial-profit action for an open trade.
 
@@ -235,7 +236,14 @@ def evaluate_exit(
     # than the initial stop or the trail sits behind the stop and never ratchets.
     if r_multiple >= policy.trail_activation_r and atr > 0:
         dec.trail_active = True
-        effective_mult = min(policy.runner_trail_atr, 1.50) if r_multiple >= 1.80 else policy.runner_trail_atr
+        is_ranging = bool(regime and any(k in str(regime).upper() for k in ("RANGE", "CONSOLIDATION", "COMPRESSION", "CHOP")))
+        if is_ranging:
+            # Under ranging/choppy conditions, clamp trailing distance tighter so gains aren't given back at range boundaries
+            effective_mult = min(policy.runner_trail_atr, 1.20)
+        else:
+            # Respect symbol-specific profile configuration (Gold 2.60, BTC 2.20, Indices 2.60)
+            # Only tighten down if deep in windfall profit (>= 3.0R) to bank gains against massive swings
+            effective_mult = min(policy.runner_trail_atr, 1.80) if r_multiple >= 3.00 else policy.runner_trail_atr
         raw_trail_dist = atr * effective_mult
         # Cap trail distance so it cannot lag behind entry on high-ATR instruments (e.g. Gold where runner_trail_atr=2.6)
         trail_dist = min(raw_trail_dist, max(risk_dist * 1.5, atr * 0.8))
