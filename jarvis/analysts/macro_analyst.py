@@ -110,7 +110,7 @@ class MacroAnalyst(BaseAnalyst):
                 # directional shock scoring.  Without this, a USD beat from
                 # Monday keeps usd_bull_shock=True all week, permanently
                 # biasing Gold SELL even when the market has reversed.
-                _event_time_str = item.get("datetime") or item.get("time") or ""
+                _event_time_str = item.get("timestamp_iso") or item.get("datetime") or item.get("time") or ""
                 _event_stale = False
                 if _event_time_str:
                     try:

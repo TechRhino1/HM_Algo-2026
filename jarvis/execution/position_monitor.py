@@ -408,10 +408,6 @@ class PositionMonitorEngine:
             pip_size = 0.0001
             digits = 5
 
-        if spread > (typical_spread * SPREAD_BLOWOUT_MULT):
-            logger.warning(f"⚠️ Spread blowout {spread:.1f} pips on #{pos.ticket} — skipping modification.")
-            return
-
         new_sl  = pos.sl
         new_tp  = pos.tp
         actions = []
@@ -419,6 +415,9 @@ class PositionMonitorEngine:
         # ── Manual Trade Isolation & Trailing (Spec v2.1 Refinement 4) ──────
         effective_manual_mode = getattr(self, "manual_mode", MANUAL_MANAGEMENT_MODE)
         if is_manual:
+            if effective_manual_mode == "PROTECT_ONLY" and pos.sl > 0:
+                # In PROTECT_ONLY mode, do not modify manual trades that already have an SL
+                return
             # Always ensure manual trades are protected against missing SL or dangerously wide blowout SL
             new_sl, act = self._handle_manual_sl(pos, c_price, atr, new_sl)
             if new_sl != pos.sl and new_sl > 0:
@@ -428,6 +427,10 @@ class PositionMonitorEngine:
             if effective_manual_mode == "PROTECT_ONLY":
                 # In PROTECT_ONLY mode, do not trail or apply discretionary algorithmic exits
                 return
+
+        if spread > (typical_spread * SPREAD_BLOWOUT_MULT):
+            logger.warning(f"⚠️ Spread blowout {spread:.1f} pips on #{pos.ticket} — skipping modification.")
+            return
 
         # ── 180s Post-Entry Discretionary Grace Period (Spec v2.1 Refinement 3) ──
         open_dur_sec = self._get_position_duration_sec(pos)
@@ -1290,7 +1293,7 @@ class PositionMonitorEngine:
             candle = getattr(ctx, "candlestick_pattern", {})
             if isinstance(candle, dict) and candle:
                 c_dir = str(candle.get("direction", "") or candle.get("bias", "")).upper()
-                c_pat = candle.get("pattern", "UNKNOWN")
+                c_pat = candle.get("pattern_name", candle.get("pattern", "UNKNOWN"))
                 if is_buy and "BEAR" in c_dir:
                     reversal_signals.append(f"CANDLE_REVERSAL({c_pat})")
                 elif (not is_buy) and "BULL" in c_dir:
@@ -1357,11 +1360,18 @@ class PositionMonitorEngine:
     ) -> float:
         """Tighten SL to breakeven (entry ± small buffer) as fast as possible."""
         if pos.type == "BUY":
+            # If trade is underwater, setting SL to entry+buffer places SL above current price!
+            if c_price <= pos.open_price:
+                return current_sl
             be = pos.open_price + (atr * 0.05)
-            return max(be, current_sl)
+            return min(c_price - (atr * 0.1), max(be, current_sl))
         else:
+            # If trade is underwater, setting SL to entry-buffer places SL below current price!
+            if c_price >= pos.open_price:
+                return current_sl
             be = pos.open_price - (atr * 0.05)
-            return be if (current_sl == 0 or be < current_sl) else current_sl
+            target = min(be, current_sl) if current_sl > 0 else be
+            return max(c_price + (atr * 0.1), target)
 
     # ─── Helpers ───────────────────────────────────────────────────────────────
 

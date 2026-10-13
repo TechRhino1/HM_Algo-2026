@@ -1075,7 +1075,7 @@ class DecisionEngine:
 
 
         strategy_probs = self.strategy_selector.select_strategy_probabilities(
-            regime, context=context, account_equity=account_balance
+            regime, context=context, account_equity=account_balance, style=style
         )
         best_strategy = max(strategy_probs.items(), key=lambda x: x[1])[0]
 
@@ -1131,11 +1131,16 @@ class DecisionEngine:
         )
         is_micro_mode = is_micro_account(account_balance)
         if news_reaction.get("news_reversal_setup"):
-            c_boost = news_reaction.get("conviction_boost", 0.0)
-            calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, c_boost, style, is_micro_mode)
-            final_win_p = _bounded_bayesian_probability_update(final_win_p, c_boost, style, is_micro_mode)
-            ai_score = min(100.0, ai_score + 8.0)
-            logger.info(f"[{context.symbol}] {news_reaction.get('reason')}")
+            rev_bias = news_reaction.get("reversal_bias")
+            if rev_bias == tentative_bias:
+                c_boost = news_reaction.get("conviction_boost", 0.0)
+                calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, c_boost, style, is_micro_mode)
+                final_win_p = _bounded_bayesian_probability_update(final_win_p, c_boost, style, is_micro_mode)
+                ai_score = min(100.0, ai_score + 8.0)
+                logger.info(f"[{context.symbol}] Post-news sweep reversal aligns with {tentative_bias}: {news_reaction.get('reason')}")
+            else:
+                ai_score = max(0.0, ai_score - 10.0)
+                logger.warning(f"[{context.symbol}] Post-news sweep reversal opposing {tentative_bias} (favors {rev_bias})! Penalizing AI score to {ai_score:.1f}")
 
         # 3. Apply Multi-Timeframe Top-Down Confluence Score (B7-WIRING)
         mtf_score = getattr(context, "mtf_confluence_score", 0.0)

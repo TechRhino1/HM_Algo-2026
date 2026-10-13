@@ -1014,7 +1014,9 @@ class LiveNewsEngine:
 
         latest_news = recent_news[0]
         # Check if the liquidity sweep swept the initial impulse extreme (stop hunt)
-        is_buy_side_sweep = (sweep_type == "BUY_SIDE")
+        # Buy-side sweep (highs swept) sets up a SELL reversal; sell-side sweep (lows swept) sets up a BUY reversal.
+        sweep_upper = str(sweep_type or "").upper()
+        is_buy_side_sweep = ("BUY_SIDE" in sweep_upper or "BEARISH_SWEEP" in sweep_upper or "HIGH" in sweep_upper)
         reversal_direction = "SELL" if is_buy_side_sweep else "BUY"
 
         return {

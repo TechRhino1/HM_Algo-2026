@@ -101,7 +101,7 @@ _REGISTRY: Dict[str, SymbolSpec] = {
     ),
     "WTI": SymbolSpec(
         canonical="WTI", asset_class="COMMODITY",
-        contract_size=100.0, pip_size=0.01, pip_value_per_lot=10.0,
+        contract_size=100.0, pip_size=0.01, pip_value_per_lot=1.0,
         typical_spread_pips=13.0, max_spread_pips=25.0,
         typical_atr_pct=1.5, margin_pct=0.2, digits=2
     ),

@@ -35,13 +35,15 @@ class StrategySelector:
         self,
         regime: RegimeOutput,
         context: Optional[MarketContext] = None,
-        account_equity: float = 10000.0
+        account_equity: float = 10000.0,
+        style: str = "SWING"
     ) -> Dict[str, float]:
         """
         Calculate context-aware Bayesian posterior probabilities across candidate strategies.
         Eliminates static tables with dynamic likelihood updating.
         """
         r = regime.primary_regime
+        style_key = str(style or getattr(context, "trade_style", "SWING") or "SWING").upper()
 
         # 1. MICRO-ACCOUNT ADAPTIVE MODE (Active ONLY when Equity < $100.00)
         if account_equity < 100.0:
@@ -377,17 +379,28 @@ class StrategySelector:
             prior_weights["TREND_FOLLOWING"] = 0.0
             prior_weights["BREAKOUT_EXPANSION"] = 0.0
         elif r in [MarketRegime.TREND_BULL, MarketRegime.TREND_BEAR]:
-            prior_weights["RANGE_MEAN_REVERSION"] = 0.0
+            # On SCALP horizon (M5), allow mean-reverting pullbacks to short-term equilibrium
+            if style_key != "SCALP":
+                prior_weights["RANGE_MEAN_REVERSION"] = 0.0
 
         # Strict symbol profile banned strategy enforcement (Gold remains 100% untouched)
         if not is_gold:
             for banned in cfg.banned_strategies:
                 prior_weights[banned] = 0.0
 
-        # 2.6 Reinforcement Learning Bandit Boosts
-        bandit_boosts = self.bandit.get_strategy_boosts()
+        # 2.6 Reinforcement Learning Bandit Boosts & Contextual Thompson Sampling
+        reg_key = getattr(r, "value", str(r)).upper()
+        bandit_boosts = self.bandit.get_strategy_boosts(current_regime=reg_key)
+        try:
+            thompson_weights = self.bandit.get_strategy_weights(regime=reg_key, style=style_key)
+        except Exception:
+            thompson_weights = {}
+
         for s in prior_weights:
-            prior_weights[s] *= bandit_boosts.get(s, 1.0)
+            b_boost = bandit_boosts.get(s, 1.0)
+            t_prob = thompson_weights.get(s, 1.0 / len(self.STRATEGIES))
+            t_mult = max(0.5, min(2.0, t_prob * len(self.STRATEGIES)))
+            prior_weights[s] *= (b_boost * t_mult)
 
         # 2.7 Posterior Probability Normalization
         total = sum(prior_weights.values())

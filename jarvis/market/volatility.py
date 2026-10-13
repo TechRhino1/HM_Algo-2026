@@ -67,8 +67,8 @@ class VolatilityEngine:
         if len(atr_series) >= 10:
             atr_momentum = float(atr_series.iloc[-1] - atr_series.iloc[-5]) / (float(atr_series.iloc[-5]) + 1e-9)
             forward_forecast = float(current_atr * (1.0 + np.clip(atr_momentum * 0.5, -0.3, 0.5)))
-            if current_atr > 0:
-                spread_risk_score = float(np.clip((current_spread_pips / (current_atr + 1e-9)) * 10.0, 0.0, 100.0))
+            if current_atr > 0 and max_allowed_spread_pips > 0:
+                spread_risk_score = float(np.clip((current_spread_pips / max_allowed_spread_pips) * 100.0, 0.0, 100.0))
 
         is_excessive_spread = current_spread_pips > max_allowed_spread_pips
         return VolatilityContext(

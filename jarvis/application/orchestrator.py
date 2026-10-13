@@ -470,8 +470,9 @@ class JarvisOrchestrator:
         # losses that were never observed. Withhold the sample instead.
         if is_win is not None:
             self.circuit_breaker.record_trade_result(is_win == 1, symbol=trade_symbol, regime=regime_name)
-            if hasattr(self.risk_engine, "loss_cooldown"):
-                self.risk_engine.loss_cooldown.record_trade_result(
+            risk_eng = getattr(self, "risk_engine", None)
+            if risk_eng and hasattr(risk_eng, "loss_cooldown"):
+                risk_eng.loss_cooldown.record_trade_result(
                     pnl=pnl or 0.0,
                     is_win=(is_win == 1),
                     symbol=trade_symbol

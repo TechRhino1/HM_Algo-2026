@@ -150,14 +150,14 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         be_trigger_r=1.80,
         runner_trail_atr=2.50,
         session_restriction=False,
-        contract_size=1.0,
+        contract_size=10.0,
         pip_size=0.01,
-        pip_value_per_lot=0.01,
+        pip_value_per_lot=0.10,
         digits=2,
-        typical_spread_pips=15.0,
-        max_allowed_spread_pips=50.0,
+        typical_spread_pips=45.0,
+        max_allowed_spread_pips=105.0,
         commission_per_lot=0.0,
-        min_volume=0.01,
+        min_volume=0.05,
         volume_step=0.01,
         margin_pct=0.5
     ),
@@ -224,14 +224,14 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         session_restriction=True,
         allowed_utc_hours=(14, 19),
         contract_size=1.0,
-        pip_size=0.1,
+        pip_size=1.0,
         pip_value_per_lot=1.0,
-        digits=1,
+        digits=2,
         typical_spread_pips=0.6,
         max_allowed_spread_pips=2.5,
         commission_per_lot=0.0,
-        min_volume=0.01,
-        volume_step=0.01,
+        min_volume=0.1,
+        volume_step=0.1,
         margin_pct=0.2
     ),
 
@@ -268,8 +268,8 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         typical_spread_pips=2.0,
         max_allowed_spread_pips=6.0,
         commission_per_lot=0.0,
-        min_volume=0.01,
-        volume_step=0.01,
+        min_volume=0.1,
+        volume_step=0.1,
         margin_pct=0.2
     ),
 
@@ -303,8 +303,8 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         typical_spread_pips=1.6,
         max_allowed_spread_pips=8.5,
         commission_per_lot=0.0,
-        min_volume=0.01,
-        volume_step=0.01,
+        min_volume=0.1,
+        volume_step=0.1,
         margin_pct=0.2
     ),
 
@@ -334,12 +334,12 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         contract_size=1.0,
         pip_size=1.0,
         pip_value_per_lot=1.0,
-        digits=1,
+        digits=2,
         typical_spread_pips=2.0,
         max_allowed_spread_pips=7.0,
         commission_per_lot=0.0,
-        min_volume=0.01,
-        volume_step=0.01,
+        min_volume=0.1,
+        volume_step=0.1,
         margin_pct=0.2
     ),
 
@@ -369,12 +369,12 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         contract_size=1.0,
         pip_size=1.0,
         pip_value_per_lot=1.0,
-        digits=1,
+        digits=2,
         typical_spread_pips=2.5,
         max_allowed_spread_pips=8.0,
         commission_per_lot=0.0,
-        min_volume=0.01,
-        volume_step=0.01,
+        min_volume=0.1,
+        volume_step=0.1,
         margin_pct=0.2
     ),
 
@@ -475,12 +475,12 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         be_trigger_r=1.80,
         runner_trail_atr=2.60,
         session_restriction=False,
-        contract_size=1000.0,
+        contract_size=100.0,
         pip_size=0.01,
-        pip_value_per_lot=10.0,
+        pip_value_per_lot=1.0,
         digits=2,
-        typical_spread_pips=3.0,
-        max_allowed_spread_pips=8.0,
+        typical_spread_pips=13.0,
+        max_allowed_spread_pips=25.0,
         commission_per_lot=0.0,
         min_volume=0.01,
         volume_step=0.01,
@@ -574,6 +574,12 @@ _ALIAS_TO_CANONICAL: Dict[str, str] = {
     "NAS100#": "NAS100", "USTECH": "NAS100", "NDX100": "NAS100", "US100": "NAS100", "US100CASH#": "NAS100",
     "US30#": "US30", "DJ30": "US30", "WALLSTREET": "US30", "US30CASH#": "US30",
     "USOIL": "WTI", "OIL": "WTI", "CRUDE": "WTI", "USOIL.I#": "WTI", "OIL.I#": "WTI", "CL": "WTI", "OILCASH#": "WTI",
+    "GER40#": "GER40", "GER40.I#": "GER40", "GER40.I": "GER40", "GER40CASH#": "GER40", "GER30": "GER40", "GER30#": "GER40", "DAX": "GER40", "DAX40": "GER40",
+    "UK100#": "UK100", "UK100.I#": "UK100", "UK100.I": "UK100", "UK100CASH#": "UK100", "FTSE": "UK100", "FTSE100": "UK100",
+    "SILVER": "XAGUSD", "SILVER#": "XAGUSD", "SILVER.I#": "XAGUSD", "SILVER.I": "XAGUSD", "XAGUSD#": "XAGUSD", "XAGUSD.I#": "XAGUSD", "XAGUSD.I": "XAGUSD",
+    "WTI#": "WTI", "WTI.I#": "WTI", "OILCASH#": "WTI", "USOILCASH#": "WTI",
+    "ETHBTC#": "ETHBTC", "ETHBTC.I#": "ETHBTC", "ETHBTC.I": "ETHBTC",
+    "GOLD24-7.I#": "XAUUSD", "GOLD24-7#": "XAUUSD",
     "EURUSD#": "EURUSD", "EURUSD.I#": "EURUSD",
     "GBPUSD#": "GBPUSD", "GBPUSD.I#": "GBPUSD",
     "USDJPY#": "USDJPY", "USDJPY.I#": "USDJPY",
@@ -592,6 +598,16 @@ def get_symbol_profile_config(symbol: str) -> SymbolProfileConfig:
     canonical = _ALIAS_TO_CANONICAL.get(key, key)
     if canonical in SYMBOL_PROFILES:
         return SYMBOL_PROFILES[canonical]
+
+    # Try resolving via global SymbolRegistry before falling back
+    try:
+        from jarvis.data.symbol_registry import resolve as resolve_symbol
+        reg_canon = resolve_symbol(symbol).canonical
+        if reg_canon in SYMBOL_PROFILES:
+            return SYMBOL_PROFILES[reg_canon]
+    except Exception:
+        pass
+
     # Fallback to general Forex template if symbol is unknown. This used to be
     # completely silent, which is how GER40/UK100 ended up sized 100,000x wrong
     # for months. Make it loud so an unregistered symbol cannot slip through.
