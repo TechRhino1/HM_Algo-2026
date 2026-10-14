@@ -24,7 +24,8 @@ from jarvis.data.broker_symbols import terminal_live
 from jarvis.api.copilot import JarvisCopilot
 from jarvis.execution.mt5_client import MT5Client
 from jarvis.data.schemas import ExecutionMode
-from jarvis.data.symbol_registry import resolve as resolve_symbol
+from jarvis.data.symbol_registry import resolve as resolve_symbol, _REGISTRY
+from jarvis.intelligence.symbol_profile_config import SYMBOL_PROFILES
 from jarvis.market.sessions import SessionEngine
 from jarvis.api.remote_auth import RemoteAuthEngine
 from jarvis.config.settings import SETTINGS
@@ -510,7 +511,6 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                             self.state_manager.sync_broker_state(acc, pos)
                         snap = self.state_manager.get_state_snapshot()
                 
-                from jarvis.market.sessions import SessionEngine
                 sym = query.get("symbol", ["XAUUSD"])[0]
                 snap["active_market_status"] = SessionEngine.get_market_trading_status(sym)
                 configured_syms = [str(s).strip() for s in (SETTINGS.trading.symbols or []) if str(s).strip()]
@@ -524,7 +524,6 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 }
                 self._send_json(snap)
             elif path == "/api/market-status":
-                from jarvis.market.sessions import SessionEngine
                 sym = query.get("symbol", ["XAUUSD"])[0]
                 status = SessionEngine.get_market_trading_status(sym)
                 self._send_json(status)
@@ -866,10 +865,6 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 self._send_metrics(query)
             elif path == "/api/symbols/intelligence":
                 try:
-                    from jarvis.data.symbol_registry import _REGISTRY, resolve as resolve_symbol
-                    from jarvis.market.sessions import SessionEngine
-                    from jarvis.intelligence.symbol_profile_config import SYMBOL_PROFILES
-
                     orch = self.orchestrator or getattr(JarvisRequestHandler, "orchestrator", None)
                     active_symbols = set(orch.get_active_symbols() if orch and hasattr(orch, "get_active_symbols") else (SETTINGS.trading.symbols or []))
 
