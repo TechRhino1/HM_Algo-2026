@@ -252,6 +252,34 @@ class MetaLabeler:
             logger.error("MetaLabeler predict error: %s", e)
             return None
 
+    def compute_kelly_risk_multiplier(
+        self,
+        p_win: Optional[float] = None,
+        win_loss_ratio: float = 2.0,
+        fraction: float = 0.5,
+        min_mult: float = 0.35,
+        max_mult: float = 1.65,
+    ) -> float:
+        """
+        Calculates Fractional Kelly Criterion risk multiplier bounded between 0.35x and 1.65x.
+        f* = p - (1 - p) / b, where b is win_loss_ratio (payoff ratio).
+        If p_win is None (model untrained / uncertain), returns neutral 1.0.
+        """
+        if p_win is None or not (0.0 < p_win < 1.0):
+            return 1.0
+
+        b = max(win_loss_ratio, 0.5)
+        # Full Kelly fraction
+        f_star = p_win - ((1.0 - p_win) / b)
+
+        # Baseline expected win rate for 1.0 multiplier under payoff b is p_neutral = 1 / (1 + b)
+        neutral_f = max(0.01, 0.50 - (0.50 / b))
+
+        # Fractional Kelly sizing adjustment centered around 1.0
+        delta_f = (f_star - neutral_f) * fraction
+        mult = 1.0 + (delta_f * 2.0)
+        return float(np.clip(mult, min_mult, max_mult))
+
     def _load(self):
         # Hermetic in backtests: a meta-label model fitted on live trades must
         # not influence a historical simulation. With model=None the

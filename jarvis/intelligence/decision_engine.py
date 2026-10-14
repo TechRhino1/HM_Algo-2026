@@ -177,7 +177,9 @@ class DecisionEngine:
         mtf_align = getattr(context, "mtf_alignment", {}) or {}
         style_upper = (trade_style or getattr(context, "trade_style", "SWING") or "SWING").upper()
         d1_anchor_bias = mtf_align.get("D1", "NEUTRAL")
-        is_gold = "XAU" in str(getattr(context, "symbol", "")).upper()
+        sym_name = str(getattr(context, "symbol", "")).upper()
+        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name)
+        is_index_asset = any(k in sym_name for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ30", "DJI", "DOW", "GER40", "UK100"])
 
         if "SCALP" in style_upper:
             htf_bias = mtf_align.get("H1", mtf_align.get("M15", "NEUTRAL"))
@@ -208,6 +210,24 @@ class DecisionEngine:
         # 4. Authenticated Reversal & Order Flow Conditions
         has_bull_sweep = bool(getattr(context.liquidity, "sweep_detected", False) and "BULLISH" in getattr(context.liquidity, "sweep_type", ""))
         has_bear_sweep = bool(getattr(context.liquidity, "sweep_detected", False) and "BEARISH" in getattr(context.liquidity, "sweep_type", ""))
+
+        # Check ICT Sweep & Order-Flow Absorption Reversal via InstitutionalEntryEngine
+        sweep_rev_buy = False
+        sweep_rev_sell = False
+        try:
+            df_m5_sample = getattr(context, "df_m5", None)
+            from jarvis.intelligence.institutional_entry_engine import INSTITUTIONAL_ENTRY_ENGINE
+            rev_res = INSTITUTIONAL_ENTRY_ENGINE.detect_institutional_sweep_reversal(df_m5_sample, context)
+            if rev_res.get("is_valid"):
+                if rev_res.get("reversal_direction") == "BUY":
+                    sweep_rev_buy = True
+                elif rev_res.get("reversal_direction") == "SELL":
+                    sweep_rev_sell = True
+        except Exception:
+            pass
+
+        has_bull_sweep = has_bull_sweep or sweep_rev_buy
+        has_bear_sweep = has_bear_sweep or sweep_rev_sell
         has_bull_div = bool(getattr(mom, "bullish_divergence", False)) if mom else False
         has_bear_div = bool(getattr(mom, "bearish_divergence", False)) if mom else False
         dp_zone = getattr(st, "discount_premium_zone", "EQUILIBRIUM")
@@ -258,9 +278,11 @@ class DecisionEngine:
                 return "HOLD"
 
             # 1b. Momentum Exhaustion Top & Liquidity Sweep Guard:
-            # If buy-side liquidity was swept at a premium, or momentum is at an overbought extreme (> 80),
+            # If buy-side liquidity was swept at a premium, or momentum is at an overbought extreme,
             # buying is prohibited! Wait for pullback or flip to SELL if confirmed.
-            if ((has_bear_sweep and dp_zone == "PREMIUM") or trend_score >= 80.0) and not is_breakout_regime:
+            # In expansion/breakout regimes or on index expansion, allow momentum up to 98.0 without false exhaustion.
+            max_mom_bull = 98.0 if (is_breakout_regime or is_bull_regime or is_index_asset) else 80.0
+            if ((has_bear_sweep and dp_zone == "PREMIUM") or trend_score >= max_mom_bull) and not is_breakout_regime:
                 if authenticated_bear_reversal or (has_bear_sweep and (trend_score <= 30.0 or bear_votes > bull_votes)):
                     return "SELL"
                 return "HOLD"
@@ -308,9 +330,11 @@ class DecisionEngine:
                 return "HOLD"
 
             # 1b. Momentum Exhaustion Bottom & Liquidity Sweep Guard:
-            # If sell-side liquidity was swept at a discount, or momentum is at an oversold extreme (< -80),
+            # If sell-side liquidity was swept at a discount, or momentum is at an oversold extreme,
             # selling is prohibited! Wait for pullback or flip to BUY if confirmed.
-            if ((has_bull_sweep and dp_zone == "DISCOUNT") or trend_score <= -80.0) and not is_breakout_regime:
+            # In expansion/breakout regimes or on index expansion, allow momentum down to -98.0 without false exhaustion.
+            min_mom_bear = -98.0 if (is_breakout_regime or is_bear_regime or is_index_asset) else -80.0
+            if ((has_bull_sweep and dp_zone == "DISCOUNT") or trend_score <= min_mom_bear) and not is_breakout_regime:
                 if authenticated_bull_reversal or (has_bull_sweep and (trend_score >= -30.0 or bull_votes > bear_votes)):
                     return "BUY"
                 return "HOLD"
@@ -1781,3 +1805,45 @@ class DecisionEngine:
             master_confluence_score=locals().get("_master_score", 0.0),
             master_confluence_tier=locals().get("_master_tier", "UNKNOWN")
         )
+
+    def _is_momentum_valid_for_regime(
+        self,
+        bias: str,
+        mom_score: float,
+        mom_delta: float,
+        regime: str,
+        order_flow_confirmed: bool = False,
+    ) -> Tuple[bool, str]:
+        """
+        Regime-Adaptive Momentum Validator.
+        Allows uncapped momentum (up to ±98) in expansion/breakout regimes and index trends,
+        while strictly capping momentum (<= 75) in ranging/consolidation regimes.
+        """
+        expansion_regimes = {
+            "TREND_BULL", "TREND_BEAR", "STRONG_TREND_BULL", "STRONG_TREND_BEAR",
+            "BREAKOUT", "POST_BREAKOUT"
+        }
+        is_expansion = (str(regime).upper() in expansion_regimes) or order_flow_confirmed
+
+        max_abs_score = 98.0 if is_expansion else 75.0
+        min_abs_score = 10.0 if is_expansion else 15.0
+
+        if bias == "BUY":
+            if mom_score < min_abs_score:
+                return False, f"BUY momentum too weak ({mom_score:.2f} < {min_abs_score})"
+            if mom_score > max_abs_score:
+                return False, f"BUY momentum exhausted for regime {regime} ({mom_score:.2f} > {max_abs_score})"
+            if not is_expansion and mom_delta < -15.0:
+                return False, f"BUY momentum decelerating ({mom_delta:.2f})"
+            return True, "OK"
+
+        if bias == "SELL":
+            if mom_score > -min_abs_score:
+                return False, f"SELL momentum too weak ({mom_score:.2f} > -{min_abs_score})"
+            if mom_score < -max_abs_score:
+                return False, f"SELL momentum exhausted for regime {regime} ({mom_score:.2f} < -{max_abs_score})"
+            if not is_expansion and mom_delta > 15.0:
+                return False, f"SELL momentum decelerating ({mom_delta:.2f})"
+            return True, "OK"
+
+        return False, "NEUTRAL bias"

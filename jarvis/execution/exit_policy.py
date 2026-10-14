@@ -182,7 +182,12 @@ def evaluate_exit(
     # degenerate we cannot reason in R at all, so leave the position untouched
     # rather than manufacturing a spurious stop.
     risk_dist = abs(entry - initial_sl)
-    if risk_dist <= 0 or not (price > 0):
+    if risk_dist <= 1e-6:
+        if atr > 0:
+            risk_dist = atr * 1.5
+        else:
+            return dec
+    if not (price > 0):
         return dec
 
     r_multiple = favorable_dist / risk_dist

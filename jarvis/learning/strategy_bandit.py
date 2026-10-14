@@ -34,7 +34,12 @@ class StrategyBandit:
     DEFAULT_ALPHA = 3.0
     DEFAULT_BETA = 2.0
 
-    def __init__(self, state_file: str = "jarvis_bandit_state.json", exploration_c: float = 0.5):
+    def __init__(
+        self,
+        state_file: str = "jarvis_bandit_state.json",
+        exploration_c: float = 0.5,
+        gamma_decay: float = 0.96,
+    ):
         # Anchor the state file under DATA_DIR (see jarvis.config.paths). It used
         # to be resolved against the process working directory, so the same code
         # read/wrote a different file depending on where it was launched from --
@@ -47,6 +52,7 @@ class StrategyBandit:
         except Exception:
             self.state_file = state_file
         self.c = exploration_c
+        self.gamma_decay = float(gamma_decay)
         self._lock = threading.Lock()
         
         # Structure: priors[regime][style][strategy] = {"alpha": float, "beta": float, "pulls": int, "rewards": float}
@@ -193,8 +199,8 @@ class StrategyBandit:
                 for st_k in self.priors[r_k]:
                     for s_k in self.priors[r_k][st_k]:
                         entry = self.priors[r_k][st_k][s_k]
-                        entry["alpha"] = max(1.0, (entry["alpha"] - self.DEFAULT_ALPHA) * 0.99 + self.DEFAULT_ALPHA)
-                        entry["beta"] = max(1.0, (entry["beta"] - self.DEFAULT_BETA) * 0.99 + self.DEFAULT_BETA)
+                        entry["alpha"] = max(1.0, (entry["alpha"] - self.DEFAULT_ALPHA) * self.gamma_decay + self.DEFAULT_ALPHA)
+                        entry["beta"] = max(1.0, (entry["beta"] - self.DEFAULT_BETA) * self.gamma_decay + self.DEFAULT_BETA)
 
             target_entry = self.priors[reg_key][style_key][strat_key]
             target_entry["pulls"] += 1

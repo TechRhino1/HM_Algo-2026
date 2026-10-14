@@ -378,6 +378,26 @@ class PositionMonitorEngine:
         except Exception as e:
             logger.debug(f"_manage_pending_orders_tick error: {e}")
 
+    def _ensure_valid_initial_sl_dist(
+        self,
+        pos: PositionSnapshot,
+        assigned_sl: float = 0.0,
+        fallback_atr: float = 0.0,
+        pip_size: float = 0.0001,
+    ) -> float:
+        """
+        Guarantees that _initial_risk_dist[ticket] is valid, positive, and non-degenerate.
+        Prevents division-by-zero or infinite R-multiples if manual or algorithmic positions
+        have pos.sl == 0 or sl placed too close to open price.
+        """
+        sl_cand = assigned_sl if assigned_sl > 0 else pos.sl
+        dist = abs(pos.open_price - sl_cand) if sl_cand > 0 else 0.0
+        min_floor = max(fallback_atr * 0.5, pip_size * 5, 1e-4) if fallback_atr > 0 else max(pip_size * 5, 1e-4)
+        if dist < min_floor:
+            dist = max(fallback_atr * 1.5, min_floor)
+        self._initial_risk_dist[pos.ticket] = dist
+        return dist
+
     # ─── Single-Position Logic ──────────────────────────────────────────────────
 
     def _manage_single_position(
@@ -474,8 +494,7 @@ class PositionMonitorEngine:
                             pos.tp = target_tp
                             self._last_action[pos.ticket] = f"{target_sl:.{digits}f}_{target_tp:.{digits}f}"
                             self._last_modify_time[pos.ticket] = now_ts
-                            self._initial_risk_dist[pos.ticket] = max(abs(pos.open_price - target_sl), pip_size * 5)
-                            self._initial_sl[pos.ticket] = target_sl
+                            self._ensure_valid_initial_sl_dist(pos, target_sl, atr, pip_size)
                             self._initial_tp[pos.ticket] = target_tp
 
             if effective_manual_mode == "PROTECT_ONLY":
@@ -571,14 +590,12 @@ class PositionMonitorEngine:
             # 1R is frozen here on first sight of the position and never
             # recomputed, otherwise every ratchet would rescale R against the
             # *current* stop and the thresholds would silently drift.
-            if pos.ticket not in self._initial_risk_dist:
-                self._initial_risk_dist[pos.ticket] = (
-                    abs(pos.open_price - pos.sl) if pos.sl > 0 else (EMERGENCY_SL_ATR_MULT * atr)
-                )
+            if pos.ticket not in self._initial_risk_dist or self._initial_risk_dist[pos.ticket] <= 1e-6:
+                self._ensure_valid_initial_sl_dist(pos, pos.sl, atr, pip_size)
             risk_dist = max(self._initial_risk_dist[pos.ticket], pip_size * 5)
 
             # Freeze the original stop, which defines 1R for the policy.
-            if pos.ticket not in self._initial_sl:
+            if pos.ticket not in self._initial_sl or self._initial_sl[pos.ticket] == 0.0:
                 self._initial_sl[pos.ticket] = (
                     pos.sl if pos.sl > 0
                     else (pos.open_price - risk_dist if pos.type == "BUY"

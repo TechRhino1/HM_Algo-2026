@@ -71,6 +71,7 @@ class InstitutionalEntryEngine:
                 sigma=sigma,
                 spread_pips=context.volatility.current_spread_pips,
                 pip_size=pip_size,
+                atr=context.volatility.atr,
             )
             res["as_limit_price"] = as_calc["optimal_limit_price"]
             res["as_reservation_price"] = as_calc["reservation_price"]
@@ -872,6 +873,106 @@ class InstitutionalEntryEngine:
             min_sl_dist = max(min_sl_dist, min_crypto_pts)
 
         return float(min_sl_dist)
+
+    def detect_institutional_sweep_reversal(
+        self,
+        df_m5: Optional[pd.DataFrame],
+        context: MarketContext,
+        bias_candidate: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Detects an ICT Liquidity Sweep + Order-Flow Absorption Reversal Sniper setup on M5.
+        
+        Institutional Microstructure Mechanics:
+        1. Sweeps external liquidity pool (Sell-Side Liquidity SSL below prior swing low for BUY;
+           or Buy-Side Liquidity BSL above prior swing high for SELL).
+        2. Candle rejection wick (>= 25% of total bar range) confirms retail stop-run rejection.
+        3. Order flow footprint demonstrates absorption (Buyer absorption trap on red candle, or
+           positive delta spike, or institutional volume ratio >= 1.25x).
+        4. Market Structure Shift (MSS) displacement body ratio >= 55%.
+        """
+        res = {
+            "is_valid": False,
+            "reversal_direction": "NONE",
+            "sweep_extreme": 0.0,
+            "suggested_sl": 0.0,
+            "suggested_entry": 0.0,
+            "quality_score": 0.0,
+            "reason": "No institutional sweep reversal detected"
+        }
+        if df_m5 is None or len(df_m5) < 10 or context is None:
+            return res
+
+        try:
+            c_price = float(context.current_price)
+            spec = resolve_symbol(context.symbol)
+            digits = spec.digits
+            pip_size = spec.pip_size if spec.pip_size > 0 else 0.0001
+            spread_dist = max(0.0, context.ask - context.bid) if (context.ask > 0 and context.bid > 0) else (context.volatility.current_spread_pips * pip_size)
+            atr = self._estimate_atr(df_m5, default_atr=context.volatility.atr if context.volatility.atr > 0 else (c_price * 0.005))
+
+            # Order Flow metrics extraction
+            of_trap = None
+            delta_score = 0.0
+            vol_ratio = 1.0
+            if hasattr(context, "order_flow") and context.order_flow:
+                of = context.order_flow
+                of_trap = of.get("absorption_trap") if isinstance(of, dict) else getattr(of, "absorption_trap", None)
+                delta_score = float(of.get("delta_score", 0.0)) if isinstance(of, dict) else float(getattr(of, "delta_score", 0.0) or 0.0)
+                vol_ratio = float(of.get("current_vol_ratio", 1.0)) if isinstance(of, dict) else float(getattr(of, "current_vol_ratio", 1.0) or 1.0)
+            elif len(df_m5) >= 20:
+                try:
+                    from jarvis.intelligence.order_flow import InstitutionalVolumeOrderFlowEngine
+                    of_eng = InstitutionalVolumeOrderFlowEngine()
+                    of_res = of_eng.analyze_order_flow(df_m5)
+                    of_trap = of_res.get("absorption_trap")
+                    delta_score = float(of_res.get("delta_score", 0.0))
+                    vol_ratio = float(of_res.get("current_vol_ratio", 1.0))
+                except Exception:
+                    pass
+
+            # Check Bullish Reversal (SSL Sweep at bottom)
+            if bias_candidate in (None, "BUY", "LONG"):
+                ssl_swept, ssl_extreme, ssl_rejected = self._detect_liquidity_sweep(df_m5, "BUY", bars=5)
+                has_bull_absorption = (of_trap == "BUYER_ABSORPTION_TRAP") or (delta_score > 20.0) or (vol_ratio >= 1.25)
+                is_mss_bull, bull_ratio, _, _ = self._detect_mss_displacement(df_m5, "BUY")
+                
+                if ssl_swept and (ssl_rejected or has_bull_absorption):
+                    suggested_sl = round(ssl_extreme - (atr * 0.25 + spread_dist * 1.5), digits)
+                    q_score = 70.0 + (15.0 if has_bull_absorption else 0.0) + (15.0 if is_mss_bull else 0.0)
+                    return {
+                        "is_valid": True,
+                        "reversal_direction": "BUY",
+                        "sweep_extreme": ssl_extreme,
+                        "suggested_sl": suggested_sl,
+                        "suggested_entry": c_price,
+                        "quality_score": round(q_score, 1),
+                        "reason": f"ICT SSL Sweep ({ssl_extreme:.{digits}f}) + Rejection Wick + Absorption (delta={delta_score:.1f}, vol={vol_ratio:.1f}x)"
+                    }
+
+            # Check Bearish Reversal (BSL Sweep at top)
+            if bias_candidate in (None, "SELL", "SHORT"):
+                bsl_swept, bsl_extreme, bsl_rejected = self._detect_liquidity_sweep(df_m5, "SELL", bars=5)
+                has_bear_absorption = (of_trap == "SELLER_ABSORPTION_TRAP") or (delta_score < -20.0) or (vol_ratio >= 1.25)
+                is_mss_bear, bear_ratio, _, _ = self._detect_mss_displacement(df_m5, "SELL")
+
+                if bsl_swept and (bsl_rejected or has_bear_absorption):
+                    suggested_sl = round(bsl_extreme + (atr * 0.25 + spread_dist * 1.5), digits)
+                    q_score = 70.0 + (15.0 if has_bear_absorption else 0.0) + (15.0 if is_mss_bear else 0.0)
+                    return {
+                        "is_valid": True,
+                        "reversal_direction": "SELL",
+                        "sweep_extreme": bsl_extreme,
+                        "suggested_sl": suggested_sl,
+                        "suggested_entry": c_price,
+                        "quality_score": round(q_score, 1),
+                        "reason": f"ICT BSL Sweep ({bsl_extreme:.{digits}f}) + Rejection Wick + Absorption (delta={delta_score:.1f}, vol={vol_ratio:.1f}x)"
+                    }
+
+        except Exception as e:
+            logger.debug(f"detect_institutional_sweep_reversal error: {e}")
+
+        return res
 
 
 INSTITUTIONAL_ENTRY_ENGINE = InstitutionalEntryEngine()
