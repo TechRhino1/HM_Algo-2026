@@ -864,6 +864,135 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
 
             elif path == "/api/metrics":
                 self._send_metrics(query)
+            elif path == "/api/symbols/intelligence":
+                try:
+                    from jarvis.data.symbol_registry import _REGISTRY, resolve as resolve_symbol
+                    from jarvis.market.sessions import SessionEngine
+                    from jarvis.intelligence.symbol_profile_config import SYMBOL_PROFILES
+
+                    orch = self.orchestrator or getattr(JarvisRequestHandler, "orchestrator", None)
+                    active_symbols = set(orch.get_active_symbols() if orch and hasattr(orch, "get_active_symbols") else (SETTINGS.trading.symbols or []))
+
+                    radar_map = {}
+                    for item in list(self.state_manager.radar_opportunities):
+                        s = item.get("symbol")
+                        if s and s not in radar_map:
+                            radar_map[s] = item
+
+                    latest_decisions = getattr(self.state_manager, "latest_decisions", {}) or {}
+
+                    symbols_data = []
+                    for sym_name, spec in _REGISTRY.items():
+                        is_enabled = sym_name in active_symbols
+                        profile = SYMBOL_PROFILES.get(sym_name)
+
+                        # Session status
+                        mkt_status = SessionEngine.get_market_trading_status(sym_name)
+                        is_open = mkt_status.get("is_open", True)
+                        session_name = mkt_status.get("current_session", "GLOBAL")
+
+                        # Live quote / spread
+                        sym_spec = self.mt5_client.get_symbol_trading_spec(sym_name) if (hasattr(self, "mt5_client") and self.mt5_client and hasattr(self.mt5_client, "get_symbol_trading_spec")) else {}
+                        digits = int(sym_spec.get("digits") or spec.digits or 5)
+                        pip_size = float(spec.pip_size or 0.0001)
+                        point = float(sym_spec.get("point") or (10 ** -digits))
+                        spread_pts = float(sym_spec.get("spread") or 0.0)
+                        spread_pips = round((spread_pts * point) / pip_size, 1) if (pip_size > 0 and point > 0 and spread_pts > 0) else spec.typical_spread_pips
+
+                        # Radar and decision data
+                        radar_item = radar_map.get(sym_name, {})
+                        dec_obj = latest_decisions.get(sym_name)
+
+                        current_price = float(radar_item.get("current_price") or 0.0)
+                        bid = current_price
+                        ask = round(current_price + (spread_pips * pip_size), digits) if current_price > 0 else 0.0
+
+                        bias = radar_item.get("bias") or (getattr(dec_obj, "bias", None) if dec_obj else None) or "NEUTRAL"
+                        decision = radar_item.get("decision") or (getattr(dec_obj, "decision", None) if dec_obj else None) or "NO_TRADE"
+                        regime = radar_item.get("regime") or (dec_obj.regime.primary_regime.value if (dec_obj and hasattr(dec_obj, "regime") and dec_obj.regime and hasattr(dec_obj.regime, "primary_regime")) else "NORMAL")
+                        default_strat = (list(profile.strategy_weights.keys())[0] if (profile and getattr(profile, "strategy_weights", None)) else "STRUCTURE")
+                        strategy = radar_item.get("strategy") or (getattr(dec_obj, "strategy", None) if dec_obj else None) or default_strat
+                        win_prob = float(radar_item.get("win_prob") or (round(dec_obj.model_confidence * 100.0, 1) if (dec_obj and hasattr(dec_obj, "model_confidence") and dec_obj.model_confidence is not None) else 50.0))
+                        confluence_score = float(radar_item.get("confluence_score") or getattr(dec_obj, "master_confluence_score", 0.0) or 0.0)
+                        confluence_tier = radar_item.get("confluence_tier") or getattr(dec_obj, "master_confluence_tier", "MODERATE")
+                        rr_ratio = float(radar_item.get("risk_reward_ratio") or getattr(dec_obj, "risk_reward_ratio", 2.0) or 2.0)
+                        ev = float(radar_item.get("ev") or getattr(dec_obj, "expected_value", 0.0) or 0.0)
+
+                        # Grade calculation
+                        if confluence_score >= 70 and win_prob >= 65 and decision == "EXECUTE":
+                            grade = "A+"
+                        elif confluence_score >= 55 or (win_prob >= 60 and decision in ("EXECUTE", "WAIT")):
+                            grade = "A"
+                        elif win_prob >= 52:
+                            grade = "B"
+                        elif win_prob >= 45:
+                            grade = "C"
+                        else:
+                            grade = "F"
+
+                        # Actionable Master Trader AI suggestion
+                        suggestion_type = "neutral"
+                        if not is_open:
+                            suggestion = "Market Closed — Standby"
+                            suggestion_type = "closed"
+                        elif spread_pips > (spec.max_spread_pips * 1.5):
+                            suggestion = f"Spread Alert ({spread_pips:.1f}p > {spec.max_spread_pips:.1f}p) — High Volatility"
+                            suggestion_type = "warning"
+                        elif decision == "EXECUTE" and confluence_score >= 60:
+                            suggestion = f"Prime {bias} Opportunity (Grade {grade}) — High Confluence"
+                            suggestion_type = "prime"
+                        elif decision == "WAIT" and bias in ("BUY", "SELL"):
+                            suggestion = f"High Potential {bias} Setup — Awaiting Retest / Confirmation"
+                            suggestion_type = "wait"
+                        elif any(r in str(regime).upper() for r in ("CHOP", "RANGE", "COMPRESSION")) and confluence_score < 35:
+                            suggestion = "Choppy Low-Volume Range — Recommend Disabling to Conserve Capital"
+                            suggestion_type = "caution"
+                        else:
+                            suggestion = f"Scanning {strategy} Patterns | Regime: {regime}"
+                            suggestion_type = "info"
+
+                        allowed_strats = list(profile.strategy_weights.keys()) if (profile and getattr(profile, "strategy_weights", None)) else []
+                        banned_strats = list(profile.banned_strategies) if (profile and getattr(profile, "banned_strategies", None)) else []
+
+                        symbols_data.append({
+                            "symbol": sym_name,
+                            "canonical": spec.canonical,
+                            "asset_class": spec.asset_class,
+                            "is_enabled": is_enabled,
+                            "is_open": is_open,
+                            "session_name": session_name,
+                            "bid": bid,
+                            "ask": ask,
+                            "digits": digits,
+                            "spread_pips": spread_pips,
+                            "max_spread_pips": spec.max_spread_pips,
+                            "bias": bias,
+                            "decision": decision,
+                            "regime": regime,
+                            "strategy": strategy,
+                            "win_prob": win_prob,
+                            "confluence_score": confluence_score,
+                            "confluence_tier": confluence_tier,
+                            "grade": grade,
+                            "risk_reward_ratio": rr_ratio,
+                            "ev": ev,
+                            "suggestion": suggestion,
+                            "suggestion_type": suggestion_type,
+                            "allowed_strategies": allowed_strats,
+                            "banned_strategies": banned_strats,
+                        })
+
+                    self._send_json({
+                        "status": "SUCCESS",
+                        "total_universe": len(symbols_data),
+                        "active_count": len(active_symbols),
+                        "active_symbols": sorted(list(active_symbols)),
+                        "symbols": symbols_data
+                    })
+                except Exception as e:
+                    logger.error(f"Error fetching symbols intelligence: {e}", exc_info=True)
+                    self._send_json({"error": str(e)}, status_code=500)
+
             else:
                 self.send_error(404, "Endpoint not found")
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
@@ -1032,6 +1161,90 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     "applied_to_orchestrator": applied,
                     "orchestrator_attached": orch is not None,
                 })
+            elif path == "/api/action/toggle_symbol":
+                sym = str(data.get("symbol", "")).strip().upper()
+                enabled = bool(data.get("enabled", True))
+                if not sym:
+                    self._send_json({"status": "FAILED", "error": "Symbol is required"}, status_code=400)
+                    return
+                orch = self.orchestrator or getattr(JarvisRequestHandler, "orchestrator", None)
+                if orch and hasattr(orch, "toggle_symbol"):
+                    orch.toggle_symbol(sym, enabled, persist=True)
+                    active_syms = orch.get_active_symbols()
+                else:
+                    from jarvis.config.settings import SETTINGS, persist_allowed_symbols
+                    curr = set(SETTINGS.trading.symbols or [])
+                    if enabled:
+                        curr.add(sym)
+                    else:
+                        curr.discard(sym)
+                    active_syms = sorted(list(curr))
+                    persist_allowed_symbols(active_syms)
+
+                self.state_manager._bump_version()
+                self._send_json({
+                    "status": "SUCCESS",
+                    "symbol": sym,
+                    "enabled": enabled,
+                    "active_symbols": active_syms,
+                    "active_count": len(active_syms)
+                })
+            elif path == "/api/action/batch_symbols":
+                action = str(data.get("action", "")).strip().upper()
+                asset_class = str(data.get("asset_class", "ALL")).strip().upper()
+                target_symbols = data.get("symbols", None)
+
+                from jarvis.data.symbol_registry import _REGISTRY
+                all_universe = list(_REGISTRY.keys())
+                orch = self.orchestrator or getattr(JarvisRequestHandler, "orchestrator", None)
+                curr_active = set(orch.get_active_symbols() if orch and hasattr(orch, "get_active_symbols") else (SETTINGS.trading.symbols or []))
+
+                if action == "ENABLE_ALL":
+                    if asset_class == "ALL":
+                        curr_active = set(all_universe)
+                    else:
+                        for s, spec in _REGISTRY.items():
+                            if spec.asset_class.upper() == asset_class:
+                                curr_active.add(s)
+                elif action == "DISABLE_ALL":
+                    if asset_class == "ALL":
+                        curr_active = set()
+                    else:
+                        for s, spec in _REGISTRY.items():
+                            if spec.asset_class.upper() == asset_class:
+                                curr_active.discard(s)
+                elif action == "SET" and isinstance(target_symbols, list):
+                    clean_targets = {str(s).strip().upper() for s in target_symbols if str(s).strip()}
+                    curr_active = clean_targets
+                elif action == "AUTO_TUNE":
+                    # Master Trader AI Auto-Tune: Activate high-confluence / grade A+/A / trending symbols
+                    radar_map = {item.get("symbol"): item for item in list(self.state_manager.radar_opportunities) if item.get("symbol")}
+                    for s in all_universe:
+                        item = radar_map.get(s, {})
+                        conf = float(item.get("confluence_score", 0.0) or 0.0)
+                        reg = str(item.get("regime", "")).upper()
+                        if conf >= 50 or "TREND" in reg:
+                            curr_active.add(s)
+                        elif any(r in reg for r in ("CHOP", "COMPRESSION", "RANGE")) and conf < 30:
+                            curr_active.discard(s)
+                    if not curr_active:
+                        curr_active = {"XAUUSD", "EURUSD"}
+
+                new_active = sorted(list(curr_active))
+                if orch and hasattr(orch, "set_active_symbols"):
+                    orch.set_active_symbols(new_active, persist=True)
+                else:
+                    from jarvis.config.settings import SETTINGS, persist_allowed_symbols
+                    persist_allowed_symbols(new_active)
+
+                self.state_manager._bump_version()
+                self._send_json({
+                    "status": "SUCCESS",
+                    "action": action,
+                    "active_symbols": new_active,
+                    "active_count": len(new_active)
+                })
+
             elif path == "/api/historical/download":
                 from jarvis.historical.historical_engine import HISTORICAL_DATA_ENGINE
                 sym = data.get("symbol", "XAUUSD").upper()

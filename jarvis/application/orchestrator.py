@@ -260,6 +260,47 @@ class JarvisOrchestrator:
         self.mt5_client.shutdown()
         logger.info("HM Algo 2.0 Orchestrator stopped.")
 
+    def get_active_symbols(self) -> List[str]:
+        """Return the list of currently active trading symbols."""
+        with self._execution_lock:
+            return list(self.symbols)
+
+    def set_active_symbols(self, symbols: List[str], persist: bool = True) -> List[str]:
+        """Atomically update active trading symbols in memory and configuration."""
+        clean = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        with self._execution_lock:
+            self.symbols = clean
+        try:
+            from jarvis.config.settings import SETTINGS, persist_allowed_symbols
+            SETTINGS.trading.symbols = list(clean)
+            if persist:
+                persist_allowed_symbols(clean)
+        except Exception as e:
+            logger.debug(f"Could not persist active symbols: {e}")
+        logger.info(f"🎯 ORCHESTRATOR: Active symbols updated to ({len(clean)}): {clean}")
+        return self.symbols
+
+    def toggle_symbol(self, symbol: str, enabled: bool, persist: bool = True) -> bool:
+        """Enable or disable a single symbol at runtime."""
+        sym = str(symbol).strip().upper()
+        with self._execution_lock:
+            curr = set(self.symbols)
+            if enabled:
+                curr.add(sym)
+            else:
+                curr.discard(sym)
+            self.symbols = sorted(list(curr))
+        try:
+            from jarvis.config.settings import SETTINGS, persist_allowed_symbols
+            SETTINGS.trading.symbols = list(self.symbols)
+            if persist:
+                persist_allowed_symbols(self.symbols)
+        except Exception as e:
+            logger.debug(f"Could not persist toggled symbol: {e}")
+        logger.info(f"🎯 ORCHESTRATOR: Symbol {sym} {'ENABLED' if enabled else 'DISABLED'}. Total active ({len(self.symbols)}): {self.symbols}")
+        return enabled
+
+
     def _record_open_trade_context(
         self,
         exec_res: Optional[Dict[str, Any]],

@@ -122,6 +122,10 @@
     <a href="/" class="tt-tab bugatti-desk-link active" title="Cockpit Master Desk" data-view-btn="trade">
       <span>⚡ Cockpit</span>
     </a>
+    <button type="button" class="tt-tab bugatti-desk-link" data-view-btn="symbols" title="Master Trader AI Symbol Control Center">
+      <span>🎯 Symbol Control</span>
+      <span class="tt-badge" id="nav-active-symbols-count">Active</span>
+    </button>
 
     <!-- Consolidated Markets Dropdown -->
     <div class="tt-dropdown bugatti-dropdown" data-dropdown>
@@ -157,6 +161,9 @@
       <nav class="tt-dropdown__panel tt-dropdown__panel--left bugatti-dropdown__menu" id="desks-menu"
            data-dropdown-panel hidden aria-label="Intelligence Desks">
         <div class="bugatti-dropdown__header">INTELLIGENCE DESKS</div>
+        <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="symbols">
+          <span>🎯 Symbol Control Center</span>
+        </button>
         <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="news">
           <span>📰 News Sentinel</span>
         </button>
@@ -1313,6 +1320,73 @@
       </div>
     </div>
   </section>
+
+  <!-- ── Master Trader AI Symbol Control Center ─────────────────────── -->
+  <section class="tt-view" id="view-symbols" data-view-panel="symbols" hidden role="tabpanel" aria-label="Master Trader AI Symbol Control Center">
+    <div class="symbols-deck-container">
+      
+      <!-- Top HUD Header -->
+      <div class="symbols-hud-bar">
+        <div class="symbols-hud-title-box">
+          <div class="symbols-hud-tag">AI INTELLIGENCE · UNIVERSE CONTROL</div>
+          <h1 class="symbols-hud-title">🎯 Master Trader AI Symbol Control Center</h1>
+        </div>
+        <div class="symbols-hud-metrics">
+          <div class="symbols-metric-chip">
+            <span class="sm-label">ACTIVE UNIVERSE</span>
+            <span class="sm-val tt-num" id="sym-hud-active">— / —</span>
+          </div>
+          <div class="symbols-metric-chip">
+            <span class="sm-label">ACTIONABLE SETUPS</span>
+            <span class="sm-val tt-num" id="sym-hud-prime" style="color:var(--electric-cyan,#00f0ff)">—</span>
+          </div>
+          <div class="symbols-metric-chip">
+            <span class="sm-label">MARKET SESSIONS</span>
+            <span class="sm-val" id="sym-hud-session" style="color:var(--porsche-gold,#d4af37)">ACTIVE</span>
+          </div>
+          <div class="symbols-metric-chip">
+            <span class="sm-label">PORTFOLIO HEAT</span>
+            <span class="sm-val tt-num" id="sym-hud-heat" style="color:var(--emerald-edge,#10b981)">OPTIMAL</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Toolbar (Filters, Search, Batch Toggles) -->
+      <div class="symbols-toolbar">
+        <div class="symbols-filter-pills" id="symbols-class-filters">
+          <button type="button" class="sym-filter-pill active" data-filter="ALL">All Assets (<span id="count-all">0</span>)</button>
+          <button type="button" class="sym-filter-pill" data-filter="COMMODITY">Metals &amp; Oil (<span id="count-commodity">0</span>)</button>
+          <button type="button" class="sym-filter-pill" data-filter="FOREX">Forex (<span id="count-forex">0</span>)</button>
+          <button type="button" class="sym-filter-pill" data-filter="CRYPTO">Crypto (<span id="count-crypto">0</span>)</button>
+          <button type="button" class="sym-filter-pill" data-filter="INDEX">Indices (<span id="count-index">0</span>)</button>
+        </div>
+
+        <div class="symbols-actions-group">
+          <div class="symbols-search-wrap">
+            <input type="text" id="symbols-search-input" class="symbols-search-input" placeholder="Filter symbols (e.g. XAU, BTC, EUR)..." autocomplete="off" />
+          </div>
+          <button type="button" class="tt-btn tt-btn--sm sym-batch-btn" id="btn-batch-enable" title="Enable All Symbols">
+            <span>⚡ Enable All</span>
+          </button>
+          <button type="button" class="tt-btn tt-btn--sm sym-batch-btn" id="btn-batch-disable" title="Disable All Symbols">
+            <span>⏸️ Disable All</span>
+          </button>
+          <button type="button" class="tt-btn tt-btn--sm tt-btn--primary sym-batch-btn" id="btn-batch-autotune" title="Auto-tune active universe based on AI Confluence & Setup Grades">
+            <span>🎯 Auto-Tune AI</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Symbols Matrix Grid -->
+      <div class="symbols-grid-container" id="symbols-cards-grid">
+        <div class="symbols-loading-placeholder">
+          <div class="tt-spinner"></div>
+          <span>Synchronizing Master Trader AI Universe Telemetry…</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
 </main>
 
 <!-- ═══ Status bar ═════════════════════════════════════════════════════ -->
@@ -1384,6 +1458,7 @@
     <p class="tt-drawer__section tt-drawer__only-views" id="drawer-sec-views">Views</p>
     <div class="tt-drawer__group tt-drawer__only-views" role="group" aria-labelledby="drawer-sec-views">
       <button type="button" class="tt-drawer__item" data-view-btn="trade" aria-selected="true"><span class="tt-drawer__ico" aria-hidden="true">⇅</span>Trade</button>
+      <button type="button" class="tt-drawer__item" data-view-btn="symbols"><span class="tt-drawer__ico" aria-hidden="true">🎯</span>Symbols</button>
       <button type="button" class="tt-drawer__item" data-view-btn="news"><span class="tt-drawer__ico" aria-hidden="true">▤</span>News</button>
       <button type="button" class="tt-drawer__item" data-view-btn="analyst"><span class="tt-drawer__ico" aria-hidden="true">◎</span>Analyst</button>
       <button type="button" class="tt-drawer__item" data-view-btn="markets"><span class="tt-drawer__ico" aria-hidden="true">◍</span>Markets</button>

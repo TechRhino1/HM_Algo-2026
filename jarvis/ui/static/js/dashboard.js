@@ -50,7 +50,7 @@
     slow: 60000
   };
 
-  var VIEWS = ['trade', 'news', 'analyst', 'markets', 'analytics', 'backtest'];
+  var VIEWS = ['trade', 'symbols', 'news', 'analyst', 'markets', 'analytics', 'backtest'];
   var PANES = ['watchlist', 'chart', 'ticket'];
 
   var state = {
@@ -58,6 +58,9 @@
     pane: 'watchlist',
     symbol: null,
     timeframe: 'H1',
+    symbolsData: [],
+    symbolsFilter: 'ALL',
+    symbolsSearch: '',
     decisions: {},        // symbol -> decision object (from telemetry)
     marketStatuses: {},   // symbol -> session status
     positions: [],
@@ -376,6 +379,7 @@
     var lt = $('ios-largetitle');
     if (lt) lt.textContent = view.charAt(0).toUpperCase() + view.slice(1);
 
+    if (view === 'symbols') { loadSymbolsIntelligence(); }
     if (view === 'analytics') { loadAnalytics(); }
     if (view === 'backtest') { loadBacktestMeta(); loadJobs(); }
     if (view === 'news') { loadNews(); }
@@ -5314,6 +5318,235 @@
     });
   }
 
+  /* ── Master Trader AI Symbol Control Center ────────────────────────────── */
+  function loadSymbolsIntelligence() {
+    var grid = $('symbols-cards-grid');
+    if (!grid) return;
+
+    return apiGet('/api/symbols/intelligence', TIMEOUT.normal).then(function (res) {
+      if (!res.ok || !res.data) {
+        if (!state.symbolsData || !state.symbolsData.length) {
+          grid.innerHTML = '<div class="symbols-error-state"><span>⚠️ Failed to load Symbol Intelligence</span></div>';
+        }
+        return;
+      }
+      var data = res.data;
+      state.symbolsData = data.symbols || [];
+      updateSymbolsHUD(data);
+      renderSymbolsGrid();
+    });
+  }
+
+  function updateSymbolsHUD(data) {
+    var activeEl = $('sym-hud-active');
+    var primeEl = $('sym-hud-prime');
+    var navBadge = $('nav-active-symbols-count');
+    
+    var activeCount = data.active_count !== undefined ? data.active_count : (data.active_symbols ? data.active_symbols.length : 0);
+    var totalUniverse = data.total_universe || (data.symbols ? data.symbols.length : 0);
+    
+    if (activeEl) activeEl.textContent = activeCount + ' / ' + totalUniverse;
+    if (navBadge) navBadge.textContent = activeCount + ' Active';
+
+    var primeCount = 0;
+    (data.symbols || []).forEach(function (s) {
+      if (s.grade === 'A+' || s.grade === 'A') primeCount++;
+    });
+    if (primeEl) primeEl.textContent = primeCount + ' Setups';
+
+    // Update counts on filter pills
+    var counts = { ALL: 0, COMMODITY: 0, FOREX: 0, CRYPTO: 0, INDEX: 0 };
+    (data.symbols || []).forEach(function (s) {
+      counts.ALL++;
+      var ac = (s.asset_class || '').toUpperCase();
+      if (counts[ac] !== undefined) counts[ac]++;
+    });
+    setText($('count-all'), String(counts.ALL));
+    setText($('count-commodity'), String(counts.COMMODITY));
+    setText($('count-forex'), String(counts.FOREX));
+    setText($('count-crypto'), String(counts.CRYPTO));
+    setText($('count-index'), String(counts.INDEX));
+  }
+
+  function renderSymbolsGrid() {
+    var grid = $('symbols-cards-grid');
+    if (!grid) return;
+
+    var filter = state.symbolsFilter || 'ALL';
+    var search = (state.symbolsSearch || '').trim().toUpperCase();
+
+    var list = (state.symbolsData || []).filter(function (s) {
+      if (filter !== 'ALL' && (s.asset_class || '').toUpperCase() !== filter) return false;
+      if (search && s.symbol.toUpperCase().indexOf(search) === -1 && (s.asset_class || '').toUpperCase().indexOf(search) === -1) return false;
+      return true;
+    });
+
+    if (!list.length) {
+      grid.innerHTML = '<div class="symbols-empty-state"><span>No instruments match the selected filter.</span></div>';
+      return;
+    }
+
+    grid.innerHTML = list.map(function (s) {
+      var isAct = s.is_enabled;
+      var gradeCls = 'grade-' + (s.grade || 'C').toLowerCase().replace('+', 'plus');
+      var sugTypeCls = 'sug-' + (s.suggestion_type || 'neutral');
+      var biasCls = s.bias === 'BUY' ? 'bias-buy' : (s.bias === 'SELL' ? 'bias-sell' : 'bias-neutral');
+      var priceStr = s.bid > 0 ? (s.bid.toFixed(s.digits || 2)) : '—';
+      var conf = Math.round(s.confluence_score || 0);
+      var winP = Math.round(s.win_prob || 50);
+
+      return '<div class="symbol-control-card ' + (isAct ? 'is-enabled' : 'is-disabled') + '" data-symbol="' + esc(s.symbol) + '">' +
+        '<div class="sc-header">' +
+          '<div class="sc-sym-info">' +
+            '<div class="sc-sym-row">' +
+              '<span class="sc-sym-name">' + esc(s.symbol) + '</span>' +
+              '<span class="sc-asset-badge ' + esc((s.asset_class || '').toLowerCase()) + '">' + esc(s.asset_class) + '</span>' +
+              '<span class="sc-grade-badge ' + gradeCls + '">' + esc(s.grade) + '</span>' +
+            '</div>' +
+            '<div class="sc-quote-row">' +
+              '<span class="sc-price tt-num">' + esc(priceStr) + '</span>' +
+              '<span class="sc-spread ' + (s.spread_pips > s.max_spread_pips ? 'spread-warn' : '') + '">Spread: ' + num(s.spread_pips, 1) + 'p</span>' +
+            '</div>' +
+          '</div>' +
+          '<div class="sc-toggle-wrap">' +
+            '<button type="button" class="bugatti-switch ' + (isAct ? 'is-active' : '') + '" data-toggle-symbol="' + esc(s.symbol) + '" data-state="' + (isAct ? 'true' : 'false') + '" aria-label="Toggle ' + esc(s.symbol) + '">' +
+              '<span class="bugatti-switch__thumb"></span>' +
+            '</button>' +
+            '<span class="sc-switch-label">' + (isAct ? 'ACTIVE' : 'PAUSED') + '</span>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="sc-suggestion-box ' + sugTypeCls + '">' +
+          '<span class="sc-sug-icon">' + (sugTypeCls === 'sug-prime' ? '💎' : (sugTypeCls === 'sug-wait' ? '⏳' : (sugTypeCls === 'sug-caution' ? '⚠️' : (sugTypeCls === 'sug-warning' ? '🚨' : '🎯')))) + '</span>' +
+          '<span class="sc-sug-text">' + esc(s.suggestion) + '</span>' +
+        '</div>' +
+
+        '<div class="sc-metrics-grid">' +
+          '<div class="sc-metric-col">' +
+            '<span class="sc-m-lbl">MASTER CONFLUENCE</span>' +
+            '<div class="sc-meter-wrap">' +
+              '<div class="sc-meter-bar" style="width:' + Math.min(100, Math.max(0, conf)) + '%;"></div>' +
+            '</div>' +
+            '<span class="sc-m-val tt-num">' + conf + '/100 (' + esc(s.confluence_tier) + ')</span>' +
+          '</div>' +
+          '<div class="sc-metric-col">' +
+            '<span class="sc-m-lbl">WIN PROBABILITY</span>' +
+            '<span class="sc-m-val tt-num ' + (winP >= 55 ? 'tt-up' : 'tt-down') + '">' + winP + '% (EV ' + (s.ev >= 0 ? '+' : '') + num(s.ev, 2) + 'R)</span>' +
+          '</div>' +
+          '<div class="sc-metric-col">' +
+            '<span class="sc-m-lbl">REGIME &amp; BIAS</span>' +
+            '<span class="sc-m-val ' + biasCls + '">' + esc(s.bias) + ' · ' + esc(s.regime) + '</span>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="sc-footer-actions">' +
+          '<button type="button" class="sc-quick-trade-btn" data-trade-sym="' + esc(s.symbol) + '"><span>⚡ Open in Cockpit</span></button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function toggleSymbol(sym, newState) {
+    (state.symbolsData || []).forEach(function (s) {
+      if (s.symbol === sym) s.is_enabled = newState;
+    });
+    renderSymbolsGrid();
+
+    return apiPost('/api/action/toggle_symbol', { symbol: sym, enabled: newState }, TIMEOUT.normal).then(function (res) {
+      if (!res.ok || !res.data || res.data.status !== 'SUCCESS') {
+        toast('Failed to toggle ' + sym, 'error');
+        loadSymbolsIntelligence();
+        return;
+      }
+      toast(sym + (newState ? ' ENABLED for trading' : ' PAUSED'), 'success');
+      loadSymbolsIntelligence();
+    });
+  }
+
+  function executeBatchSymbols(action, assetClass) {
+    var payload = { action: action, asset_class: assetClass || 'ALL' };
+    return apiPost('/api/action/batch_symbols', payload, TIMEOUT.normal).then(function (res) {
+      if (!res.ok || !res.data || res.data.status !== 'SUCCESS') {
+        toast('Batch operation failed', 'error');
+        return;
+      }
+      toast('Universe updated (' + (res.data.active_count || 0) + ' active)', 'success');
+      loadSymbolsIntelligence();
+    });
+  }
+
+  function wireSymbolsControl() {
+    var filterWrap = $('symbols-class-filters');
+    if (filterWrap) {
+      filterWrap.addEventListener('click', function (ev) {
+        var pill = ev.target.closest('.sym-filter-pill');
+        if (!pill) return;
+        filterWrap.querySelectorAll('.sym-filter-pill').forEach(function (p) {
+          p.classList.remove('active');
+        });
+        pill.classList.add('active');
+        state.symbolsFilter = pill.getAttribute('data-filter') || 'ALL';
+        renderSymbolsGrid();
+      });
+    }
+
+    var searchInput = $('symbols-search-input');
+    if (searchInput) {
+      searchInput.addEventListener('input', function () {
+        state.symbolsSearch = searchInput.value;
+        renderSymbolsGrid();
+      });
+    }
+
+    var btnEnableAll = $('btn-batch-enable');
+    if (btnEnableAll) {
+      btnEnableAll.addEventListener('click', function () {
+        executeBatchSymbols('ENABLE_ALL', state.symbolsFilter);
+      });
+    }
+
+    var btnDisableAll = $('btn-batch-disable');
+    if (btnDisableAll) {
+      btnDisableAll.addEventListener('click', function () {
+        executeBatchSymbols('DISABLE_ALL', state.symbolsFilter);
+      });
+    }
+
+    var btnAutoTune = $('btn-batch-autotune');
+    if (btnAutoTune) {
+      btnAutoTune.addEventListener('click', function () {
+        executeBatchSymbols('AUTO_TUNE', 'ALL');
+      });
+    }
+
+    var cardsGrid = $('symbols-cards-grid');
+    if (cardsGrid) {
+      cardsGrid.addEventListener('click', function (ev) {
+        var switchBtn = ev.target.closest('[data-toggle-symbol]');
+        if (switchBtn) {
+          var sym = switchBtn.getAttribute('data-toggle-symbol');
+          var currentState = switchBtn.getAttribute('data-state') === 'true';
+          toggleSymbol(sym, !currentState);
+          return;
+        }
+
+        var tradeBtn = ev.target.closest('[data-trade-sym]');
+        if (tradeBtn) {
+          var tSym = tradeBtn.getAttribute('data-trade-sym');
+          if (tSym) {
+            state.symbol = tSym;
+            setView('trade');
+            setPane('ticket');
+            var ticketSym = $('ticket-symbol');
+            if (ticketSym) ticketSym.value = tSym;
+            loadChart();
+          }
+          return;
+        }
+      });
+    }
+  }
+
   /* ── Backtest ─────────────────────────────────────────────────────────── */
   /* The value each axis collapses to when its box is unticked. Kept identical to
      the console's own defaults so both front ends submit the same grid. */
@@ -6421,6 +6654,8 @@
 
   function boot() {
     bind();
+    wireSymbolsControl();
+    loadSymbolsIntelligence();
     try {
       var urlParams = new URLSearchParams(window.location.search);
       var viewParam = urlParams.get('view');

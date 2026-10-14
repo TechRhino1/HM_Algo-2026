@@ -194,3 +194,30 @@ class JarvisConfig:
         return cfg
 
 SETTINGS = JarvisConfig.load()
+
+
+def persist_allowed_symbols(symbols: List[str]) -> bool:
+    """Atomically write the allowed_symbols list back to config/settings.json."""
+    clean = [str(s).strip().upper() for s in symbols if str(s).strip()]
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    json_path = os.path.join(base_dir, "config", "settings.json")
+    try:
+        data = {}
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        if "trading" not in data or not isinstance(data["trading"], dict):
+            data["trading"] = {}
+        data["trading"]["allowed_symbols"] = clean
+
+        temp_path = json_path + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(temp_path, json_path)
+        SETTINGS.trading.symbols = list(clean)
+        logger.info(f"💾 SETTINGS: Persisted {len(clean)} allowed_symbols to {json_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to persist allowed_symbols to {json_path}: {e}")
+        return False
+
