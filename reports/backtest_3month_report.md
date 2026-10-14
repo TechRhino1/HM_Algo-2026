@@ -3,38 +3,45 @@
 **Mode:** uncalibrated baseline (legacy 29-gate stack)  
 **Data:** MT5 terminal, real H1 bars (validated non-synthetic)  
 **Initial balance:** $10,000.00 at 0.5% risk per trade  
-**Generated:** 2026-09-26T22:43:00.260482+00:00
+**Generated:** 2026-10-14T15:11:08.196428+00:00
 
 ## 1. Headline
 
 | Metric | Value |
 |---|---|
-| Symbols traded | 9 |
-| Total trades | 202 |
-| Win rate | 43.56% |
-| Expectancy | -0.1893 R per trade |
-| Average win / loss | +0.810 R / -0.961 R |
-| Payoff ratio | 0.843 |
-| Total R | -38.24 R |
-| Profit factor | 0.67 |
-| Net profit | $-965.79 |
-| Max drawdown | 11.42% |
-| Sharpe / Sortino / Calmar | -2.27 / -5.37 / -0.83 |
-| Expectancy (sample-uniqueness weighted) | -0.1129 R |
+| Symbols traded | 16 |
+| Total trades | 110 |
+| Win rate | 48.18% |
+| Expectancy | +0.0117 R per trade |
+| Average win / loss | +0.813 R / -0.734 R |
+| Payoff ratio | 1.109 |
+| Total R | +1.29 R |
+| Profit factor | 1.12 |
+| Net profit | $+144.67 |
+| Max drawdown | 1.83% |
+| Sharpe / Sortino / Calmar | 0.42 / 1.02 / 0.77 |
+| Expectancy (sample-uniqueness weighted) | +0.0774 R |
 
 ## 2. Per-symbol results
 
 | Symbol | Trades | WR % | Exp (R) | PF | Net $ | MaxDD % | OOS WR % | OOS Exp (R) | Target | Binding constraint |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|:--:|---|
-| BTCUSD | 68 | 29.4 | -0.373 | 0.43 | -493.04 | 5.22 | 0.0 | +0.000 | — | — |
-| GBPUSD | 47 | 61.7 | -0.046 | 1.10 | +56.49 | 1.62 | 0.0 | +0.000 | — | — |
-| XAUUSD | 34 | 35.3 | -0.221 | 0.61 | -307.88 | 3.08 | 0.0 | +0.000 | — | — |
-| SOLUSD | 21 | 47.6 | +0.146 | 1.14 | +26.08 | 0.87 | 0.0 | +0.000 | — | — |
-| NAS100 | 11 | 36.4 | -0.102 | 0.73 | -53.99 | 0.98 | 0.0 | +0.000 | — | — |
-| EURUSD | 9 | 44.4 | +0.086 | 0.98 | -2.60 | 0.71 | 0.0 | +0.000 | — | — |
-| US30 | 8 | 37.5 | -0.620 | 0.05 | -136.81 | 1.38 | 0.0 | +0.000 | — | — |
-| ETHUSD | 4 | 25.0 | -0.227 | 0.34 | -54.04 | 0.54 | 0.0 | +0.000 | — | — |
-| USDJPY | 0 | 0.0 | +0.000 | 0.00 | +0.00 | 0.00 | 0.0 | +0.000 | — | — |
+| GBPUSD | 16 | 56.2 | +0.129 | 1.57 | +72.28 | 0.55 | 0.0 | +0.000 | — | — |
+| USDCAD | 14 | 71.4 | +0.338 | 3.66 | +138.49 | 0.43 | 0.0 | +0.000 | — | — |
+| UK100 | 11 | 54.5 | +0.018 | 1.05 | +6.40 | 0.73 | 0.0 | +0.000 | — | — |
+| AUDUSD | 10 | 40.0 | -0.375 | 0.45 | -60.23 | 0.60 | 0.0 | +0.000 | — | — |
+| US30 | 10 | 40.0 | +0.047 | 0.98 | -1.12 | 0.31 | 0.0 | +0.000 | — | — |
+| GER40 | 8 | 62.5 | +0.087 | 1.71 | +54.22 | 0.39 | 0.0 | +0.000 | — | — |
+| NZDUSD | 8 | 37.5 | -0.116 | 1.20 | +20.31 | 0.56 | 0.0 | +0.000 | — | — |
+| USDCHF | 7 | 28.6 | -0.684 | 0.20 | -104.45 | 1.04 | 0.0 | +0.000 | — | — |
+| SOLUSD | 6 | 50.0 | +0.216 | 0.88 | -10.08 | 0.67 | 0.0 | +0.000 | — | — |
+| BTCUSD | 4 | 75.0 | +1.206 | 5.90 | +181.31 | 0.37 | 0.0 | +0.000 | — | — |
+| ETHUSD | 4 | 75.0 | +0.790 | 3.02 | +98.42 | 0.49 | 0.0 | +0.000 | — | — |
+| USDJPY | 4 | 25.0 | +0.044 | 1.31 | +14.20 | 0.45 | 0.0 | +0.000 | — | — |
+| EURUSD | 3 | 0.0 | -0.831 | 0.00 | -98.58 | 0.99 | 0.0 | +0.000 | — | — |
+| NAS100 | 3 | 0.0 | -1.001 | 0.00 | -92.04 | 0.92 | 0.0 | +0.000 | — | — |
+| XAUUSD | 2 | 0.0 | -0.684 | 0.00 | -74.46 | 0.74 | 0.0 | +0.000 | — | — |
+| XAGUSD | 0 | 0.0 | +0.000 | 0.00 | +0.00 | 0.00 | 0.0 | +0.000 | — | — |
 
 ## 5. Portfolio risk allocation (HRP)
 
@@ -42,14 +49,21 @@ Inverse-variance weights from the HRP allocator over per-symbol daily R:
 
 | Symbol | Risk weight |
 |---|---:|
-| ETHUSD | 41.73% |
-| US30 | 23.71% |
-| EURUSD | 10.11% |
-| NAS100 | 9.99% |
-| SOLUSD | 5.57% |
-| GBPUSD | 5.12% |
-| XAUUSD | 2.37% |
-| BTCUSD | 1.41% |
+| XAUUSD | 19.42% |
+| NAS100 | 12.36% |
+| AUDUSD | 9.06% |
+| EURUSD | 8.29% |
+| USDJPY | 8.05% |
+| USDCHF | 7.27% |
+| US30 | 6.57% |
+| NZDUSD | 5.62% |
+| SOLUSD | 4.60% |
+| GER40 | 4.21% |
+| ETHUSD | 3.66% |
+| UK100 | 3.13% |
+| USDCAD | 3.12% |
+| GBPUSD | 2.80% |
+| BTCUSD | 1.84% |
 
 ## 6. Entry rejection analysis
 
@@ -59,15 +73,22 @@ Counts are per **bar evaluated**, not per candidate: a bar on which the pipeline
 
 | Symbol | Top rejection reasons |
 |---|---|
-| BTCUSD | Failed quality check: Crypto Macro Trend Filter. (661); Failed quality check: AI Multi-Score Gate. (453); Failed quality check: Risk/Reward >= 1.5. (3 |
-| GBPUSD | Failed quality check: Directional Bias. (152); Failed quality check: AI Multi-Score Gate. (145); Failed quality check: Forex Prime Session. (120) |
-| XAUUSD | Failed quality check: Directional Bias. (219); Risk Ceiling Exceeded: Minimum tradeable lot size exceeds safe account risk limits. (198); Awaiting val |
-| SOLUSD | Negative / insufficient mathematical edge (EV: $0.00). (719); Failed quality check: Crypto Macro Trend Filter. (700); Failed quality check: SOL Conflu |
-| NAS100 | Failed quality check: Forex Prime Session. (624); Failed quality check: Index Trend Alignment. (424); Failed quality check: Macro MTF Alignment. (380) |
-| EURUSD | Failed quality check: Strategy Viable. (618); Awaiting validation check: Strategy Viable. (478); Failed quality check: Forex Prime Session. (471) |
-| US30 | Failed quality check: US30 Confluence Guard. (861); Failed quality check: Forex Prime Session. (826); Failed quality check: Index Trend Alignment. (56 |
-| ETHUSD | Failed quality check: Crypto Macro Trend Filter. (952); Awaiting validation check: Strategy Viable. (884); Failed quality check: Strategy Viable. (678 |
-| USDJPY | Negative / insufficient mathematical edge (EV: $0.00). (1171); Failed quality check: JPY Momentum Guard. (1132); Failed quality check: Forex Prime Ses |
+| GBPUSD | Symbol GBPUSD loss cooldown active (899s remaining). (64); Failed quality check: Forex Prime Session. (44); Failed quality check: Directional Bias. (2 |
+| USDCAD | Awaiting validation check: Devil Adversarial Guard. (63); Awaiting validation check: Macro MTF Alignment. (39); Failed quality check: Macro MTF Alignm |
+| UK100 | Failed quality check: Index Trend Alignment. (107); Failed quality check: Forex Prime Session. (101); Adversarial risk: Attempting SELL in unfavorable |
+| AUDUSD | Symbol AUDUSD loss cooldown active (899s remaining). (768); Awaiting validation check: Devil Adversarial Guard. (31); Failed quality check: Forex Prim |
+| US30 | Symbol US30 loss cooldown active (899s remaining). (369); Failed quality check: US30 Confluence Guard. (204); Failed quality check: Forex Prime Sessio |
+| GER40 | Failed quality check: Forex Prime Session. (120); Failed quality check: Index Trend Alignment. (107); Adversarial risk: Attempting SELL in unfavorable |
+| NZDUSD | Symbol NZDUSD loss cooldown active (899s remaining). (800); Awaiting validation check: Devil Adversarial Guard. (30); Adversarial risk: Attempting SEL |
+| USDCHF | Symbol USDCHF loss cooldown active (899s remaining). (888); Awaiting validation check: Devil Adversarial Guard. (28); Failed quality check: Macro MTF  |
+| SOLUSD | Failed quality check: Directional Bias. (88); Failed quality check: Crypto Macro Trend Filter. (84); Failed quality check: SOL Confluence Guard. (81) |
+| BTCUSD | Failed quality check: Directional Bias. (65); Adversarial risk: Attempting BUY in unfavorable PREMIUM zone relative to equilibrium. (51); Failed quali |
+| ETHUSD | Adversarial risk: Attempting BUY in unfavorable PREMIUM zone relative to equilibrium. (87); Failed quality check: Directional Bias. (87); Failed quali |
+| USDJPY | Symbol USDJPY loss cooldown active (899s remaining). (1113); Failed quality check: JPY Momentum Guard. (77); Awaiting validation check: JPY Momentum G |
+| EURUSD | Symbol EURUSD loss cooldown active (899s remaining). (1491); Awaiting validation check: Forex Prime Session. (10); Awaiting validation check: Devil Ad |
+| NAS100 | Symbol NAS100 loss cooldown active (899s remaining). (924); Failed quality check: Forex Prime Session. (79); Failed quality check: Directional Bias. ( |
+| XAUUSD | Failed quality check: Directional Bias. (445); Awaiting validation check: Devil Adversarial Guard. (334); Risk Ceiling Exceeded: Minimum tradeable lot |
+| XAGUSD | Failed quality check: Directional Bias. (623); Adversarial risk: Attempting SELL in unfavorable DISCOUNT zone relative to equilibrium. (295); Adversar |
 
 ## 7. Method and honesty notes
 

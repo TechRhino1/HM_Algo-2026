@@ -567,7 +567,7 @@ class DecisionEngine:
         is_crypto = ("BTC" in sym_name) or spec.is_crypto
         is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name) or (getattr(spec, "asset_class", "") == "COMMODITY")
         is_fx = _is_forex(context.symbol) and not is_jpy
-        is_index_asset = getattr(spec, "asset_class", "") == "INDEX" or any(k in sym_name for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ"])
+        is_index_asset = getattr(spec, "asset_class", "") == "INDEX" or any(k in sym_name for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ30", "DJI", "DOW", "GER40", "UK100"])
         is_oil_asset = any(k in sym_name for k in ["WTI", "OIL", "CRUDE"])
 
         # 1. Dynamic Confluence Count
@@ -796,7 +796,14 @@ class DecisionEngine:
 
 
         if is_index_asset:
-            is_prime_session_valid = SessionEngine.is_index_prime_session(getattr(context, "timestamp", None))
+            cfg = get_symbol_profile_config(sym_name)
+            c_ts = getattr(context, "timestamp", None)
+            now_dt = c_ts if isinstance(c_ts, datetime) else datetime.now(timezone.utc)
+            if cfg and cfg.session_restriction and cfg.allowed_utc_hours:
+                start_h, end_h = cfg.allowed_utc_hours
+                is_prime_session_valid = now_dt.weekday() < 5 and (start_h <= now_dt.hour <= end_h)
+            else:
+                is_prime_session_valid = SessionEngine.is_index_prime_session(c_ts)
         elif is_crypto:
             # Enforce institutional advanced-trading skill §7/§11:
             # Broker spread must never consume >= 20% of stop distance or ATR.
@@ -906,10 +913,10 @@ class DecisionEngine:
                 d1_b = mtf_align.get("D1", "NEUTRAL") if isinstance(mtf_align, dict) else "NEUTRAL"
                 h4_b = mtf_align.get("H4", "NEUTRAL") if isinstance(mtf_align, dict) else "NEUTRAL"
                 has_rev = bool(getattr(context.structure, "choch", False) and getattr(context.structure, "choch_type", "") == "BEARISH")
-                if not ((d1_b == "BEARISH" or h4_b == "BEARISH") and has_rev and ts_v <= -30.0 and ai_score >= 85.0):
+                if not ((d1_b == "BEARISH" or h4_b == "BEARISH") and has_rev and ts_v <= -25.0 and ai_score >= 80.0):
                     index_counter_trend_valid = False
             elif tentative_bias == "BUY":
-                if (ts_v <= -25.0 and not bool(getattr(context.structure, "choch", False))) or rsi_v >= 62.0:
+                if (ts_v <= -25.0 and not bool(getattr(context.structure, "choch", False))) or rsi_v >= 78.0:
                     index_counter_trend_valid = False
 
         # 10. Low-Beta FX (AUDUSD, USDCHF, NZDUSD, USDCAD) Macro Alignment Guard
@@ -1407,7 +1414,7 @@ class DecisionEngine:
         spec_eval = resolve_symbol(context.symbol)
         sym_name_eval = str(context.symbol).upper()
         is_crypto_sym = getattr(spec_eval, "is_crypto", False) or (getattr(spec_eval, "asset_class", "") == "CRYPTO") or any(k in sym_name_eval for k in ["BTC", "ETH", "SOL"])
-        is_index_sym = getattr(spec_eval, "asset_class", "") == "INDEX" or any(k in sym_name_eval for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ"])
+        is_index_sym = getattr(spec_eval, "asset_class", "") == "INDEX" or any(k in sym_name_eval for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ30", "DJI", "DOW", "GER40", "UK100"])
         if _is_forex(context.symbol):
             if tentative_bias == "BUY" and st.discount_premium_zone == "PREMIUM" and trend_score_val < 65:
                 premium_discount_valid = False

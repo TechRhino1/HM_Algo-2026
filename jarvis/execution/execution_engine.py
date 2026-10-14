@@ -196,8 +196,17 @@ class ExecutionEngine:
 
         ctx = getattr(decision, "context", None)
         cur_price = getattr(ctx, "current_price", decision.entry_price) if ctx else decision.entry_price
+        if not isinstance(cur_price, (int, float)):
+            cur_price = decision.entry_price
         bid_price = getattr(ctx, "bid", cur_price) if ctx else cur_price
+        if not isinstance(bid_price, (int, float)):
+            bid_price = cur_price
         ask_price = getattr(ctx, "ask", cur_price) if ctx else cur_price
+        if not isinstance(ask_price, (int, float)):
+            ask_price = cur_price
+
+        valid_bid = isinstance(bid_price, (int, float)) and bid_price > 0
+        valid_ask = isinstance(ask_price, (int, float)) and ask_price > 0
 
         if use_limit:
             # Task 1: Deduplication Guard — Block duplicate pending limit orders on the same symbol
@@ -214,13 +223,13 @@ class ExecutionEngine:
 
             # Task 2b: Direction-vs-price sanity check for resting limit orders
             is_sane_limit = True
-            if decision.bias == "BUY" and decision.entry_price >= (bid_price - min_broker_stop_dist):
+            if decision.bias == "BUY" and valid_bid and decision.entry_price >= (bid_price - min_broker_stop_dist):
                 logger.info(
                     f"⚡ BUY_LIMIT price ({decision.entry_price}) is within broker minimum distance of current bid ({bid_price}, min_stop={min_broker_stop_dist:.5f}). "
                     f"Routing seamlessly to instant MARKET order."
                 )
                 is_sane_limit = False
-            elif decision.bias == "SELL" and decision.entry_price <= (ask_price + min_broker_stop_dist):
+            elif decision.bias == "SELL" and valid_ask and decision.entry_price <= (ask_price + min_broker_stop_dist):
                 logger.info(
                     f"⚡ SELL_LIMIT price ({decision.entry_price}) is within broker minimum distance of current ask ({ask_price}, min_stop={min_broker_stop_dist:.5f}). "
                     f"Routing seamlessly to instant MARKET order."
@@ -251,7 +260,7 @@ class ExecutionEngine:
                 )
             else:
                 # Limit order was too close/invalid: route to market order re-anchored to live market price
-                ref_mkt_entry = ask_price if decision.bias == "BUY" and ask_price > 0 else (bid_price if decision.bias == "SELL" and bid_price > 0 else cur_price)
+                ref_mkt_entry = ask_price if decision.bias == "BUY" and valid_ask else (bid_price if decision.bias == "SELL" and valid_bid else cur_price)
                 ref_mkt_entry = self._quantize_price(ref_mkt_entry, tick_sz, digits)
                 decision.entry_price = ref_mkt_entry
                 if decision.bias == "BUY":
@@ -274,7 +283,7 @@ class ExecutionEngine:
                 )
         else:
             # Standard Market order: re-anchor to live market price if observed
-            ref_mkt_entry = ask_price if decision.bias == "BUY" and ask_price > 0 else (bid_price if decision.bias == "SELL" and bid_price > 0 else decision.entry_price)
+            ref_mkt_entry = ask_price if decision.bias == "BUY" and valid_ask else (bid_price if decision.bias == "SELL" and valid_bid else decision.entry_price)
             ref_mkt_entry = self._quantize_price(ref_mkt_entry, tick_sz, digits)
             decision.entry_price = ref_mkt_entry
             if decision.bias == "BUY":

@@ -174,7 +174,12 @@ def evaluate_entry(
     # BTCUSD was admitted on a sample the engine then realised only 3 trades of,
     # and those 3 trades (+7.587R) were carrying the entire portfolio into an
     # apparent breakeven that was actually a ~-$485 book underneath.
-    if oos_n >= OOS_MIN_TRADES and oos_exp <= 0.0:
+    in_exp = float(getattr(profile, "expectancy_r", 0.0) or 0.0)
+    # Refuse if OOS expectancy is conclusively negative (worse than -0.050R tolerance,
+    # or non-positive when in-sample expectancy also shows no edge). Matches
+    # winrate_targeting.py's regime disable_margin_r tolerance.
+    has_no_edge = (oos_exp < -0.050) or (oos_exp <= 0.0 and in_exp <= 0.0)
+    if oos_n >= OOS_MIN_TRADES and has_no_edge:
         return EntryDecision(
             allowed=False,
             reason=(

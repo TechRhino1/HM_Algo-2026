@@ -74,7 +74,7 @@ class StrategySelector:
         is_gold = any(k in symbol_name for k in ["XAU", "GOLD"])
         is_oil = any(k in symbol_name for k in ["WTI", "OIL", "CRUDE"])
         is_commodity = (asset_class == "COMMODITY") or is_gold or is_oil
-        is_index = (asset_class == "INDEX") or any(k in symbol_name for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ"])
+        is_index = (asset_class == "INDEX") or any(k in symbol_name for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ30", "DJI", "DOW", "GER40", "UK100"])
         is_gbp = "GBP" in symbol_name
         is_forex_major = (asset_class == "FOREX") and not is_jpy and not is_gbp
         is_eur = "EUR" in symbol_name

@@ -222,7 +222,7 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         be_trigger_r=1.80,
         runner_trail_atr=2.60,
         session_restriction=True,
-        allowed_utc_hours=(14, 19),
+        allowed_utc_hours=(13, 21),
         contract_size=1.0,
         pip_size=1.0,
         pip_value_per_lot=1.0,
@@ -330,7 +330,7 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         be_trigger_r=1.80,
         runner_trail_atr=2.60,
         session_restriction=True,
-        allowed_utc_hours=(14, 19),
+        allowed_utc_hours=(13, 21),
         contract_size=1.0,
         pip_size=1.0,
         pip_value_per_lot=1.0,
@@ -365,7 +365,7 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         be_trigger_r=1.80,
         runner_trail_atr=2.60,
         session_restriction=True,
-        allowed_utc_hours=(14, 19),
+        allowed_utc_hours=(13, 21),
         contract_size=1.0,
         pip_size=1.0,
         pip_value_per_lot=1.0,
@@ -496,7 +496,7 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         banned_strategies=[], sl_atr_multiplier=2.60, min_target_rr=2.0, asym_rr=3.5,
         fast_cash_r=1.50, fast_cash_volume_pct=0.33, be_trigger_r=1.80, runner_trail_atr=2.60,
         session_restriction=False, allowed_utc_hours=None, contract_size=100_000.0, pip_size=0.0001, pip_value_per_lot=10.0, digits=5,
-        typical_spread_pips=0.7, max_allowed_spread_pips=2.0, commission_per_lot=0.0, margin_pct=0.1
+        typical_spread_pips=1.6, max_allowed_spread_pips=3.5, commission_per_lot=0.0, margin_pct=0.1
     ),
     "GBPUSD": SymbolProfileConfig(
         symbol="GBPUSD", canonical="GBPUSD", asset_class="FOREX",
@@ -504,7 +504,7 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         banned_strategies=[], sl_atr_multiplier=2.60, min_target_rr=2.0, asym_rr=3.5,
         fast_cash_r=1.50, fast_cash_volume_pct=0.33, be_trigger_r=1.80, runner_trail_atr=2.60,
         session_restriction=False, allowed_utc_hours=None, contract_size=100_000.0, pip_size=0.0001, pip_value_per_lot=10.0, digits=5,
-        typical_spread_pips=0.9, max_allowed_spread_pips=2.5, commission_per_lot=0.0, margin_pct=0.1
+        typical_spread_pips=1.8, max_allowed_spread_pips=3.8, commission_per_lot=0.0, margin_pct=0.1
     ),
     "USDJPY": SymbolProfileConfig(
         symbol="USDJPY", canonical="USDJPY", asset_class="FOREX",
@@ -512,7 +512,7 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         banned_strategies=[], sl_atr_multiplier=2.80, min_target_rr=2.0, asym_rr=3.5,
         fast_cash_r=1.50, fast_cash_volume_pct=0.33, be_trigger_r=1.80, runner_trail_atr=2.60,
         session_restriction=False, contract_size=100_000.0, pip_size=0.01, pip_value_per_lot=6.80, digits=3,
-        typical_spread_pips=0.8, max_allowed_spread_pips=2.5, commission_per_lot=0.0, margin_pct=0.1
+        typical_spread_pips=1.8, max_allowed_spread_pips=3.8, commission_per_lot=0.0, margin_pct=0.1
     ),
     "AUDUSD": SymbolProfileConfig(
         symbol="AUDUSD", canonical="AUDUSD", asset_class="FOREX",
@@ -520,7 +520,7 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         banned_strategies=[], sl_atr_multiplier=2.60, min_target_rr=2.0, asym_rr=3.5,
         fast_cash_r=1.50, fast_cash_volume_pct=0.33, be_trigger_r=1.80, runner_trail_atr=2.60,
         session_restriction=False, contract_size=100_000.0, pip_size=0.0001, pip_value_per_lot=10.0, digits=5,
-        typical_spread_pips=0.9, max_allowed_spread_pips=2.5, commission_per_lot=0.0, margin_pct=0.1
+        typical_spread_pips=1.8, max_allowed_spread_pips=3.8, commission_per_lot=0.0, margin_pct=0.1
     ),
     "USDCHF": SymbolProfileConfig(
         symbol="USDCHF", canonical="USDCHF", asset_class="FOREX",
