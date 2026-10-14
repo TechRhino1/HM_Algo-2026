@@ -1720,16 +1720,19 @@ class DecisionEngine:
                     tp2_price = round(tp2_price + entry_delta, digits)
                 if tp3_price is not None:
                     tp3_price = round(tp3_price + entry_delta, digits)
-                risk_dist = abs(entry_price - sl_price)
-                if threat_lvl is not None and isinstance(threat_lvl, (int, float)) and threat_lvl > 0:
-                    if tentative_bias == "BUY" and entry_price < threat_lvl < tp_price:
-                        tp_price = round(threat_lvl - (atr_val * 0.1), digits)
-                    elif tentative_bias == "SELL" and tp_price < threat_lvl < entry_price:
-                        tp_price = round(threat_lvl + (atr_val * 0.1), digits)
                 tp_dist = abs(tp_price - entry_price)
         elif price_diff > max(0.40 * atr_val, tolerance_pip * 8):
             # Only use LIMIT order when price is resting genuinely far away in a calm market
             order_type_decision = "LIMIT"
+
+        # Final tucking against Devil's Advocate threat levels across all order types
+        if threat_lvl is not None and isinstance(threat_lvl, (int, float)) and threat_lvl > 0:
+            if tentative_bias == "BUY" and entry_price < threat_lvl <= tp_price:
+                tp_price = round(threat_lvl - (atr_val * 0.1), digits)
+                tp_dist = abs(tp_price - entry_price)
+            elif tentative_bias == "SELL" and tp_price <= threat_lvl < entry_price:
+                tp_price = round(threat_lvl + (atr_val * 0.1), digits)
+                tp_dist = abs(tp_price - entry_price)
 
         return DecisionObject(
             symbol=context.symbol,

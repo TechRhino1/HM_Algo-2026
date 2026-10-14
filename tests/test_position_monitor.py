@@ -381,6 +381,104 @@ class TestPositionMonitorManualClassification(unittest.TestCase):
             if sl is not None:
                 self.assertGreaterEqual(sl, 1.0950 - 1e-9, "SL must NEVER be widened below current SL!")
 
+    def test_manual_trade_missing_sl_and_tp_auto_placed(self):
+        """Verify that when a manual trade has NO SL and NO TP, Master Trader AI automatically places both."""
+        from jarvis.data.schemas import (
+            MarketContext, StructureContext, LiquidityContext, VolatilityContext, MomentumContext, SessionContext
+        )
+        from datetime import timezone
+        import time
+
+        ctx = MarketContext(
+            symbol="XAUUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=4150.0,
+            bid=4149.8,
+            ask=4150.2,
+            structure=StructureContext(
+                bias="BULLISH",
+                demand_zone=(4130.0, 4138.0),
+                order_blocks=[{"type": "BULLISH_ORDER_BLOCK", "low": 4135.0, "high": 4140.0}]
+            ),
+            liquidity=LiquidityContext(buy_side_liquidity=4200.0, sell_side_liquidity=4120.0),
+            volatility=VolatilityContext(atr=15.0, current_spread_pips=2.0),
+            momentum=MomentumContext(trend_score=35.0, adx=25.0),
+            session=SessionContext(is_prime_session=True)
+        )
+        self.monitor._ctx_cache["XAUUSD"] = (ctx, time.monotonic())
+
+        # Manual BUY position (magic = 0) with sl=0.0 and tp=0.0
+        pos = PositionSnapshot(
+            ticket=99901, symbol="XAUUSD", type="BUY", volume=0.02,
+            open_price=4150.0, current_price=4150.0, sl=0.0, tp=0.0,
+            profit=0.0, swap=0.0, commission=0.0,
+            open_time=datetime.now(timezone.utc).isoformat(), magic=0
+        )
+        self.mt5_client.modify_position.reset_mock()
+        self.mt5_client.modify_position.return_value = {"status": "MODIFIED"}
+
+        self.monitor._manage_single_position(pos)
+
+        # Verify modify_position was dispatched with both SL > 0 and TP > 0
+        self.mt5_client.modify_position.assert_called_once()
+        call_kwargs = self.mt5_client.modify_position.call_args.kwargs
+        self.assertEqual(call_kwargs["ticket"], 99901)
+        self.assertGreater(call_kwargs["sl"], 0.0, "SL must be automatically set")
+        self.assertLess(call_kwargs["sl"], 4150.0, "BUY SL must be below entry")
+        self.assertGreater(call_kwargs["tp"], 4150.0, "BUY TP must be above entry")
+        # Ensure R:R is at least 1.8
+        risk_dist = 4150.0 - call_kwargs["sl"]
+        reward_dist = call_kwargs["tp"] - 4150.0
+        self.assertGreaterEqual(reward_dist / risk_dist, 1.8, "R:R ratio must be institutional")
+
+    def test_manual_trade_missing_tp_only_auto_placed(self):
+        """Verify that when a manual trade has an SL but NO TP, Master Trader AI places TP based on user's 1R."""
+        from jarvis.data.schemas import (
+            MarketContext, StructureContext, LiquidityContext, VolatilityContext, MomentumContext, SessionContext
+        )
+        from datetime import timezone
+        import time
+
+        ctx = MarketContext(
+            symbol="BTCUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=85000.0,
+            bid=84995.0,
+            ask=85005.0,
+            structure=StructureContext(
+                bias="BEARISH",
+                supply_zone=(85800.0, 86200.0),
+                order_blocks=[{"type": "BEARISH_ORDER_BLOCK", "low": 85800.0, "high": 86000.0}]
+            ),
+            liquidity=LiquidityContext(sell_side_liquidity=82000.0),
+            volatility=VolatilityContext(atr=500.0, current_spread_pips=10.0),
+            momentum=MomentumContext(trend_score=-40.0, adx=28.0),
+            session=SessionContext(is_prime_session=True)
+        )
+        self.monitor._ctx_cache["BTCUSD"] = (ctx, time.monotonic())
+
+        # Manual SELL trade with existing SL at 86000 (1000 risk), but tp = 0.0
+        pos = PositionSnapshot(
+            ticket=99902, symbol="BTCUSD", type="SELL", volume=0.01,
+            open_price=85000.0, current_price=85000.0, sl=86000.0, tp=0.0,
+            profit=0.0, swap=0.0, commission=0.0,
+            open_time=datetime.now(timezone.utc).isoformat(), magic=0
+        )
+        self.monitor.manual_mode = "TRAIL"
+        self.mt5_client.modify_position.reset_mock()
+        self.mt5_client.modify_position.return_value = {"status": "MODIFIED"}
+
+        self.monitor._manage_single_position(pos)
+
+        self.mt5_client.modify_position.assert_called_once()
+        call_kwargs = self.mt5_client.modify_position.call_args.kwargs
+        self.assertEqual(call_kwargs["ticket"], 99902)
+        self.assertEqual(call_kwargs["sl"], 86000.0, "User's SL must be preserved")
+        self.assertGreater(call_kwargs["tp"], 0.0, "TP must be automatically placed")
+        self.assertLess(call_kwargs["tp"], 85000.0, "SELL TP must be below entry")
+        # Target should be at least 2.0R below entry (85000 - 2000 = 83000 or lower)
+        self.assertLessEqual(call_kwargs["tp"], 83000.0, "TP should reflect at least 2R target")
+
 
 if __name__ == "__main__":
     unittest.main()

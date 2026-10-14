@@ -270,7 +270,7 @@ class DynamicRiskAndLevelsEngine:
             if candidate_anchors:
                 # Anti-Wick Shield: Outer structural support boundary min(candidate_anchors)
                 anchors_in_range = [a for a in candidate_anchors if (entry_price - a) <= 3.0 * atr]
-                anchor = min(anchors_in_range) if anchors_in_range else min(candidate_anchors)
+                anchor = min(anchors_in_range) if anchors_in_range else (entry_price - 1.5 * atr)
                 struct_sl_dist = (entry_price - anchor) + effective_buffer + spread_dist
             else:
                 struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
@@ -301,7 +301,7 @@ class DynamicRiskAndLevelsEngine:
                     asym_rr = 2.8
             else:  # SWING
                 if is_gold:
-                    max_swing_sl = 2.80 * atr  # Retain winning commodity runner parameters (100% UNCHANGED)
+                    max_swing_sl = min(cfg.sl_atr_multiplier * atr, max(25.0, 1.60 * atr))
                     min_target_rr = 2.0 if is_ranging else 2.5
                     asym_rr = 2.5 if is_ranging else 4.2
                 else:
@@ -479,7 +479,7 @@ class DynamicRiskAndLevelsEngine:
             if candidate_anchors:
                 # Anti-Wick Shield: Outer structural resistance boundary max(candidate_anchors)
                 anchors_in_range = [a for a in candidate_anchors if (a - entry_price) <= 3.0 * atr]
-                anchor = max(anchors_in_range) if anchors_in_range else max(candidate_anchors)
+                anchor = max(anchors_in_range) if anchors_in_range else (entry_price + 1.5 * atr)
                 struct_sl_dist = (anchor - entry_price) + effective_buffer + spread_dist
             else:
                 struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
@@ -503,7 +503,7 @@ class DynamicRiskAndLevelsEngine:
                     asym_rr = 2.8
             else:  # SWING
                 if is_gold:
-                    max_swing_sl = 2.80 * atr  # Retain winning commodity runner parameters (100% UNCHANGED)
+                    max_swing_sl = min(cfg.sl_atr_multiplier * atr, max(25.0, 1.60 * atr))
                     min_target_rr = 2.0 if is_ranging else 2.5
                     asym_rr = 2.5 if is_ranging else 4.2
                 else:

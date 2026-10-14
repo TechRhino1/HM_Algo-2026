@@ -415,16 +415,21 @@ class InstitutionalEntryEngine:
             entry_price = round(context.ask if bias == "BUY" else context.bid, digits)
             entry_type = "SWING_STRUCTURE_ENTRY"
 
-        # 5. Structural SL: Outer D1/H4 structural swing boundary +/- (1.0x spread + 0.40x D1 ATR)
-        # The floor is applied to the stop DISTANCE, then sl_price is derived from it,
-        # so sl_price and risk_dist always describe the same level (on every branch).
-        sl_buffer = spread_dist + (0.40 * d1_atr)
-        min_sl_floor = self._calculate_structural_sl_floor(context, d1_atr, spread_dist, trade_style="SWING")
+        # 5. Structural SL: Outer D1/H4 structural swing boundary +/- (1.0x spread + buffer)
+        sym_name = str(context.symbol).upper()
+        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name) or (getattr(spec, "asset_class", "").upper() == "COMMODITY") or ("WTI" in sym_name) or ("OIL" in sym_name)
+        is_crypto = getattr(spec, "is_crypto", False) or (getattr(spec, "asset_class", "").upper() == "CRYPTO") or ("BTC" in sym_name) or ("ETH" in sym_name) or ("SOL" in sym_name)
+        is_index = ("US500" in sym_name) or ("NAS100" in sym_name) or ("US30" in sym_name) or (getattr(spec, "asset_class", "").upper() == "INDEX")
+        is_forex = (getattr(spec, "asset_class", "").upper() == "FOREX") and not (is_gold or is_crypto or is_index)
+
+        h1_atr = context.volatility.atr if (hasattr(context, "volatility") and context.volatility.atr > 0) else (d1_atr / 4.0)
+        sl_buffer = spread_dist + ((0.30 * h1_atr) if is_gold else (0.40 * d1_atr))
+        min_sl_floor = self._calculate_structural_sl_floor(context, d1_atr if not is_gold else h1_atr, spread_dist, trade_style="SWING")
         if bias == "BUY":
             outer_swing = range_low
             struct_sl = round(outer_swing - sl_buffer, digits)
             if struct_sl >= entry_price:
-                sl_dist = (1.20 * d1_atr) + spread_dist
+                sl_dist = ((1.20 * h1_atr) if is_gold else (1.20 * d1_atr)) + spread_dist
             else:
                 sl_dist = entry_price - struct_sl
             sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
@@ -434,7 +439,7 @@ class InstitutionalEntryEngine:
             outer_swing = range_high
             struct_sl = round(outer_swing + sl_buffer, digits)
             if struct_sl <= entry_price:
-                sl_dist = (1.20 * d1_atr) + spread_dist
+                sl_dist = ((1.20 * h1_atr) if is_gold else (1.20 * d1_atr)) + spread_dist
             else:
                 sl_dist = struct_sl - entry_price
             sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
@@ -442,13 +447,16 @@ class InstitutionalEntryEngine:
             risk_dist = abs(sl_price - entry_price)
 
         # Asset-Class Structural Bounds
-        sym_name = str(context.symbol).upper()
-        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name) or (getattr(spec, "asset_class", "").upper() == "COMMODITY") or ("WTI" in sym_name) or ("OIL" in sym_name)
-        is_crypto = getattr(spec, "is_crypto", False) or (getattr(spec, "asset_class", "").upper() == "CRYPTO") or ("BTC" in sym_name) or ("ETH" in sym_name) or ("SOL" in sym_name)
-        is_index = ("US500" in sym_name) or ("NAS100" in sym_name) or ("US30" in sym_name) or (getattr(spec, "asset_class", "").upper() == "INDEX")
-        is_forex = (getattr(spec, "asset_class", "").upper() == "FOREX") and not (is_gold or is_crypto or is_index)
-
-        max_risk_cap = 1.15 * d1_atr if is_index else (1.25 * d1_atr if is_forex else (2.40 * d1_atr if is_crypto else 2.80 * d1_atr))
+        if is_gold:
+            max_risk_cap = min(max(20.0, 1.60 * h1_atr), 35.0)
+        elif is_index:
+            max_risk_cap = 1.15 * d1_atr
+        elif is_forex:
+            max_risk_cap = 1.25 * d1_atr
+        elif is_crypto:
+            max_risk_cap = 2.40 * d1_atr
+        else:
+            max_risk_cap = 2.80 * d1_atr
         # The cap is a pure upper bound and is applied AFTER the `pip_size * 5`
         # floor above, so on its own it can push risk_dist back below that floor
         # and leave a sub-5-pip stop the broker rejects — while the sizer derives

@@ -3,29 +3,30 @@
 **Mode:** uncalibrated baseline (legacy 29-gate stack)  
 **Data:** MT5 terminal, real H1 bars (validated non-synthetic)  
 **Initial balance:** $10,000.00 at 0.5% risk per trade  
-**Generated:** 2026-10-14T15:11:08.196428+00:00
+**Generated:** 2026-10-14T16:04:23.817683+00:00
 
 ## 1. Headline
 
 | Metric | Value |
 |---|---|
 | Symbols traded | 16 |
-| Total trades | 110 |
-| Win rate | 48.18% |
-| Expectancy | +0.0117 R per trade |
-| Average win / loss | +0.813 R / -0.734 R |
-| Payoff ratio | 1.109 |
-| Total R | +1.29 R |
-| Profit factor | 1.12 |
-| Net profit | $+144.67 |
-| Max drawdown | 1.83% |
-| Sharpe / Sortino / Calmar | 0.42 / 1.02 / 0.77 |
-| Expectancy (sample-uniqueness weighted) | +0.0774 R |
+| Total trades | 141 |
+| Win rate | 48.23% |
+| Expectancy | +0.0122 R per trade |
+| Average win / loss | +0.885 R / -0.801 R |
+| Payoff ratio | 1.105 |
+| Total R | +1.72 R |
+| Profit factor | 1.16 |
+| Net profit | $+290.13 |
+| Max drawdown | 1.73% |
+| Sharpe / Sortino / Calmar | 0.68 / 1.87 / 1.63 |
+| Expectancy (sample-uniqueness weighted) | +0.0708 R |
 
 ## 2. Per-symbol results
 
 | Symbol | Trades | WR % | Exp (R) | PF | Net $ | MaxDD % | OOS WR % | OOS Exp (R) | Target | Binding constraint |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|:--:|---|
+| XAUUSD | 30 | 43.3 | -0.050 | 0.99 | -6.40 | 1.35 | 0.0 | +0.000 | — | — |
 | GBPUSD | 16 | 56.2 | +0.129 | 1.57 | +72.28 | 0.55 | 0.0 | +0.000 | — | — |
 | USDCAD | 14 | 71.4 | +0.338 | 3.66 | +138.49 | 0.43 | 0.0 | +0.000 | — | — |
 | UK100 | 11 | 54.5 | +0.018 | 1.05 | +6.40 | 0.73 | 0.0 | +0.000 | — | — |
@@ -40,8 +41,7 @@
 | USDJPY | 4 | 25.0 | +0.044 | 1.31 | +14.20 | 0.45 | 0.0 | +0.000 | — | — |
 | EURUSD | 3 | 0.0 | -0.831 | 0.00 | -98.58 | 0.99 | 0.0 | +0.000 | — | — |
 | NAS100 | 3 | 0.0 | -1.001 | 0.00 | -92.04 | 0.92 | 0.0 | +0.000 | — | — |
-| XAUUSD | 2 | 0.0 | -0.684 | 0.00 | -74.46 | 0.74 | 0.0 | +0.000 | — | — |
-| XAGUSD | 0 | 0.0 | +0.000 | 0.00 | +0.00 | 0.00 | 0.0 | +0.000 | — | — |
+| XAGUSD | 3 | 66.7 | +0.188 | 2.36 | +77.40 | 0.56 | 0.0 | +0.000 | — | — |
 
 ## 5. Portfolio risk allocation (HRP)
 
@@ -49,21 +49,22 @@ Inverse-variance weights from the HRP allocator over per-symbol daily R:
 
 | Symbol | Risk weight |
 |---|---:|
-| XAUUSD | 19.42% |
-| NAS100 | 12.36% |
-| AUDUSD | 9.06% |
-| EURUSD | 8.29% |
-| USDJPY | 8.05% |
-| USDCHF | 7.27% |
-| US30 | 6.57% |
-| NZDUSD | 5.62% |
-| SOLUSD | 4.60% |
-| GER40 | 4.21% |
-| ETHUSD | 3.66% |
-| UK100 | 3.13% |
-| USDCAD | 3.12% |
-| GBPUSD | 2.80% |
-| BTCUSD | 1.84% |
+| XAGUSD | 16.06% |
+| NAS100 | 12.77% |
+| AUDUSD | 9.35% |
+| EURUSD | 8.56% |
+| USDJPY | 8.31% |
+| USDCHF | 7.51% |
+| US30 | 6.79% |
+| NZDUSD | 5.80% |
+| SOLUSD | 4.75% |
+| GER40 | 4.35% |
+| ETHUSD | 3.78% |
+| UK100 | 3.23% |
+| USDCAD | 3.22% |
+| GBPUSD | 2.90% |
+| BTCUSD | 1.90% |
+| XAUUSD | 0.73% |
 
 ## 6. Entry rejection analysis
 
@@ -73,6 +74,7 @@ Counts are per **bar evaluated**, not per candidate: a bar on which the pipeline
 
 | Symbol | Top rejection reasons |
 |---|---|
+| XAUUSD | Symbol XAUUSD loss cooldown active (899s remaining). (912); Failed quality check: Directional Bias. (95); Adversarial risk: Attempting SELL in unfavor |
 | GBPUSD | Symbol GBPUSD loss cooldown active (899s remaining). (64); Failed quality check: Forex Prime Session. (44); Failed quality check: Directional Bias. (2 |
 | USDCAD | Awaiting validation check: Devil Adversarial Guard. (63); Awaiting validation check: Macro MTF Alignment. (39); Failed quality check: Macro MTF Alignm |
 | UK100 | Failed quality check: Index Trend Alignment. (107); Failed quality check: Forex Prime Session. (101); Adversarial risk: Attempting SELL in unfavorable |
@@ -87,8 +89,7 @@ Counts are per **bar evaluated**, not per candidate: a bar on which the pipeline
 | USDJPY | Symbol USDJPY loss cooldown active (899s remaining). (1113); Failed quality check: JPY Momentum Guard. (77); Awaiting validation check: JPY Momentum G |
 | EURUSD | Symbol EURUSD loss cooldown active (899s remaining). (1491); Awaiting validation check: Forex Prime Session. (10); Awaiting validation check: Devil Ad |
 | NAS100 | Symbol NAS100 loss cooldown active (899s remaining). (924); Failed quality check: Forex Prime Session. (79); Failed quality check: Directional Bias. ( |
-| XAUUSD | Failed quality check: Directional Bias. (445); Awaiting validation check: Devil Adversarial Guard. (334); Risk Ceiling Exceeded: Minimum tradeable lot |
-| XAGUSD | Failed quality check: Directional Bias. (623); Adversarial risk: Attempting SELL in unfavorable DISCOUNT zone relative to equilibrium. (295); Adversar |
+| XAGUSD | Failed quality check: Directional Bias. (594); Adversarial risk: Attempting SELL in unfavorable DISCOUNT zone relative to equilibrium. (286); Adversar |
 
 ## 7. Method and honesty notes
 

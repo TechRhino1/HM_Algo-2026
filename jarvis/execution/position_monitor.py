@@ -132,6 +132,7 @@ class PositionMonitorEngine:
         self._exit_policy: Dict[int, ExitPolicy] = {}
         self._be_locked: Set[int] = set()
         self._position_milestones: Dict[int, Dict[str, Any]] = {}
+        self._last_modify_time: Dict[int, float] = {}
 
     # ─── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -422,17 +423,60 @@ class PositionMonitorEngine:
         new_tp  = pos.tp
         actions = []
 
-        # ── Manual Trade Isolation & Trailing (Spec v2.1 Refinement 4) ──────
+        # ── Manual Trade Isolation & Trailing (Master Trader AI Engine) ──────
         effective_manual_mode = getattr(self, "manual_mode", MANUAL_MANAGEMENT_MODE)
         if is_manual:
             if effective_manual_mode == "PROTECT_ONLY" and pos.sl > 0:
                 # In PROTECT_ONLY mode, do not modify manual trades that already have an SL
                 return
-            # Always ensure manual trades are protected against missing SL or dangerously wide blowout SL
-            new_sl, act = self._handle_manual_sl(pos, c_price, atr, new_sl)
-            if new_sl != pos.sl and new_sl > 0:
-                logger.info(f"🛡️ MANUAL SAFETY ({effective_manual_mode}): Stop Loss set/tightened on #{pos.ticket}: {new_sl:.4f} | {act}")
-                self.mt5_client.modify_position(ticket=pos.ticket, sl=new_sl, tp=pos.tp)
+            missing_sl = (pos.sl == 0 or pos.sl < 0.0001)
+            missing_tp = (pos.tp == 0 or pos.tp < 0.0001)
+            dangerously_wide_sl = False
+
+            if not missing_sl:
+                sl_dist = abs(pos.open_price - pos.sl)
+                dangerously_wide_sl = (sl_dist > (atr * DANGEROUS_SL_ATR_MULT))
+
+            if missing_sl or missing_tp or dangerously_wide_sl:
+                ai_sl, ai_tp, ai_reason = self._calculate_master_trader_sl_tp(
+                    pos=pos, ctx=ctx, c_price=c_price, atr=atr,
+                    equity=equity, spec=spec, digits=digits, pip_size=pip_size
+                )
+                manual_modified = False
+                target_sl = pos.sl
+                target_tp = pos.tp
+
+                if missing_sl or dangerously_wide_sl:
+                    target_sl = ai_sl
+                    new_sl = ai_sl
+                    actions.append(f"AI_MANUAL_SL@{new_sl:.{digits}f}")
+                    manual_modified = True
+
+                if missing_tp:
+                    target_tp = ai_tp
+                    new_tp = ai_tp
+                    actions.append(f"AI_MANUAL_TP@{new_tp:.{digits}f}")
+                    manual_modified = True
+
+                # Dispatch immediate protection if SL/TP changed
+                if manual_modified and (target_sl != pos.sl or target_tp != pos.tp):
+                    now_ts = time.time()
+                    last_mod = self._last_modify_time.get(pos.ticket, 0.0)
+                    if (now_ts - last_mod) >= 2.0 or missing_sl or missing_tp:
+                        logger.info(
+                            f"🎯 MASTER TRADER AI: Auto-placed SL/TP on Manual Trade #{pos.ticket} "
+                            f"({pos.symbol} {pos.type}) -> SL: {pos.sl:.{digits}f}→{target_sl:.{digits}f} | "
+                            f"TP: {pos.tp:.{digits}f}→{target_tp:.{digits}f} | Reason: {ai_reason}"
+                        )
+                        res = self.mt5_client.modify_position(ticket=pos.ticket, sl=target_sl, tp=target_tp)
+                        if res and res.get("status") in ("MODIFIED", "SUCCESS", True):
+                            pos.sl = target_sl
+                            pos.tp = target_tp
+                            self._last_action[pos.ticket] = f"{target_sl:.{digits}f}_{target_tp:.{digits}f}"
+                            self._last_modify_time[pos.ticket] = now_ts
+                            self._initial_risk_dist[pos.ticket] = max(abs(pos.open_price - target_sl), pip_size * 5)
+                            self._initial_sl[pos.ticket] = target_sl
+                            self._initial_tp[pos.ticket] = target_tp
 
             if effective_manual_mode == "PROTECT_ONLY":
                 # In PROTECT_ONLY mode, do not trail or apply discretionary algorithmic exits
@@ -1052,7 +1096,209 @@ class PositionMonitorEngine:
         actions = [f"{a}@{dec.new_sl:.{digits}f}" for a in dec.actions]
         return dec.new_sl, actions
 
-    # ─── Manual Trade Handler ──────────────────────────────────────────────────
+    # ─── Manual Trade Handler (Master Trader AI Engine) ─────────────────────────
+
+    def _calculate_master_trader_sl_tp(
+        self,
+        pos: PositionSnapshot,
+        ctx: Optional[MarketContext],
+        c_price: float,
+        atr: float,
+        equity: float,
+        spec: Any,
+        digits: int,
+        pip_size: float,
+    ) -> Tuple[float, float, str]:
+        """
+        Institutional Master Trader Initial SL & TP Engine for Manual Trades.
+        - Structural invalidation anchor (Swing Low for BUY, Swing High for SELL on M15/H1)
+        - Anti-wick volatility buffer (max(atr * 1.2, pip_size * 10))
+        - Max 2.0% account equity risk ceiling (clamps SL if dollar risk exceeds safe limit)
+        - Institutional opposing liquidity target (BSL/SSL) or 1:2.5 Risk-Reward ratio
+        - MT5 broker stop level & tick size quantization
+        """
+        is_buy = (pos.type == "BUY")
+        entry = float(pos.open_price if pos.open_price > 0 else c_price)
+        st = getattr(ctx, "structure", None) if ctx else None
+        liq = getattr(ctx, "liquidity", None) if ctx else None
+
+        # 1. Structural Anchor for SL
+        anti_wick_buffer = max(atr * 1.2, pip_size * 10.0)
+        struct_sl = 0.0
+
+        if is_buy:
+            cand_levels = []
+            if st is not None:
+                try:
+                    sw_l = float(getattr(st, "swing_low", 0.0) or 0.0)
+                    if 0 < sw_l < entry:
+                        cand_levels.append(sw_l)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    dz = getattr(st, "demand_zone", None)
+                    if dz and isinstance(dz, (list, tuple)) and len(dz) > 0:
+                        dz_val = float(dz[0])
+                        if 0 < dz_val < entry:
+                            cand_levels.append(dz_val)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    obs = getattr(st, "order_blocks", None)
+                    if isinstance(obs, list):
+                        for ob in obs:
+                            if isinstance(ob, dict) and ob.get("type") == "BULLISH_ORDER_BLOCK":
+                                ob_low = float(ob.get("low", 0.0) or 0.0)
+                                if 0 < ob_low < entry:
+                                    cand_levels.append(ob_low)
+                except (TypeError, ValueError):
+                    pass
+            if liq is not None:
+                try:
+                    ssl = float(getattr(liq, "sell_side_liquidity", 0.0) or 0.0)
+                    if 0 < ssl < entry:
+                        cand_levels.append(ssl)
+                except (TypeError, ValueError):
+                    pass
+
+            levels_in_range = [l for l in cand_levels if (entry - l) <= 3.0 * atr]
+            anchor = max(levels_in_range) if levels_in_range else (entry - (atr * 1.5))
+            struct_sl = anchor - anti_wick_buffer
+        else:
+            cand_levels = []
+            if st is not None:
+                try:
+                    sw_h = float(getattr(st, "swing_high", 0.0) or 0.0)
+                    if sw_h > entry:
+                        cand_levels.append(sw_h)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    sz = getattr(st, "supply_zone", None)
+                    if sz and isinstance(sz, (list, tuple)) and len(sz) > 1:
+                        sz_val = float(sz[1])
+                        if sz_val > entry:
+                            cand_levels.append(sz_val)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    obs = getattr(st, "order_blocks", None)
+                    if isinstance(obs, list):
+                        for ob in obs:
+                            if isinstance(ob, dict) and ob.get("type") == "BEARISH_ORDER_BLOCK":
+                                ob_high = float(ob.get("high", 0.0) or 0.0)
+                                if ob_high > entry:
+                                    cand_levels.append(ob_high)
+                except (TypeError, ValueError):
+                    pass
+            if liq is not None:
+                try:
+                    bsl = float(getattr(liq, "buy_side_liquidity", 0.0) or 0.0)
+                    if bsl > entry:
+                        cand_levels.append(bsl)
+                except (TypeError, ValueError):
+                    pass
+
+            levels_in_range = [l for l in cand_levels if (l - entry) <= 3.0 * atr]
+            anchor = min(levels_in_range) if levels_in_range else (entry + (atr * 1.5))
+            struct_sl = anchor + anti_wick_buffer
+
+        # 2. Maximum Account Risk Cap (Max 2.0% Equity Loss)
+        try:
+            from jarvis.data.symbol_registry import get_dollar_risk_per_price_unit
+            dollar_per_unit = get_dollar_risk_per_price_unit(pos.symbol)
+        except Exception:
+            dollar_per_unit = 100_000.0
+
+        max_risk_usd = max(equity * 0.02, 50.0)
+        max_dist = max_risk_usd / max(dollar_per_unit * pos.volume, 1e-6)
+
+        if is_buy:
+            final_sl = max(struct_sl, entry - max_dist)
+        else:
+            final_sl = min(struct_sl, entry + max_dist)
+
+        # 3. Take Profit Calculation (Opposing Liquidity or 1:2.5+ R:R)
+        effective_sl = pos.sl if pos.sl > 0 else final_sl
+        risk_dist = max(abs(entry - effective_sl), pip_size * 10.0)
+
+        target_tp = 0.0
+        if is_buy:
+            min_tp = entry + (risk_dist * 2.5)
+            cand_tp = []
+            try:
+                bsl = float(getattr(liq, "buy_side_liquidity", 0.0) or 0.0) if liq else 0.0
+                if bsl >= min_tp:
+                    cand_tp.append(bsl)
+            except (TypeError, ValueError):
+                pass
+            try:
+                sz = getattr(st, "supply_zone", None) if st else None
+                if sz and isinstance(sz, (list, tuple)) and len(sz) > 1:
+                    sz_top = float(sz[1])
+                    if sz_top >= min_tp:
+                        cand_tp.append(sz_top)
+            except (TypeError, ValueError):
+                pass
+            target_tp = (min(cand_tp) - (atr * 0.2)) if cand_tp else min_tp
+        else:
+            min_tp = entry - (risk_dist * 2.5)
+            cand_tp = []
+            try:
+                ssl = float(getattr(liq, "sell_side_liquidity", 0.0) or 0.0) if liq else 0.0
+                if 0 < ssl <= min_tp:
+                    cand_tp.append(ssl)
+            except (TypeError, ValueError):
+                pass
+            try:
+                dz = getattr(st, "demand_zone", None) if st else None
+                if dz and isinstance(dz, (list, tuple)) and len(dz) > 0:
+                    dz_bot = float(dz[0])
+                    if 0 < dz_bot <= min_tp:
+                        cand_tp.append(dz_bot)
+            except (TypeError, ValueError):
+                pass
+            target_tp = (max(cand_tp) + (atr * 0.2)) if cand_tp else min_tp
+
+        # 4. Broker Stops Level & Quantization
+        sym_info = self.mt5_client.get_symbol_info(pos.symbol)
+        if not isinstance(sym_info, dict):
+            sym_info = {}
+        try:
+            point = float(sym_info.get("point") or (10 ** -digits))
+        except (TypeError, ValueError):
+            point = 10 ** -digits
+        try:
+            tick_sz = float(sym_info.get("trade_tick_size") or sym_info.get("point") or point)
+        except (TypeError, ValueError):
+            tick_sz = point
+        try:
+            stops_lvl = float(sym_info.get("trade_stops_level") or 0.0)
+        except (TypeError, ValueError):
+            stops_lvl = 0.0
+        try:
+            freeze_lvl = float(sym_info.get("freeze_level") or 0.0)
+        except (TypeError, ValueError):
+            freeze_lvl = 0.0
+        min_dist = max(stops_lvl, freeze_lvl, 5.0) * point + (pip_size * 2.0)
+
+        if is_buy:
+            final_sl = min(final_sl, c_price - min_dist)
+            target_tp = max(target_tp, c_price + min_dist)
+        else:
+            final_sl = max(final_sl, c_price + min_dist)
+            target_tp = min(target_tp, c_price - min_dist)
+
+        def _quantize(p: float) -> float:
+            if tick_sz > 0:
+                return round(round(p / tick_sz) * tick_sz, digits)
+            return round(p, digits)
+
+        final_sl = _quantize(final_sl)
+        target_tp = _quantize(target_tp)
+        rr = abs(target_tp - entry) / max(risk_dist, 1e-6)
+        reason = f"MASTER_TRADER_AI(SL={final_sl}, TP={target_tp}, R:R={rr:.1f})"
+        return final_sl, target_tp, reason
 
     def _handle_manual_sl(
         self,
