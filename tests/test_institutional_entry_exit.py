@@ -364,9 +364,9 @@ class TestHorizonAdaptiveRatchetAndExits(unittest.TestCase):
         ctx = MarketContext(
             symbol="XAUUSD",
             timestamp=datetime.now(timezone.utc),
-            current_price=2402.0,
-            bid=2401.8,
-            ask=2402.2,
+            current_price=2400.0,
+            bid=2399.8,
+            ask=2400.2,
             structure=StructureContext(bias="BULLISH"),
             liquidity=LiquidityContext(),
             volatility=VolatilityContext(atr=10.0, current_spread_pips=2.0),
@@ -375,25 +375,25 @@ class TestHorizonAdaptiveRatchetAndExits(unittest.TestCase):
         )
         self.monitor._ctx_cache["XAUUSD"] = (ctx, time.monotonic())
 
-        # Opened 50 minutes ago (3000 seconds), favorable gain = 2.0 -> R = 0.20 < 0.50
+        # Opened 50 minutes ago (3000 seconds), stagnant at entry/loss (gain = 0.0 -> R = 0.0 <= 0.0)
         stale_time = (datetime.now(timezone.utc) - timedelta(minutes=50)).isoformat()
         pos = PositionSnapshot(
             ticket=601, symbol="XAUUSD", type="BUY", volume=0.01,
-            open_price=2400.0, current_price=2402.0, sl=2390.0, tp=2430.0,
-            profit=2.0, swap=0.0, commission=0.0, open_time=stale_time,
+            open_price=2400.0, current_price=2400.0, sl=2390.0, tp=2430.0,
+            profit=0.0, swap=0.0, commission=0.0, open_time=stale_time,
             magic=JARVIS_MAGIC_NUMBER, comment="[SCALP] Trade"
         )
         self.monitor._manage_single_position(pos)
         self.mt5_client.close_position.assert_called_with(601)
 
     def test_stagnation_exit_day_trading(self):
-        """Day trading setup holding > 6 hours with progress R < 0.75R triggers auto-close."""
+        """Day trading setup holding > 14 hours with progress R < 0.10R triggers auto-close."""
         ctx = MarketContext(
             symbol="EURUSD",
             timestamp=datetime.now(timezone.utc),
-            current_price=1.0820,
-            bid=1.0819,
-            ask=1.0821,
+            current_price=1.0802,
+            bid=1.0801,
+            ask=1.0803,
             structure=StructureContext(bias="BULLISH"),
             liquidity=LiquidityContext(),
             volatility=VolatilityContext(atr=0.0030, current_spread_pips=1.0),
@@ -402,19 +402,19 @@ class TestHorizonAdaptiveRatchetAndExits(unittest.TestCase):
         )
         self.monitor._ctx_cache["EURUSD"] = (ctx, time.monotonic())
 
-        # Opened 7 hours ago (25200 seconds), favorable gain = 0.0020 -> R = 0.40 < 0.75
-        stale_time = (datetime.now(timezone.utc) - timedelta(hours=7)).isoformat()
+        # Opened 15 hours ago (54000 seconds), favorable gain = 0.0002 -> R = 0.04 < 0.10
+        stale_time = (datetime.now(timezone.utc) - timedelta(hours=15)).isoformat()
         pos = PositionSnapshot(
             ticket=701, symbol="EURUSD", type="BUY", volume=0.01,
-            open_price=1.0800, current_price=1.0820, sl=1.0750, tp=1.0950,
-            profit=20.0, swap=0.0, commission=0.0, open_time=stale_time,
+            open_price=1.0800, current_price=1.0802, sl=1.0750, tp=1.0950,
+            profit=2.0, swap=0.0, commission=0.0, open_time=stale_time,
             magic=JARVIS_MAGIC_NUMBER, comment="[DAY_TRADING]"
         )
         self.monitor._manage_single_position(pos)
         self.mt5_client.close_position.assert_called_with(701)
 
     def test_adversarial_order_flow_shield_in_profit(self):
-        """Adversarial Order Flow Shield: When trade is in profit and counter volume delta occurs, ratchet SL to Bid/Ask +/- 0.15x ATR."""
+        """Adversarial Order Flow Shield & Reversal: In profit with counter order flow, locks runner profit."""
         ctx = MarketContext(
             symbol="XAUUSD",
             timestamp=datetime.now(timezone.utc),
@@ -441,8 +441,8 @@ class TestHorizonAdaptiveRatchetAndExits(unittest.TestCase):
         self.mt5_client.modify_position.return_value = {"status": "MODIFIED"}
         self.monitor._manage_single_position(pos)
 
-        # Ratchet SL to Bid (2414.8) - 0.75 * 10 = 2407.3
-        self.mt5_client.modify_position.assert_called_with(801, sl=2407.3, tp=2430.0)
+        # Runner reversal locks 70% of profit: 2400.0 + 15.0 * 0.70 = 2410.5
+        self.mt5_client.modify_position.assert_called_with(801, sl=2410.5, tp=2430.0)
 
     def test_adversarial_order_flow_shield_underwater_liquidation(self):
         """Adversarial Order Flow Shield: When trade is underwater, arbitrary market closing is disabled; structural SL governs."""

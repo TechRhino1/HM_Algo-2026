@@ -257,6 +257,14 @@ class DecisionEngine:
                     return "SELL"
                 return "HOLD"
 
+            # 1b. Momentum Exhaustion Top & Liquidity Sweep Guard:
+            # If buy-side liquidity was swept at a premium, or momentum is at an overbought extreme (> 80),
+            # buying is prohibited! Wait for pullback or flip to SELL if confirmed.
+            if ((has_bear_sweep and dp_zone == "PREMIUM") or trend_score >= 80.0) and not is_breakout_regime:
+                if authenticated_bear_reversal or (has_bear_sweep and (trend_score <= 30.0 or bear_votes > bull_votes)):
+                    return "SELL"
+                return "HOLD"
+
             # 2. Authenticated reversal: allow SELL when lower TFs have flipped bearish
             if authenticated_bear_reversal and (
                 mtf_score <= -15.0
@@ -296,6 +304,14 @@ class DecisionEngine:
                     or (st.bos and trend_score >= 0.0)
                     or (bull_votes >= 2 and bull_votes > bear_votes)
                 ):
+                    return "BUY"
+                return "HOLD"
+
+            # 1b. Momentum Exhaustion Bottom & Liquidity Sweep Guard:
+            # If sell-side liquidity was swept at a discount, or momentum is at an oversold extreme (< -80),
+            # selling is prohibited! Wait for pullback or flip to BUY if confirmed.
+            if ((has_bull_sweep and dp_zone == "DISCOUNT") or trend_score <= -80.0) and not is_breakout_regime:
+                if authenticated_bull_reversal or (has_bull_sweep and (trend_score >= -30.0 or bull_votes > bear_votes)):
                     return "BUY"
                 return "HOLD"
 
@@ -1645,9 +1661,11 @@ class DecisionEngine:
         rsi_val = float(getattr(context.momentum, "rsi", 50.0) or 50.0) if hasattr(context, "momentum") else 50.0
         is_breakout_mode = best_strategy in ("BREAKOUT_EXPANSION", "BREAKDOWN") or is_expansion_val > 0 or is_extreme_val > 0
 
+        has_bull_swp = bool(getattr(context.liquidity, "sweep_detected", False) and "BULLISH" in getattr(context.liquidity, "sweep_type", ""))
+        has_bear_swp = bool(getattr(context.liquidity, "sweep_detected", False) and "BEARISH" in getattr(context.liquidity, "sweep_type", ""))
         # Chasing warning flags:
-        is_chasing_discount_floor = (tentative_bias == "SELL" and (st_zone == "DISCOUNT" or rsi_val < 32.0) and not is_breakout_mode)
-        is_chasing_premium_roof = (tentative_bias == "BUY" and (st_zone == "PREMIUM" or rsi_val > 68.0) and not is_breakout_mode)
+        is_chasing_discount_floor = (tentative_bias == "SELL" and (st_zone == "DISCOUNT" or rsi_val < 32.0 or trend_score_val <= -75.0 or has_bull_swp) and not is_breakout_mode)
+        is_chasing_premium_roof = (tentative_bias == "BUY" and (st_zone == "PREMIUM" or rsi_val > 68.0 or trend_score_val >= 75.0 or has_bear_swp) and not is_breakout_mode)
 
         is_trending_momentum = abs(trend_score_val) >= 20.0 or is_expansion_val > 0 or is_extreme_val > 0 or best_strategy in ("TREND_FOLLOWING", "BREAKOUT_EXPANSION")
         is_close_proximity = price_diff <= max(0.40 * atr_val, spread_dist * 5.0)

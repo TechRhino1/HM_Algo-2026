@@ -89,6 +89,12 @@ class ExecutionEngine:
         mode = str(getattr(self.mt5_client, "mode", "") or "").lower()
         return mode if mode in ("live", "paper", "demo") else "unknown"
 
+    @staticmethod
+    def _quantize_price(price: float, tick_size: float, digits: int) -> float:
+        if tick_size > 0:
+            return round(round(price / tick_size) * tick_size, digits)
+        return round(price, digits)
+
     def execute_decision(self, decision: DecisionObject, lots: float) -> Dict[str, Any]:
         """Dispatches authorized decision to MT5 or Paper Simulator."""
         if not decision.execution_authorized or lots <= 0:
@@ -131,6 +137,10 @@ class ExecutionEngine:
         
         point = float(sym_spec.get("point", 0.0001) or 0.0001)
         digits = int(sym_spec.get("digits", 5) or 5)
+        tick_sz = float(sym_spec.get("trade_tick_size", point) or point)
+        tick_val = float(sym_spec.get("trade_tick_value", 1.0) or 1.0)
+        dollar_risk_per_price_unit = tick_val / max(tick_sz, 1e-9)
+
         stops_level = int(sym_spec.get("trade_stops_level", 0) or 0)
         spread_points = int(sym_spec.get("spread", 0) or 0)
         spread_dist = spread_points * point
@@ -139,6 +149,7 @@ class ExecutionEngine:
 
         planned_sl_dist = abs(decision.entry_price - decision.stop_loss)
         executable_sl_dist = max(planned_sl_dist, min_broker_stop_dist)
+        executable_tp_dist = abs(decision.take_profit - decision.entry_price) if decision.take_profit > 0 else 0.0
 
         # If planned stop is too close to entry for the broker, adjust SL before dispatch
         if executable_sl_dist > planned_sl_dist + 1e-9:
@@ -147,16 +158,12 @@ class ExecutionEngine:
                 f"(stops_level={stops_level}, spread={spread_points} pts)"
             )
             if decision.bias == "BUY":
-                decision.stop_loss = round(decision.entry_price - executable_sl_dist, digits)
+                decision.stop_loss = self._quantize_price(decision.entry_price - executable_sl_dist, tick_sz, digits)
             else:
-                decision.stop_loss = round(decision.entry_price + executable_sl_dist, digits)
+                decision.stop_loss = self._quantize_price(decision.entry_price + executable_sl_dist, tick_sz, digits)
             decision.sl_distance = executable_sl_dist
 
             # Adjust lot size down if widening the SL would breach the risk budget
-            tick_val = float(sym_spec.get("trade_tick_value", 1.0) or 1.0)
-            tick_sz = float(sym_spec.get("trade_tick_size", point) or point)
-            dollar_risk_per_price_unit = tick_val / max(tick_sz, 1e-9)
-            
             account_equity = self.state_manager.account.equity if self.state_manager.account else 10000.0
             from jarvis.config.settings import SETTINGS
             max_risk_pct = SETTINGS.risk.max_risk_per_trade_pct
@@ -174,12 +181,23 @@ class ExecutionEngine:
                 )
                 lots = safe_lots
 
+        # Pre-quantize initial levels
+        decision.entry_price = self._quantize_price(decision.entry_price, tick_sz, digits)
+        decision.stop_loss = self._quantize_price(decision.stop_loss, tick_sz, digits)
+        if decision.take_profit > 0:
+            decision.take_profit = self._quantize_price(decision.take_profit, tick_sz, digits)
+
         logger.info(f"DISPATCHING ORDER [{mode.value}]: {decision.bias} {lots} {decision.symbol} @ Entry={decision.entry_price} SL={decision.stop_loss} TP={decision.take_profit}")
 
         order_kind = getattr(decision, "order_type", "MARKET").upper()
         use_limit = "LIMIT" in order_kind or "PENDING" in order_kind
 
         _order_timer = ORDER_LATENCY.time(route="pending" if use_limit else "market")
+
+        ctx = getattr(decision, "context", None)
+        cur_price = getattr(ctx, "current_price", decision.entry_price) if ctx else decision.entry_price
+        bid_price = getattr(ctx, "bid", cur_price) if ctx else cur_price
+        ask_price = getattr(ctx, "ask", cur_price) if ctx else cur_price
 
         if use_limit:
             # Task 1: Deduplication Guard — Block duplicate pending limit orders on the same symbol
@@ -195,11 +213,6 @@ class ExecutionEngine:
                     return {"status": "BLOCKED", "reason": "Existing pending order active"}
 
             # Task 2b: Direction-vs-price sanity check for resting limit orders
-            ctx = getattr(decision, "context", None)
-            cur_price = getattr(ctx, "current_price", decision.entry_price) if ctx else decision.entry_price
-            bid_price = getattr(ctx, "bid", cur_price) if ctx else cur_price
-            ask_price = getattr(ctx, "ask", cur_price) if ctx else cur_price
-
             is_sane_limit = True
             if decision.bias == "BUY" and decision.entry_price >= (bid_price - min_broker_stop_dist):
                 logger.info(
@@ -216,6 +229,17 @@ class ExecutionEngine:
 
             if is_sane_limit:
                 limit_dir = "BUY_LIMIT" if decision.bias == "BUY" else "SELL_LIMIT"
+                # Anchor SL and TP strictly to the quantized limit entry price
+                decision.entry_price = self._quantize_price(decision.entry_price, tick_sz, digits)
+                if decision.bias == "BUY":
+                    decision.stop_loss = self._quantize_price(decision.entry_price - executable_sl_dist, tick_sz, digits)
+                    if executable_tp_dist > 0:
+                        decision.take_profit = self._quantize_price(decision.entry_price + executable_tp_dist, tick_sz, digits)
+                else:
+                    decision.stop_loss = self._quantize_price(decision.entry_price + executable_sl_dist, tick_sz, digits)
+                    if executable_tp_dist > 0:
+                        decision.take_profit = self._quantize_price(decision.entry_price - executable_tp_dist, tick_sz, digits)
+
                 res = self.mt5_client.place_pending_order(
                     symbol=decision.symbol,
                     order_type=limit_dir,
@@ -226,6 +250,19 @@ class ExecutionEngine:
                     comment=comment
                 )
             else:
+                # Limit order was too close/invalid: route to market order re-anchored to live market price
+                ref_mkt_entry = ask_price if decision.bias == "BUY" and ask_price > 0 else (bid_price if decision.bias == "SELL" and bid_price > 0 else cur_price)
+                ref_mkt_entry = self._quantize_price(ref_mkt_entry, tick_sz, digits)
+                decision.entry_price = ref_mkt_entry
+                if decision.bias == "BUY":
+                    decision.stop_loss = self._quantize_price(ref_mkt_entry - executable_sl_dist, tick_sz, digits)
+                    if executable_tp_dist > 0:
+                        decision.take_profit = self._quantize_price(ref_mkt_entry + executable_tp_dist, tick_sz, digits)
+                else:
+                    decision.stop_loss = self._quantize_price(ref_mkt_entry + executable_sl_dist, tick_sz, digits)
+                    if executable_tp_dist > 0:
+                        decision.take_profit = self._quantize_price(ref_mkt_entry - executable_tp_dist, tick_sz, digits)
+
                 res = self.mt5_client.send_market_order(
                     symbol=decision.symbol,
                     order_type=decision.bias,
@@ -236,6 +273,19 @@ class ExecutionEngine:
                     reference_price=decision.entry_price
                 )
         else:
+            # Standard Market order: re-anchor to live market price if observed
+            ref_mkt_entry = ask_price if decision.bias == "BUY" and ask_price > 0 else (bid_price if decision.bias == "SELL" and bid_price > 0 else decision.entry_price)
+            ref_mkt_entry = self._quantize_price(ref_mkt_entry, tick_sz, digits)
+            decision.entry_price = ref_mkt_entry
+            if decision.bias == "BUY":
+                decision.stop_loss = self._quantize_price(ref_mkt_entry - executable_sl_dist, tick_sz, digits)
+                if executable_tp_dist > 0:
+                    decision.take_profit = self._quantize_price(ref_mkt_entry + executable_tp_dist, tick_sz, digits)
+            else:
+                decision.stop_loss = self._quantize_price(ref_mkt_entry + executable_sl_dist, tick_sz, digits)
+                if executable_tp_dist > 0:
+                    decision.take_profit = self._quantize_price(ref_mkt_entry - executable_tp_dist, tick_sz, digits)
+
             res = self.mt5_client.send_market_order(
                 symbol=decision.symbol,
                 order_type=decision.bias,
