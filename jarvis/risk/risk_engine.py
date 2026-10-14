@@ -214,10 +214,10 @@ class RiskEngine:
                     )
 
         # Condition 8: Portfolio Risk Budget Capacity
-        spec = resolve_symbol(symbol)
-        contract_size = spec.contract_size or 100000.0
+        from jarvis.data.symbol_registry import get_dollar_risk_per_price_unit
+        dollar_per_unit = get_dollar_risk_per_price_unit(symbol)
         risk_dist = abs(decision.entry_price - decision.stop_loss)
-        est_new_risk_usd = 0.01 * contract_size * risk_dist
+        est_new_risk_usd = 0.01 * dollar_per_unit * risk_dist
         open_risk_usd = self.exposure_manager.calculate_portfolio_monetary_risk(positions, account)
         total_projected_risk_usd = open_risk_usd + self.get_total_reserved_risk_usd() + est_new_risk_usd
         if account.equity > 0:
@@ -226,7 +226,7 @@ class RiskEngine:
             if account.equity < 500.0:
                 effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 10.0)
             elif account.equity < 1000.0:
-                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 6.0)
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 8.0)
 
             if proj_risk_pct > effective_portfolio_risk_cap:
                 breaches.append(f"ADAPTIVE_GATE_8: Projected portfolio risk ({proj_risk_pct:.2f}%) exceeds budget ({effective_portfolio_risk_cap:.1f}%).")

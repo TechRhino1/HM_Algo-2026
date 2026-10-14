@@ -36,13 +36,12 @@ class ExposureManager:
     ) -> float:
         """
         Calculates total monetary stop-loss risk ($) across all active positions.
+        Properly handles quote currency conversions (e.g. JPY pairs) using get_dollar_risk_per_price_unit.
         """
+        from jarvis.data.symbol_registry import get_dollar_risk_per_price_unit
         total_risk_usd = 0.0
         for pos in positions:
-            spec = resolve_symbol(pos.symbol)
-            contract_size = getattr(pos, 'contract_size', spec.contract_size)
-            if contract_size <= 0:
-                contract_size = spec.contract_size or 100000.0
+            dollar_per_unit = get_dollar_risk_per_price_unit(pos.symbol)
 
             open_price = float(pos.open_price or 1.0)
             sl_price = float(pos.sl or 0.0)
@@ -53,7 +52,7 @@ class ExposureManager:
                 # Conservative fallback: 1.5% of open price if SL not set
                 risk_dist = open_price * 0.015
 
-            pos_risk_usd = float(pos.volume) * contract_size * risk_dist
+            pos_risk_usd = float(pos.volume) * dollar_per_unit * risk_dist
             total_risk_usd += pos_risk_usd
 
         return round(total_risk_usd, 2)
@@ -184,13 +183,18 @@ class ExposureManager:
             # Notional exposure calculation
             long_notional = 0.0
             short_notional = 0.0
-            
             for pos in positions:
                 spec = resolve_symbol(pos.symbol)
                 contract_size = getattr(pos, 'contract_size', spec.contract_size) or 100000.0
                 current_price = getattr(pos, 'current_price', getattr(pos, 'entry_price', 1.0))
                 
-                pos_notional = pos.volume * contract_size * current_price
+                # For instruments where USD is the base currency (e.g. USDJPY, USDCHF, USDCAD),
+                # contract_size is already in USD (e.g. 100,000 USD). Multiplying by current_price in JPY/CHF
+                # converts it into foreign currency instead of USD!
+                if spec.canonical.startswith("USD") and not spec.canonical.endswith("USD"):
+                    pos_notional = pos.volume * contract_size
+                else:
+                    pos_notional = pos.volume * contract_size * current_price
                 if getattr(pos, 'side', getattr(pos, 'type', '')).upper() in ('BUY', 'LONG', '0'):
                     long_notional += pos_notional
                 else:
