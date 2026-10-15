@@ -208,9 +208,13 @@ class InstitutionalEntryEngine:
             tp2_price = round(entry_price + (risk_dist * tp2_r), digits)
             tp3_price = round(entry_price + (risk_dist * tp3_r), digits)
         else:
-            tp1_price = round(entry_price - (risk_dist * tp1_r), digits)
-            tp2_price = round(entry_price - (risk_dist * tp2_r), digits)
-            tp3_price = round(entry_price - (risk_dist * tp3_r), digits)
+            # SELL exits close at ASK (BID + spread). Adding spread_dist ensures TP fills when BID hits target.
+            tp1_price = round(entry_price - (risk_dist * tp1_r) + spread_dist, digits)
+            tp2_price = round(entry_price - (risk_dist * tp2_r) + spread_dist, digits)
+            tp3_price = round(entry_price - (risk_dist * tp3_r) + spread_dist, digits)
+            tp1_price = min(tp1_price, round(entry_price - (risk_dist * 0.5), digits))
+            tp2_price = min(tp2_price, round(entry_price - (risk_dist * 1.0), digits))
+            tp3_price = min(tp3_price, round(entry_price - (risk_dist * 1.5), digits))
 
         tp_price = tp2_price
         tp_dist = abs(tp_price - entry_price)
@@ -333,9 +337,13 @@ class InstitutionalEntryEngine:
             tp2_price = round(entry_price + (risk_dist * tp2_r), digits)
             tp3_price = round(entry_price + (risk_dist * tp3_r), digits)
         else:
-            tp1_price = round(entry_price - (risk_dist * tp1_r), digits)
-            tp2_price = round(entry_price - (risk_dist * tp2_r), digits)
-            tp3_price = round(entry_price - (risk_dist * tp3_r), digits)
+            # SELL exits close at ASK (BID + spread). Adding spread_dist ensures TP fills when BID hits target.
+            tp1_price = round(entry_price - (risk_dist * tp1_r) + spread_dist, digits)
+            tp2_price = round(entry_price - (risk_dist * tp2_r) + spread_dist, digits)
+            tp3_price = round(entry_price - (risk_dist * tp3_r) + spread_dist, digits)
+            tp1_price = min(tp1_price, round(entry_price - (risk_dist * 0.5), digits))
+            tp2_price = min(tp2_price, round(entry_price - (risk_dist * 1.0), digits))
+            tp3_price = min(tp3_price, round(entry_price - (risk_dist * 1.5), digits))
 
         tp_price = tp2_price
         tp_dist = abs(tp_price - entry_price)
@@ -483,9 +491,13 @@ class InstitutionalEntryEngine:
             tp2_price = round(entry_price + (risk_dist * tp2_r), digits)
             tp3_price = round(entry_price + (risk_dist * tp3_r), digits)
         else:
-            tp1_price = round(entry_price - (risk_dist * tp1_r), digits)
-            tp2_price = round(entry_price - (risk_dist * tp2_r), digits)
-            tp3_price = round(entry_price - (risk_dist * tp3_r), digits)
+            # SELL exits close at ASK (BID + spread). Adding spread_dist ensures TP fills when BID hits target.
+            tp1_price = round(entry_price - (risk_dist * tp1_r) + spread_dist, digits)
+            tp2_price = round(entry_price - (risk_dist * tp2_r) + spread_dist, digits)
+            tp3_price = round(entry_price - (risk_dist * tp3_r) + spread_dist, digits)
+            tp1_price = min(tp1_price, round(entry_price - (risk_dist * 0.5), digits))
+            tp2_price = min(tp2_price, round(entry_price - (risk_dist * 1.0), digits))
+            tp3_price = min(tp3_price, round(entry_price - (risk_dist * 1.5), digits))
 
         tp_price = tp2_price
         tp_dist = abs(tp_price - entry_price)

@@ -276,8 +276,9 @@ class PositionMonitorEngine:
             logger.debug(f"🛡️ Discretionary exit '{reason}' suppressed for manual trade #{pos.ticket}")
             return False
 
+        # Proximity TP harvest is an institutional target fulfillment; never suppress with grace period
         open_dur_sec = self._get_position_duration_sec(pos)
-        if open_dur_sec < DISCRETIONARY_GRACE_PERIOD_SEC:
+        if reason != "PROXIMITY_TP_HARVEST" and open_dur_sec < DISCRETIONARY_GRACE_PERIOD_SEC:
             logger.info(
                 f"🛡️ GRACE PERIOD: Discretionary exit '{reason}' suppressed for #{pos.ticket} "
                 f"({pos.symbol}) — age {open_dur_sec:.1f}s < {DISCRETIONARY_GRACE_PERIOD_SEC:.0f}s."
@@ -715,6 +716,47 @@ class PositionMonitorEngine:
 
             # Compute current R-multiple for early defense and milestone evaluation
             current_r = ((c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)) / max(risk_dist, 1e-6)
+
+            # ── 3.2 Near-TP Proximity Harvesting & Lock (Institutional TP Protection) ────
+            # When price achieves >= 94% of the planned target move OR comes within proximity buffer
+            # of TP (e.g. 1.5x spread or 0.10x ATR), prevent missed fills and sudden givebacks.
+            if pos.tp > 0:
+                tp_distance = abs(pos.tp - pos.open_price)
+                if tp_distance > 1e-6:
+                    dist_to_tp = (pos.tp - c_price) if pos.type == "BUY" else (c_price - pos.tp)
+                    tp_prog = favorable_dist / tp_distance
+                    spread_dist_val = spread * pip_size if pip_size > 0 else 0.0001
+                    prox_thresh = max(pip_size * 2.5, spread_dist_val * 1.5, atr * 0.10)
+                    if "XAU" in symbol or "GOLD" in symbol:
+                        prox_thresh = max(prox_thresh, 0.40, atr * 0.12)
+
+                    # Active Proximity Harvest: if currently within micro proximity or >= 96% progress
+                    if (dist_to_tp <= max(pip_size * 2.0, spread_dist_val * 1.2)) or (tp_prog >= 0.96 and dist_to_tp <= prox_thresh * 1.5):
+                        logger.info(
+                            f"🎯 PROXIMITY_TP_HARVEST: #{pos.ticket} ({pos.symbol} {pos.type}) "
+                            f"within {dist_to_tp:.4f} of TP (progress={tp_prog*100:.1f}%). "
+                            f"Harvesting at market {c_price:.{digits}f} to bank profits."
+                        )
+                        if self._execute_exit(pos, reason="PROXIMITY_TP_HARVEST"):
+                            return
+                    elif (dist_to_tp <= prox_thresh) or (tp_prog >= 0.92):
+                        # Tight Proximity Ratchet: Lock at least 82% of target move
+                        raw_prox_sl = round(
+                            pos.open_price + (tp_distance * 0.82) if pos.type == "BUY"
+                            else pos.open_price - (tp_distance * 0.82),
+                            digits,
+                        )
+                        _buf = policy.buffer_distance(risk_dist)
+                        if pos.type == "BUY":
+                            prox_locked_sl = min(raw_prox_sl, round(c_price - _buf, digits))
+                            if prox_locked_sl > new_sl and prox_locked_sl > pos.open_price:
+                                new_sl = prox_locked_sl
+                                actions.append(f"PROX_LOCK_82%@{new_sl:.{digits}f}")
+                        else:
+                            prox_locked_sl = max(raw_prox_sl, round(c_price + _buf, digits))
+                            if (new_sl == 0 or prox_locked_sl < new_sl) and prox_locked_sl < pos.open_price:
+                                new_sl = prox_locked_sl
+                                actions.append(f"PROX_LOCK_82%@{new_sl:.{digits}f}")
 
             # ── 3.5 Live MFE Scale-Out & Retracement Protection (E2) ───────────
             if pos.type == "BUY":

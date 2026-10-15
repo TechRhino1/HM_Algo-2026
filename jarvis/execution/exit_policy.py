@@ -194,6 +194,11 @@ def evaluate_exit(
     buffer_dist = policy.buffer_distance(risk_dist)
     digits = policy.digits
 
+    # Progress-to-TP metrics (SKILL.md §8 & §11)
+    tp_dist = abs(tp - entry) if (tp is not None and tp > 0) else 0.0
+    progress_tp = (favorable_dist / tp_dist) if tp_dist > 1e-6 else 0.0
+    target_r = (tp_dist / risk_dist) if risk_dist > 1e-6 else 0.0
+
     # ── 1. Partial profit banking (risk reduction) ──────────────────────────
     # Take a partial BEFORE moving to breakeven so the position is de-risked
     # while still giving the remainder room to run.
@@ -207,12 +212,15 @@ def evaluate_exit(
     # Deferred until the trade has proven itself. Locking at 1R was the primary
     # cause of +20R winners being closed at +0.9R.
     #
-    # Breakeven lock triggers ONLY when the dedicated be_trigger_r is reached.
-    # Taking a partial scale-out must NEVER force an immediate breakeven move;
-    # doing so chokes runners on routine entry pullbacks.
-    be_triggered = be_already_locked or (r_multiple >= policy.be_trigger_r)
-    if not be_already_locked and r_multiple >= policy.be_trigger_r:
-        dec.actions.append(f"BE_LOCK_{policy.be_trigger_r:.2f}R")
+    # Breakeven lock triggers when dedicated be_trigger_r is reached, OR on >= 50%
+    # progress toward TP for scalps / sub-1.6R structural targets.
+    be_by_tp = (progress_tp >= 0.50 and (target_r <= 1.60 or r_multiple >= 0.40))
+    be_triggered = be_already_locked or (r_multiple >= policy.be_trigger_r) or be_by_tp
+    if not be_already_locked:
+        if r_multiple >= policy.be_trigger_r:
+            dec.actions.append(f"BE_LOCK_{policy.be_trigger_r:.2f}R")
+        elif be_by_tp:
+            dec.actions.append(f"BE_LOCK_50%TP({int(progress_tp*100)}%)")
 
     if be_triggered:
         dec.be_locked = True
@@ -235,6 +243,26 @@ def evaluate_exit(
             elif (not is_buy) and (dec.new_sl == 0 or lock_price < dec.new_sl):
                 dec.new_sl = lock_price
                 dec.actions.append(f"MILESTONE_{lock_r:.1f}R")
+
+    # ── 3.5 Progress-to-TP Ratchets (Institutional Target Proximity Protection) ─
+    # Institutional rule (SKILL.md §8): Never let a trade reaching >= 65-80% of
+    # its target turn into a loss, even on sub-1.5R scalps or structural fades.
+    if tp_dist > 1e-6 and progress_tp >= 0.65:
+        progress_milestones = [(0.65, 0.25), (0.80, 0.55), (0.90, 0.75), (0.94, 0.82)]
+        for prog_thresh, lock_pct in progress_milestones:
+            if progress_tp >= prog_thresh:
+                lock_dist = tp_dist * lock_pct
+                raw_lock = round(entry + (lock_dist if is_buy else -lock_dist), digits)
+                if is_buy:
+                    clamped_lock = min(raw_lock, round(price - buffer_dist, digits)) if price > 0 else raw_lock
+                    if clamped_lock > dec.new_sl and clamped_lock > entry:
+                        dec.new_sl = clamped_lock
+                        dec.actions.append(f"PROGRESS_LOCK_{int(prog_thresh*100)}%TP")
+                else:
+                    clamped_lock = max(raw_lock, round(price + buffer_dist, digits)) if price > 0 else raw_lock
+                    if (dec.new_sl == 0 or clamped_lock < dec.new_sl) and clamped_lock < entry:
+                        dec.new_sl = clamped_lock
+                        dec.actions.append(f"PROGRESS_LOCK_{int(prog_thresh*100)}%TP")
 
     # ── 4. ATR runner trail ─────────────────────────────────────────────────
     # Engages only beyond the activation threshold, and the width must be TIGHTER

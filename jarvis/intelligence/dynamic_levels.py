@@ -341,7 +341,19 @@ class DynamicRiskAndLevelsEngine:
             sl_price = round(entry_price - sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
-            # 3. Liquidity-Anchored Dynamic Take Profit
+            # 3. Liquidity-Anchored Dynamic Take Profit with Institutional Front-Running
+            # Front-run institutional liquidity barriers & order blocks (SKILL.md §3 & §8)
+            # Levels are zones; institutional buying/selling absorbs orders right before the barrier.
+            base_buffer = max(pip_size * 2.5, spread_dist * 1.5, atr * 0.12)
+            if is_gold:
+                front_run_buffer = max(base_buffer, 0.35, atr * 0.15)
+            elif is_crypto:
+                front_run_buffer = max(base_buffer, c_price * 0.0008, atr * 0.15)
+            elif is_forex:
+                front_run_buffer = max(base_buffer, pip_size * 3.0)
+            else:
+                front_run_buffer = base_buffer
+
             opposing_targets: List[float] = []
             if st.supply_zone[0] > entry_price:
                 opposing_targets.append(st.supply_zone[0])
@@ -367,13 +379,14 @@ class DynamicRiskAndLevelsEngine:
                 if kl.get("price", 0) > entry_price:
                     opposing_targets.append(float(kl["price"]))
 
-            # Filter targets offering at least min_target_rr
-            valid_targets = [t for t in opposing_targets if (t - entry_price) >= (risk_dist * min_target_rr)]
+            # Filter targets offering at least min_target_rr after front-running tuck
+            valid_targets = [t for t in opposing_targets if ((t - front_run_buffer) - entry_price) >= (risk_dist * min_target_rr)]
 
             if valid_targets:
                 target_cand = min(valid_targets)
+                front_run_target = max(entry_price + (risk_dist * min_target_rr), target_cand - front_run_buffer)
                 max_tp_mult = asym_rr * (1.25 if is_strong_trend else 1.0)
-                tp_dist = min(target_cand - entry_price, risk_dist * max_tp_mult)
+                tp_dist = min(front_run_target - entry_price, risk_dist * max_tp_mult)
             else:
                 tp_dist = risk_dist * (2.2 if is_ranging else asym_rr)
 
@@ -381,10 +394,10 @@ class DynamicRiskAndLevelsEngine:
             rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
 
             # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
-            # TP1: Initial scale-out milestone at +1.0R to +1.2R (or minor structural resistance)
-            minor_resistance = [t for t in opposing_targets if entry_price + (risk_dist * 0.8) <= t < tp_price]
+            # TP1: Initial scale-out milestone at +1.0R to +1.2R (or minor structural resistance with front-run)
+            minor_resistance = [t for t in opposing_targets if entry_price + (risk_dist * 0.8) <= (t - front_run_buffer) < tp_price]
             if minor_resistance:
-                first_target_price = round(min(minor_resistance), digits)
+                first_target_price = round(min(minor_resistance) - front_run_buffer, digits)
             else:
                 first_target_price = round(entry_price + (risk_dist * (0.90 if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else 1.0)), digits)
 
@@ -392,9 +405,9 @@ class DynamicRiskAndLevelsEngine:
             tp2_price = tp_price
 
             # TP3: Macro extension / runner target at +3.0R to +4.5R+ (higher liquidity pool or expansion)
-            extended_targets = [t for t in opposing_targets if t > tp_price]
+            extended_targets = [t for t in opposing_targets if (t - front_run_buffer) > tp_price]
             if extended_targets:
-                tp3_price = round(min(extended_targets), digits)
+                tp3_price = round(min(extended_targets) - front_run_buffer, digits)
             else:
                 tp3_mult = max(3.0, asym_rr * (1.5 if is_strong_trend else 1.35))
                 tp3_price = round(entry_price + (risk_dist * tp3_mult), digits)
@@ -543,7 +556,21 @@ class DynamicRiskAndLevelsEngine:
             sl_price = round(entry_price + sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
-            # 3. Liquidity-Anchored Dynamic Take Profit
+            # 3. Liquidity-Anchored Dynamic Take Profit with Spread Buffering & Front-Running
+            # In MT5, closing a SELL position requires a BUY TO COVER at the ASK price (ASK = BID + SPREAD).
+            # Charts display the BID price. Opposing structural targets (t) are identified from BID.
+            # Adding spread_dist + front_run_buffer ensures that when BID reaches the front-run zone,
+            # ASK cleanly fills the TP without requiring price to plunge below support by the full spread.
+            base_buffer = max(pip_size * 2.5, spread_dist * 1.5, atr * 0.12)
+            if is_gold:
+                front_run_buffer = max(base_buffer, 0.35, atr * 0.15)
+            elif is_crypto:
+                front_run_buffer = max(base_buffer, c_price * 0.0008, atr * 0.15)
+            elif is_forex:
+                front_run_buffer = max(base_buffer, pip_size * 3.0)
+            else:
+                front_run_buffer = base_buffer
+
             opposing_targets = []
             if 0 < st.demand_zone[1] < entry_price:
                 opposing_targets.append(st.demand_zone[1])
@@ -569,37 +596,46 @@ class DynamicRiskAndLevelsEngine:
                 if 0 < kl.get("price", 0) < entry_price:
                     opposing_targets.append(float(kl["price"]))
 
-            # Filter targets offering at least min_target_rr
-            valid_targets = [t for t in opposing_targets if (entry_price - t) >= (risk_dist * min_target_rr)]
+            # Filter targets offering at least min_target_rr after spread buffer and front-running
+            valid_targets = [t for t in opposing_targets if (entry_price - (t + front_run_buffer + spread_dist)) >= (risk_dist * min_target_rr)]
 
             if valid_targets:
                 target_cand = max(valid_targets)
+                front_run_target = min(entry_price - (risk_dist * min_target_rr), target_cand + front_run_buffer + spread_dist)
                 max_tp_mult = asym_rr * (1.25 if is_strong_trend else (0.85 if is_ranging else 1.0))
-                tp_dist = min(entry_price - target_cand, risk_dist * max_tp_mult)
+                tp_dist = min(entry_price - front_run_target, risk_dist * max_tp_mult)
+                tp_price = round(entry_price - tp_dist, digits)
             else:
                 tp_dist = risk_dist * (2.2 if is_ranging else asym_rr)
+                tp_price = round(entry_price - tp_dist + spread_dist, digits)
 
-            tp_price = round(entry_price - tp_dist, digits)
+            # Ensure valid sell TP below entry
+            if tp_price >= entry_price:
+                tp_price = round(entry_price - max(risk_dist * min_target_rr, pip_size * 5), digits)
+            tp_dist = abs(entry_price - tp_price)
             rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
 
             # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
-            # TP1: Initial scale-out milestone at +1.0R to +1.2R (or minor structural support)
-            minor_support = [t for t in opposing_targets if tp_price < t <= entry_price - (risk_dist * 0.8)]
+            # TP1: Initial scale-out milestone at +1.0R to +1.2R (or minor structural support with spread buffer + front-run)
+            minor_support = [t for t in opposing_targets if tp_price < (t + front_run_buffer + spread_dist) <= entry_price - (risk_dist * 0.8)]
             if minor_support:
-                first_target_price = round(max(minor_support), digits)
+                first_target_price = round(max(minor_support) + front_run_buffer + spread_dist, digits)
             else:
-                first_target_price = round(entry_price - (risk_dist * (0.90 if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else 1.0)), digits)
+                first_target_price = round(entry_price - (risk_dist * (0.90 if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else 1.0)) + spread_dist, digits)
+
+            if first_target_price >= entry_price:
+                first_target_price = round(entry_price - (risk_dist * 0.8), digits)
 
             tp1_price = first_target_price
             tp2_price = tp_price
 
             # TP3: Macro extension / runner target at +3.0R to +4.5R+ (higher liquidity pool or expansion)
-            extended_targets = [t for t in opposing_targets if 0 < t < tp_price]
+            extended_targets = [t for t in opposing_targets if 0 < (t + front_run_buffer + spread_dist) < tp_price]
             if extended_targets:
-                tp3_price = round(max(extended_targets), digits)
+                tp3_price = round(max(extended_targets) + front_run_buffer + spread_dist, digits)
             else:
                 tp3_mult = max(3.0, (2.2 if is_ranging else asym_rr) * (1.5 if is_strong_trend else 1.35))
-                tp3_price = round(entry_price - (risk_dist * tp3_mult), digits)
+                tp3_price = round(entry_price - (risk_dist * tp3_mult) + spread_dist, digits)
 
         else:
             # Bias is HOLD / MONITOR — compute a structural reference bracket
