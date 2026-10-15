@@ -172,7 +172,9 @@ class PositionSizer:
             actual_risk_pct = (actual_risk_dollars / (account_balance + 1e-9)) * 100.0
 
             # Adaptive micro cap by account size tier
-            if account_balance < 250.0:
+            if account_balance < 100.0:
+                tier_cap = 2.0 * effective_risk_pct  # nano accounts (< $100): strict 2x ceiling
+            elif account_balance < 250.0:
                 tier_cap = 5.0   # $100 account: 0.01 Gold = $10 = 10% → tight SL needed
             elif account_balance < 1000.0:
                 tier_cap = 4.0
@@ -188,7 +190,7 @@ class PositionSizer:
             is_gold_asset = any(k in sym_key for k in ("XAU", "GOLD"))
             is_crypto_asset = any(k in sym_key for k in ("BTC", "ETH", "SOL"))
 
-            if (is_gold_asset or is_crypto_asset) and account_balance < 1000.0:
+            if (is_gold_asset or is_crypto_asset) and 150.0 <= account_balance < 1000.0:
                 tier_cap = max(tier_cap, 8.5)
 
             # For very small accounts, also allow by dollar amount:
@@ -199,7 +201,7 @@ class PositionSizer:
                 or (actual_risk_dollars <= 15.0 and 150.0 <= account_balance < 500.0)
             )
 
-            if is_micro_account and is_high_conviction:
+            if is_micro_account and account_balance >= 100.0:
                 max_acceptable_risk_pct = max(tier_cap, 2.0 * effective_risk_pct)
             else:
                 max_acceptable_risk_pct = 2.0 * effective_risk_pct

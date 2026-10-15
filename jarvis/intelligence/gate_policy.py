@@ -12,7 +12,7 @@ Per the user's directive, gate strictness is decided automatically by the AI:
 If there is no performance evidence yet, the policy defaults to BLOCK (identical to
 today's behaviour), so it can never increase risk on an untuned system.
 """
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 
 
 # Gates that must always block when they fail (capital-protection / validity).
@@ -22,18 +22,35 @@ HARD_GATES = {
     "Margin Capacity Limit",
     "Regime Viability",
     "Directional Bias",
-    "Macro MTF Alignment",
-    "Index Trend Alignment",
-    "Crypto Macro Trend Filter",
     "Strategy Viable",
-    "Forex Breakout Guard",
-    "Low-Beta FX Macro Alignment",
-    "JPY Momentum Guard",
-    "SOL Confluence Guard",
-    "US30 Confluence Guard",
-    "Gold Trend Following Alignment",
-    "Premium/Discount Alignment",
-    "Trend Not Exhausted",
+    "No Active Macro Shock",
+}
+
+# Granular confidence penalties for soft gates
+SOFT_GATE_PENALTIES: Dict[str, float] = {
+    "Macro MTF Alignment": 0.05,
+    "Gold Trend Following Alignment": 0.04,
+    "Trend Not Exhausted": 0.03,
+    "Crypto Macro Trend Filter": 0.04,
+    "Premium/Discount Alignment": 0.03,
+    "AI Multi-Score Gate": 0.04,
+    "Devil Adversarial Guard": 0.04,
+    "Order Flow Alignment": 0.03,
+    "Order Flow Momentum": 0.03,
+    "No Order Flow Absorption Trap": 0.04,
+    "Forex Prime Session": 0.02,
+    "Forex Breakout Guard": 0.03,
+    "Index Trend Alignment": 0.04,
+    "Low-Beta FX Macro Alignment": 0.03,
+    "JPY Momentum Guard": 0.03,
+    "SOL Confluence Guard": 0.03,
+    "US30 Confluence Guard": 0.03,
+    "Risk/Reward >= 1.5": 0.03,
+    "Positive Expected Value": 0.04,
+    "Spread Protection": 0.03,
+    "Valid Stop Loss Distance": 0.03,
+    "Calibrated Win Prob >= 50%": 0.04,
+    "Regime Trend Consistency": 0.04,
 }
 
 
@@ -42,7 +59,7 @@ class AdaptiveGatePolicy:
         self.max_soft_fail = max_soft_fail
         self.min_recent_win_rate = min_recent_win_rate
 
-    def decide(self, failing_reasons: List[str], recent_win_rate: Optional[float]) -> Tuple[str, List[str]]:
+    def decide(self, failing_reasons: List[str], recent_win_rate: Optional[float] = None) -> Tuple[str, List[str]]:
         """Return (decision, gates_to_soften).
 
         decision is one of: PASS, SOFTEN, BLOCK.
@@ -54,14 +71,17 @@ class AdaptiveGatePolicy:
             return ("BLOCK", hard)
         if not soft:
             return ("PASS", [])
-        # No performance evidence -> keep current (strict) behaviour.
-        if recent_win_rate is None or recent_win_rate < self.min_recent_win_rate:
-            return ("BLOCK", soft)
+        # If soft gates are failing, allow softening up to max_soft_fail when performance
+        # is acceptable or during neutral baseline/bootstrapping (recent_win_rate is None).
         if len(soft) <= self.max_soft_fail:
-            return ("SOFTEN", soft)
+            if recent_win_rate is None or recent_win_rate >= self.min_recent_win_rate:
+                return ("SOFTEN", soft)
         return ("BLOCK", soft)
 
     @staticmethod
     def confidence_penalty(softened_gates: List[str]) -> float:
-        """Reduce model_confidence by 0.03 per softened gate (capped) — was 0.04, now gentler."""
-        return min(0.12, 0.03 * len(softened_gates))
+        """Calculate aggregate confidence penalty based on specific softened gates (capped at 0.12)."""
+        if not softened_gates:
+            return 0.0
+        total_pen = sum(SOFT_GATE_PENALTIES.get(g, 0.03) for g in softened_gates)
+        return min(0.12, round(total_pen, 3))

@@ -1002,7 +1002,10 @@ class PositionMonitorEngine:
                     dollar_per_unit = tv / ts
             downside_dist = (pos.open_price - new_sl) if pos.type == "BUY" else (new_sl - pos.open_price)
             current_projected_risk = max(0.0, downside_dist) * dollar_per_unit * pos.volume
-            if current_projected_risk > init_risk * 1.01:
+            is_sl_tightened = (new_sl >= pos.sl - 1e-5) if pos.type == "BUY" else (new_sl <= pos.sl + 1e-5)
+            if pos.sl > 0 and is_sl_tightened:
+                pass  # Structural stop distance is tighter or identical to current SL; never block tightening
+            elif current_projected_risk > init_risk * 1.05:
                 logger.warning(
                     f"🛡️ RISK GATE BLOCKED MODIFICATION on #{pos.ticket}: "
                     f"Projected risk ${current_projected_risk:.2f} > initial risk ${init_risk:.2f}."

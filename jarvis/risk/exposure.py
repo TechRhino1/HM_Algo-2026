@@ -45,9 +45,14 @@ class ExposureManager:
 
             open_price = float(pos.open_price or 1.0)
             sl_price = float(pos.sl or 0.0)
+            side = str(getattr(pos, "side", getattr(pos, "type", "BUY")) or "BUY").upper()
 
             if sl_price > 0:
-                risk_dist = abs(open_price - sl_price)
+                # Downside capital risk: if SL is trailed into profit or at breakeven, downside risk is $0.00
+                if side in ("BUY", "LONG", "0"):
+                    risk_dist = max(0.0, open_price - sl_price)
+                else:
+                    risk_dist = max(0.0, sl_price - open_price)
             else:
                 # Conservative fallback: 1.5% of open price if SL not set
                 risk_dist = open_price * 0.015
@@ -159,10 +164,13 @@ class ExposureManager:
             breaches.append(f"Max Concurrent Positions reached ({len(active_risk_positions)} active risk / {len(positions)} total >= {effective_max_open_positions} allowed).")
 
         # 2. Per-Symbol Exposure (Soft Limit = 1, Hard Limit = 2)
-        symbol_count = sum(1 for p in positions if resolve_symbol(p.symbol).canonical == target_canon)
+        sym_positions = [p for p in positions if resolve_symbol(p.symbol).canonical == target_canon]
+        symbol_count = len(sym_positions)
+        sym_has_derisked = any(p not in active_risk_positions for p in sym_positions)
+
         if symbol_count >= self.hard_max_symbol_positions:
             breaches.append(f"Hard Max Exposure for symbol {symbol} reached ({symbol_count} >= {self.hard_max_symbol_positions}).")
-        elif symbol_count >= self.base_max_symbol_positions and not is_second_trade_approved:
+        elif symbol_count >= self.base_max_symbol_positions and not (is_second_trade_approved or sym_has_derisked):
             breaches.append(f"Base Exposure limit for symbol {symbol} reached ({symbol_count} >= {self.base_max_symbol_positions}). Requires Adaptive Second-Trade Approval.")
 
         # 3. Portfolio Monetary Risk Budget
@@ -208,11 +216,11 @@ class ExposureManager:
             # (e.g. 0.01 lot XAUUSD @ 4150 is $4,150 notional = 876% on a $473 account).
             # True stop-loss monetary risk is independently capped by calculate_portfolio_monetary_risk and max_portfolio_risk_pct.
             if account.equity < 500.0:
-                effective_notional_cap = max(self.max_notional_exposure_pct, 2000.0)
+                effective_notional_cap = max(self.max_notional_exposure_pct, 5000.0)
             elif account.equity < 1000.0:
-                effective_notional_cap = max(self.max_notional_exposure_pct, 1500.0)
+                effective_notional_cap = max(self.max_notional_exposure_pct, 3500.0)
             elif account.equity < 2500.0:
-                effective_notional_cap = max(self.max_notional_exposure_pct, 800.0)
+                effective_notional_cap = max(self.max_notional_exposure_pct, 2000.0)
             else:
                 effective_notional_cap = self.max_notional_exposure_pct
 

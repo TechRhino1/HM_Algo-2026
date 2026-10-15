@@ -866,10 +866,11 @@ class DecisionEngine:
             adx_val = getattr(context.momentum, "adx", 0.0) if hasattr(context, "momentum") else 0.0
             strong_expansion = (adx_val >= 20.0 and abs(ts) >= 20.0)
 
-            # Never allow SELL on Gold when live momentum is positive or expanding upward
+            # Never allow counter-trend entries on Gold when opposing momentum is active,
+            # but allow pullbacks and liquidity sweep rebounds when structural confluence (sweep/BOS) is present
             if tentative_bias == "SELL" and (ts >= 15.0 or (macro_bias == "BULLISH" and ts >= 0.0 and not is_validated_reversal)):
                 gold_trend_following_valid = False
-            elif tentative_bias == "BUY" and (ts <= -15.0 or (macro_bias == "BEARISH" and ts <= 0.0 and not is_validated_reversal)):
+            elif tentative_bias == "BUY" and (ts <= -20.0 or (macro_bias == "BEARISH" and ts <= -10.0 and not (sweep_confirmed or bos_active or is_validated_reversal))):
                 gold_trend_following_valid = False
             elif effective_strat in ("TREND_FOLLOWING", "BREAKDOWN", "MOMENTUM_CONTINUATION", "STRUCTURE"):
                 if tentative_bias == "BUY":
@@ -1813,27 +1814,30 @@ class DecisionEngine:
         mom_delta: float,
         regime: str,
         order_flow_confirmed: bool = False,
+        is_pullback_reclaim: bool = False,
     ) -> Tuple[bool, str]:
         """
         Regime-Adaptive Momentum Validator.
         Allows uncapped momentum (up to ±98) in expansion/breakout regimes and index trends,
         while strictly capping momentum (<= 75) in ranging/consolidation regimes.
+        Accommodates healthy trend pullbacks where momentum temporarily decelerates before re-acceleration.
         """
         expansion_regimes = {
             "TREND_BULL", "TREND_BEAR", "STRONG_TREND_BULL", "STRONG_TREND_BEAR",
             "BREAKOUT", "POST_BREAKOUT"
         }
-        is_expansion = (str(regime).upper() in expansion_regimes) or order_flow_confirmed
+        is_expansion = (str(regime).upper() in expansion_regimes) or order_flow_confirmed or is_pullback_reclaim
 
         max_abs_score = 98.0 if is_expansion else 75.0
-        min_abs_score = 10.0 if is_expansion else 15.0
+        min_abs_score = 8.0 if is_pullback_reclaim else (10.0 if is_expansion else 15.0)
+        decel_limit = -30.0 if is_pullback_reclaim else -15.0
 
         if bias == "BUY":
             if mom_score < min_abs_score:
                 return False, f"BUY momentum too weak ({mom_score:.2f} < {min_abs_score})"
             if mom_score > max_abs_score:
                 return False, f"BUY momentum exhausted for regime {regime} ({mom_score:.2f} > {max_abs_score})"
-            if not is_expansion and mom_delta < -15.0:
+            if not is_expansion and mom_delta < decel_limit:
                 return False, f"BUY momentum decelerating ({mom_delta:.2f})"
             return True, "OK"
 
@@ -1842,7 +1846,7 @@ class DecisionEngine:
                 return False, f"SELL momentum too weak ({mom_score:.2f} > -{min_abs_score})"
             if mom_score < -max_abs_score:
                 return False, f"SELL momentum exhausted for regime {regime} ({mom_score:.2f} < -{max_abs_score})"
-            if not is_expansion and mom_delta > 15.0:
+            if not is_expansion and mom_delta > -decel_limit:
                 return False, f"SELL momentum decelerating ({mom_delta:.2f})"
             return True, "OK"
 
