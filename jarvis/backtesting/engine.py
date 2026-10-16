@@ -537,8 +537,9 @@ class BacktestEngine:
                             result = "TP"
                             closed = True
                     elif open_trade["type"] == "SELL":
-                        sl_hit = high >= open_trade["sl"]
-                        tp_hit = (open_trade["tp"] is not None) and (low <= open_trade["tp"])
+                        spread_delta = spread_pips * spec.pip_size
+                        sl_hit = (high + spread_delta) >= open_trade["sl"]
+                        tp_hit = (open_trade["tp"] is not None) and ((low + spread_delta) <= open_trade["tp"])
                         if sl_hit and tp_hit:
                             # Conservative intrabar ordering (matches trade_simulator).
                             exit_price = open_trade["sl"] + actual_slippage_delta

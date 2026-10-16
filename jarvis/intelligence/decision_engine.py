@@ -1699,34 +1699,49 @@ class DecisionEngine:
         is_chasing_discount_floor = (tentative_bias == "SELL" and (st_zone == "DISCOUNT" or rsi_val < 32.0 or trend_score_val <= -75.0 or has_bull_swp) and not is_breakout_mode)
         is_chasing_premium_roof = (tentative_bias == "BUY" and (st_zone == "PREMIUM" or rsi_val > 68.0 or trend_score_val >= 75.0 or has_bear_swp) and not is_breakout_mode)
 
-        is_trending_momentum = abs(trend_score_val) >= 20.0 or is_expansion_val > 0 or is_extreme_val > 0 or best_strategy in ("TREND_FOLLOWING", "BREAKOUT_EXPANSION")
-        is_close_proximity = price_diff <= max(0.40 * atr_val, spread_dist * 5.0)
+        is_reversal_or_pullback = best_strategy in ("TREND_PULLBACK", "LIQUIDITY_SWEEP_REVERSAL", "CHOCH", "CHOCH_STRUCTURAL_REVERSAL", "RANGE_MEAN_REVERSION")
+        is_trending_momentum = (abs(trend_score_val) >= 70.0 or is_breakout_mode) and not is_reversal_or_pullback
+        is_close_proximity = price_diff <= max(0.25 * atr_val, spread_dist * 3.0)
 
         order_type_decision = "MARKET"
-        if is_chasing_discount_floor:
-            # Sell from the top: Route to LIMIT order placed at Premium / Bearish Order Block / Retest Level
+        if is_chasing_discount_floor or (tentative_bias == "SELL" and is_reversal_or_pullback and not is_close_proximity):
+            # Sell from the top: Route to LIMIT order placed at Premium / Bearish Order Block / FVG CE
             order_type_decision = "LIMIT"
             ob_list = getattr(context.structure, "order_blocks", []) or []
             bear_obs = [ob for ob in ob_list if isinstance(ob, dict) and "BEAR" in str(ob.get("type", "")).upper()]
-            if bear_obs:
-                entry_price = round(float(bear_obs[0].get("low", cur_mkt_price + 0.4 * atr_val)), digits)
+            fvg_list = getattr(context.structure, "fair_value_gaps", []) or []
+            bear_fvgs = [f for f in fvg_list if isinstance(f, dict) and "BEAR" in str(f.get("type", "")).upper()]
+            if bear_fvgs:
+                # Target FVG Consequent Encroachment (50% midpoint)
+                f_top = float(bear_fvgs[0].get("top", cur_mkt_price + 0.35 * atr_val))
+                f_bot = float(bear_fvgs[0].get("bottom", cur_mkt_price + 0.15 * atr_val))
+                entry_price = round((f_top + f_bot) / 2.0, digits)
+            elif bear_obs:
+                entry_price = round(float(bear_obs[0].get("low", cur_mkt_price + 0.35 * atr_val)), digits)
             elif hasattr(context.structure, "equilibrium_price") and context.structure.equilibrium_price > cur_mkt_price:
                 entry_price = round(context.structure.equilibrium_price, digits)
             else:
-                entry_price = round(cur_mkt_price + (0.4 * atr_val), digits)
+                entry_price = round(cur_mkt_price + (0.35 * atr_val), digits)
             sl_price = round(entry_price + risk_dist, digits)
             tp_price = round(entry_price - tp_dist, digits)
-        elif is_chasing_premium_roof:
-            # Buy from the bottom: Route to LIMIT order placed at Discount / Bullish Order Block / Retest Level
+        elif is_chasing_premium_roof or (tentative_bias == "BUY" and is_reversal_or_pullback and not is_close_proximity):
+            # Buy from the bottom: Route to LIMIT order placed at Discount / Bullish Order Block / FVG CE
             order_type_decision = "LIMIT"
             ob_list = getattr(context.structure, "order_blocks", []) or []
             bull_obs = [ob for ob in ob_list if isinstance(ob, dict) and "BULL" in str(ob.get("type", "")).upper()]
-            if bull_obs:
-                entry_price = round(float(bull_obs[0].get("high", cur_mkt_price - 0.4 * atr_val)), digits)
+            fvg_list = getattr(context.structure, "fair_value_gaps", []) or []
+            bull_fvgs = [f for f in fvg_list if isinstance(f, dict) and "BULL" in str(f.get("type", "")).upper()]
+            if bull_fvgs:
+                # Target FVG Consequent Encroachment (50% midpoint)
+                f_top = float(bull_fvgs[0].get("top", cur_mkt_price - 0.15 * atr_val))
+                f_bot = float(bull_fvgs[0].get("bottom", cur_mkt_price - 0.35 * atr_val))
+                entry_price = round((f_top + f_bot) / 2.0, digits)
+            elif bull_obs:
+                entry_price = round(float(bull_obs[0].get("high", cur_mkt_price - 0.35 * atr_val)), digits)
             elif hasattr(context.structure, "equilibrium_price") and 0 < context.structure.equilibrium_price < cur_mkt_price:
                 entry_price = round(context.structure.equilibrium_price, digits)
             else:
-                entry_price = round(cur_mkt_price - (0.4 * atr_val), digits)
+                entry_price = round(cur_mkt_price - (0.35 * atr_val), digits)
             sl_price = round(entry_price - risk_dist, digits)
             tp_price = round(entry_price + tp_dist, digits)
         elif is_trending_momentum or is_close_proximity:

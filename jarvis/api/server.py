@@ -227,15 +227,15 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
 
             while True:
                 try:
-                    # 1. Sync Account & Positions
+                    # If the main Orchestrator is actively running, let it drive state synchronization and radar
+                    if cls.state_manager.is_orchestrator_active():
+                        time.sleep(2.0)
+                        continue
+
+                    # 1. Standalone Sync Account & Positions when Orchestrator is not running
                     acc = cls.mt5_client.get_account_snapshot()
                     pos = cls.mt5_client.get_open_positions()
                     cls.state_manager.sync_broker_state(acc, pos)
-
-                    # If the main Orchestrator is actively running and radar is populated, let it drive
-                    if cls.state_manager.is_orchestrator_active() and cls.state_manager.radar_opportunities:
-                        time.sleep(2.0)
-                        continue
 
                     # 2. Standalone Fallback: Sweep Multi-Asset Radar across all 3 active styles
                     radar_results = []

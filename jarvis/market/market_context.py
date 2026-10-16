@@ -124,8 +124,12 @@ class MarketContextEngine:
         # 1. Structural Analysis (Primary & Setup timeframes)
         structure_primary = self.structure_engine.analyze_structure(df_primary)
         
-        # 2. Liquidity & Sweep Analysis
-        liquidity = self.liquidity_engine.analyze_liquidity(df_primary)
+        # 2. Liquidity & Sweep Analysis (with Institutional Session Levels & Rejection Wicks)
+        liquidity = self.liquidity_engine.analyze_liquidity(
+            df_primary,
+            include_session_levels=True,
+            allow_wick_rejection=True
+        )
 
         # 3. Volatility & Spread Feasibility
         volatility = self.volatility_engine.analyze_volatility(

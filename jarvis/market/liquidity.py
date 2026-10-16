@@ -13,7 +13,14 @@ class LiquidityEngine:
     def analyze_liquidity(
         self,
         df: pd.DataFrame,
-        pivot_window: int = 5
+        pivot_window: int = 5,
+        lookback_bars: int = 2,
+        min_body_pct: float = 0.45,
+        min_vol_ratio: float = 0.40,
+        min_mag: float = 0.15,
+        max_mag: float = 3.5,
+        include_session_levels: bool = False,
+        allow_wick_rejection: bool = False
     ) -> LiquidityContext:
         if len(df) < pivot_window * 2 + 5:
             return LiquidityContext()
@@ -22,16 +29,14 @@ class LiquidityEngine:
         lows = df["low"].values
         closes = df["close"].values
         
-        # Identify swing points (filtering consecutive duplicate levels)
+        # Identify swing points
         swing_highs = []
         swing_lows = []
         for i in range(pivot_window, len(df) - pivot_window):
             if highs[i] == max(highs[i - pivot_window:i + pivot_window + 1]):
-                if not swing_highs or swing_highs[-1][1] != float(highs[i]):
-                    swing_highs.append((i, float(highs[i])))
+                swing_highs.append((i, float(highs[i])))
             if lows[i] == min(lows[i - pivot_window:i + pivot_window + 1]):
-                if not swing_lows or swing_lows[-1][1] != float(lows[i]):
-                    swing_lows.append((i, float(lows[i])))
+                swing_lows.append((i, float(lows[i])))
 
         if not swing_highs or not swing_lows:
             return LiquidityContext()
@@ -63,11 +68,6 @@ class LiquidityEngine:
         else:
             atr = float(highs[-1] - lows[-1]) or 1e-9
 
-        # Liquidity Sweep Detection on latest 2 completed candles with displacement & volume validation:
-        # - Displacement / Rejection validation: Decisive body (>= 38%) OR institutional wick rejection (>= 45%)
-        # - Volume alignment: Participation >= 35% of recent 14-period average volume
-        # - Bullish Sweep: Candle low breaks below swing low, closes back above swing low
-        # - Bearish Sweep: Candle high breaks above swing high, closes back below swing high
         sweep_detected = False
         sweep_type = "NONE"
         sweep_level = 0.0
@@ -78,20 +78,41 @@ class LiquidityEngine:
         latest_low = float(lows[-1])
         opens = df["open"].values if "open" in df.columns else closes
 
-        sl_levels = []
-        for s in reversed(swing_lows[-5:]):
-            p = s[1]
-            if not any(abs(p - x) / max(p, 1e-9) < 0.0005 for x in sl_levels):
-                sl_levels.append(p)
+        sl_levels = [recent_sl]
+        sh_levels = [recent_sh]
 
-        sh_levels = []
-        for s in reversed(swing_highs[-5:]):
-            p = s[1]
-            if not any(abs(p - x) / max(p, 1e-9) < 0.0005 for x in sh_levels):
-                sh_levels.append(p)
+        # Institutional Session Liquidity Pools (PDH/PDL and Asian Session Range)
+        if include_session_levels and "time" in df.columns and len(df) >= 24:
+            try:
+                times = pd.to_datetime(df["time"], utc=True)
+                latest_date = times.iloc[-1].date()
+                prev_day_mask = times.dt.date < latest_date
+                if prev_day_mask.any():
+                    last_prev_date = times[prev_day_mask].iloc[-1].date()
+                    day_df = df[times.dt.date == last_prev_date]
+                    if len(day_df) >= 4:
+                        pdh = float(day_df["high"].max())
+                        pdl = float(day_df["low"].min())
+                        if not any(abs(pdh - x) / max(pdh, 1e-9) < 0.0005 for x in sh_levels):
+                            sh_levels.append(pdh)
+                        if not any(abs(pdl - x) / max(pdl, 1e-9) < 0.0005 for x in sl_levels):
+                            sl_levels.append(pdl)
 
-        lookback_bars = min(10, len(highs))
-        for offset in range(1, lookback_bars + 1):
+                asia_mask = (times.dt.hour >= 0) & (times.dt.hour < 7)
+                if asia_mask.any():
+                    asia_df = df[asia_mask]
+                    if len(asia_df) >= 2:
+                        asia_high = float(asia_df["high"].iloc[-24:].max())
+                        asia_low = float(asia_df["low"].iloc[-24:].min())
+                        if not any(abs(asia_high - x) / max(asia_high, 1e-9) < 0.0005 for x in sh_levels):
+                            sh_levels.append(asia_high)
+                        if not any(abs(asia_low - x) / max(asia_low, 1e-9) < 0.0005 for x in sl_levels):
+                            sl_levels.append(asia_low)
+            except Exception:
+                pass
+
+        scan_bars = min(lookback_bars, len(highs))
+        for offset in range(1, scan_bars + 1):
             idx = -offset
             c_high = float(highs[idx])
             c_low = float(lows[idx])
@@ -104,21 +125,25 @@ class LiquidityEngine:
             lower_wick_pct = (min(c_close, c_open) - c_low) / c_range
             upper_wick_pct = (c_high - max(c_close, c_open)) / c_range
 
-            has_displacement = (body_pct >= 0.38) or (lower_wick_pct >= 0.45)
-            has_bear_displacement = (body_pct >= 0.38) or (upper_wick_pct >= 0.45)
+            if allow_wick_rejection:
+                has_displacement = (body_pct >= min_body_pct) or (lower_wick_pct >= min_body_pct)
+                has_bear_displacement = (body_pct >= min_body_pct) or (upper_wick_pct >= min_body_pct)
+            else:
+                has_displacement = body_pct >= min_body_pct
+                has_bear_displacement = body_pct >= min_body_pct
 
             vol_aligned = True
             if "volume" in df.columns or "tick_volume" in df.columns:
                 v_col = "volume" if "volume" in df.columns else "tick_volume"
                 c_vol = float(df[v_col].iloc[idx]) if abs(idx) <= len(df) else 0.0
                 avg_vol = float(df[v_col].iloc[-14:].mean()) if len(df) >= 14 else c_vol
-                if avg_vol > 0 and c_vol < (avg_vol * 0.35):
+                if avg_vol > 0 and c_vol < (avg_vol * min_vol_ratio):
                     vol_aligned = False
 
             for sl_cand in sl_levels:
                 mag_low = abs(c_low - sl_cand) / atr
-                if (c_low < sl_cand and c_close > sl_cand and c_close >= c_open - (body_size * 0.15)
-                        and (0.10 <= mag_low <= 4.0) and has_displacement and vol_aligned):
+                if (c_low < sl_cand and c_close > sl_cand and c_close >= c_open
+                        and (min_mag <= mag_low <= max_mag) and has_displacement and vol_aligned):
                     sweep_detected = True
                     sweep_type = "BULLISH_SWEEP"
                     sweep_level = sl_cand
@@ -130,8 +155,8 @@ class LiquidityEngine:
 
             for sh_cand in sh_levels:
                 mag_high = abs(c_high - sh_cand) / atr
-                if (c_high > sh_cand and c_close < sh_cand and c_close <= c_open + (body_size * 0.15)
-                        and (0.10 <= mag_high <= 4.0) and has_bear_displacement and vol_aligned):
+                if (c_high > sh_cand and c_close < sh_cand and c_close <= c_open
+                        and (min_mag <= mag_high <= max_mag) and has_bear_displacement and vol_aligned):
                     sweep_detected = True
                     sweep_type = "BEARISH_SWEEP"
                     sweep_level = sh_cand

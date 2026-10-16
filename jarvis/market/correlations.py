@@ -35,11 +35,22 @@ class DynamicCorrelationEngine:
         ("EURUSD", "USDJPY"): -0.65,
         ("EURUSD", "USDCHF"): -0.88,
         ("GBPUSD", "USDJPY"): -0.55,
+        ("AUDUSD", "NZDUSD"): 0.86,
+        ("EURUSD", "AUDUSD"): 0.72,
         ("XAUUSD", "EURUSD"): 0.45,
         ("XAUUSD", "USDJPY"): -0.40,
-        ("XAUUSD", "BTCUSD"): 0.25,
+        ("XAUUSD", "BTCUSD"): 0.30,
+        ("XAUUSD", "XAGUSD"): 0.88,
         ("BTCUSD", "EURUSD"): 0.15,
         ("BTCUSD", "USDJPY"): -0.10,
+        ("BTCUSD", "ETHUSD"): 0.88,
+        ("BTCUSD", "SOLUSD"): 0.82,
+        ("ETHUSD", "SOLUSD"): 0.85,
+        ("US30", "US500"): 0.94,
+        ("US30", "NAS100"): 0.86,
+        ("US500", "NAS100"): 0.92,
+        ("GER40", "UK100"): 0.80,
+        ("US500", "GER40"): 0.78,
     }
 
     def get_correlation(self, symbol_a: str, symbol_b: str) -> float:

@@ -68,14 +68,21 @@ body {
   background-attachment: fixed !important;
 }
 
-/* Overriding legacy rigid app shell traps */
-body.tt-app, body.ios-app {
-  height: auto !important;
-  min-height: 100vh !important;
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-  display: flex !important;
-  flex-direction: column !important;
+/* Overriding legacy rigid app shell traps. DESKTOP ONLY: on phone and tablet
+   the `.tt-app` grid (theme_terminal.css:110) plus the ios_mobile.css phone
+   app-bar / tablet sidebar templates own the shell. Forcing flex-column at
+   every width defeated both, collapsing the whole responsive layout back to a
+   single stack and removing the phone large title / tablet sidebar entirely.
+   Desktop behaviour is byte-identical. */
+@media (min-width: 1025px) {
+  body.tt-app, body.ios-app {
+    height: auto !important;
+    min-height: 100vh !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
 }
 
 /* ── Universal Bugatti Navigation Bar Redesign ───────────────────────────── */
@@ -86,13 +93,24 @@ body.tt-app, body.ios-app {
   border-bottom: 1px solid var(--titanium-border) !important;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6) !important;
   padding: 0 16px !important;
-  height: 52px !important;
-  min-height: 52px !important;
   z-index: 2000 !important;
   position: sticky !important;
   top: 0 !important;
-  display: flex !important;
-  align-items: center !important;
+}
+
+/* The fixed single-row 52px lock is a DESKTOP cockpit idiom. Scoped to
+   >=1025px so it stops overriding the phone app-bar grid (ios_mobile.css:318)
+   and the tablet sidebar column (ios_mobile.css:650) that the dashboard rail
+   `.tt-rail.bugatti-navbar` is meant to adopt. The market / console / positions
+   headers keep the desktop height unchanged; on small screens the navbar keeps
+   its glass styling and lets its `.bugatti-navbar__inner` row size naturally. */
+@media (min-width: 1025px) {
+  .bugatti-navbar {
+    height: 52px !important;
+    min-height: 52px !important;
+    display: flex !important;
+    align-items: center !important;
+  }
 }
 
 .bugatti-navbar__inner {
@@ -642,7 +660,14 @@ body.tt-app, body.ios-app {
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
 }
 
-/* ── Unified High-Performance Institutional Table Engine ────────────────── */
+/* ── Unified High-Performance Institutional Table Engine ──────────────────
+   DESKTOP ONLY. These rules force real `table` display, `white-space: nowrap`
+   and erase any `td::before` label so a wide desktop table never reflows. At
+   <=1024px the dashboard's data-label card layout (ios_mobile.css, "Data
+   tables -> stacked cards") takes over, so this engine is scoped to >=1025px.
+   Otherwise the phone/tablet tables stay real tables, scroll sideways in a
+   letterbox, and every value loses the column name it belongs to. */
+@media (min-width: 1025px) {
 table.tt-table,
 .tt-table,
 .table-bugatti {
@@ -720,6 +745,7 @@ table.tt-table > tbody > tr > td::before,
   content: none !important;
   display: none !important;
 }
+} /* end desktop-only institutional table engine */
 
 /* Numeric columns right-aligned across header and rows */
 table.tt-table th.tt-num,
@@ -866,7 +892,11 @@ select::-ms-expand,
 }
 
 /* ── Responsive Cockpit Breakpoints (320px to 2560px+) ───────────────────── */
-@media (max-width: 575.98px) {
+/* Bounds realigned to the canonical scale (phone <=599, tablet 600-1024,
+   desktop >=1025) shared by hm_ui.css / ios_mobile.css / ios_pages.css. The
+   Bootstrap 575.98/991.98/992 values left the 992-1024px band wearing desktop
+   telemetry sizing while every other sheet treated it as tablet. */
+@media (max-width: 599px) {
   .bugatti-navbar {
     padding: 0.4rem 0.6rem !important;
   }
@@ -888,7 +918,7 @@ select::-ms-expand,
   }
 }
 
-@media (min-width: 576px) and (max-width: 991.98px) {
+@media (min-width: 600px) and (max-width: 1024px) {
   .bugatti-telemetry {
     gap: 6px;
   }
@@ -901,7 +931,7 @@ select::-ms-expand,
   }
 }
 
-@media (min-width: 992px) {
+@media (min-width: 1025px) {
   .bugatti-telemetry {
     gap: 10px;
   }
@@ -921,24 +951,16 @@ select::-ms-expand,
   position: relative !important;
   width: 100% !important;
   min-height: 280px !important;
-  height: 480px !important;
 }
 
-@media (max-width: 575.98px) {
-  .tt-chart__body {
-    min-height: 260px !important;
-    height: 320px !important;
-  }
-}
-
-@media (min-width: 576px) and (max-width: 991.98px) {
-  .tt-chart__body {
-    min-height: 320px !important;
-    height: 380px !important;
-  }
-}
-
-@media (min-width: 992px) and (max-width: 1399.98px) {
+/* The fixed chart heights are a desktop idiom. Scoped to >=1025px so the phone
+   and tablet layouts can let the chart flex-fill its panel (theme_terminal.css
+   `.tt-panel--chart > .tt-chart__body { flex: 1 1 auto; min-height: 0 }` and the
+   ios_mobile phone body rules). Breakpoints now follow the canonical scale
+   (tablet 600-1024, desktop >=1025) instead of Bootstrap's 575.98/991.98, which
+   straddled the phone/tablet boundary. A 280px floor is kept everywhere so a
+   lazy or empty chart body can never collapse to nothing. */
+@media (min-width: 1025px) {
   .tt-chart__body {
     min-height: 400px !important;
     height: 460px !important;
@@ -960,13 +982,22 @@ select::-ms-expand,
   scrollbar-color: rgba(0, 102, 255, 0.4) rgba(255, 255, 255, 0.05) !important;
 }
 
-.tt-table--positions, #pos-table, #missed-trades-table, #calibration-table, #profiles-table {
-  min-width: 640px !important;
+/* A desktop table needs a floor or it compresses into unreadable stubs. On
+   phone/tablet these tables become stacked cards, so the floor must not apply
+   there or the card row is forced wider than the screen. */
+@media (min-width: 1025px) {
+  .tt-table--positions, #pos-table, #missed-trades-table, #calibration-table, #profiles-table {
+    min-width: 640px !important;
+  }
 }
 
+/* Sticky symbol column for tables that still scroll horizontally. Excluded
+   from `[data-hm-cards]` tables: at <=1024px those are stacked cards whose
+   first cell is the promoted card header, and this hardcoded dark background
+   would paint over it. */
 @media (max-width: 767.98px) {
-  .tt-table th:first-child,
-  .tt-table td:first-child {
+  .tt-table:not([data-hm-cards]) th:first-child,
+  .tt-table:not([data-hm-cards]) td:first-child {
     position: sticky !important;
     left: 0 !important;
     background-color: #0b0f17 !important;
@@ -976,7 +1007,11 @@ select::-ms-expand,
 }
 
 /* ── Bugatti Top Navbar Single-Row Layout & Overflow Override ────────────── */
-@media (min-width: 900px) {
+/* A DESKTOP single-row idiom. Scoped to >=1025px: at 900-1024px it forced
+   `overflow: visible` onto the tablet sidebar rail (ios_mobile.css:658 expects
+   `overflow-y: auto`) and pinned the tab strip, so the sidebar could neither
+   scroll nor adopt its vertical list. */
+@media (min-width: 1025px) {
   .tt-rail,
   .bugatti-navbar {
     flex-wrap: nowrap !important;
@@ -1153,7 +1188,21 @@ button.bugatti-dropdown__item:focus {
   z-index: auto !important;
 }
 
-.mobile-nav-bar,
+/* The bottom tab bar is the assistant shell of the <=900px mobile layer
+   (hm_ui.css shows `.mobile-nav-bar` at max-width:900px). This rule used to
+   hide it at EVERY width, which made the entire mobile navigation unreachable
+   on the market, console and positions pages: `mobile_dock.js` and the
+   per-page `switchMobile*View` controllers existed but had no visible surface,
+   so Chart / Ticket / Positions could not be reached on a phone. The hide is
+   now scoped to desktop, where the horizontal nav already reaches every view
+   and the bar is genuine redundant chrome. `.ios-tabbar` (positions.css) is
+   still unused here, so it stays hidden everywhere. */
+@media (min-width: 901px) {
+  .mobile-nav-bar {
+    display: none !important;
+  }
+}
+
 .ios-tabbar {
   display: none !important;
 }
@@ -1271,6 +1320,16 @@ button.bugatti-dropdown__item:focus {
   box-shadow: 0 0 14px rgba(0, 102, 255, 0.4) !important;
 }
 
+/* On phone/tablet the position tabs are primary tap targets, so the 28px
+   desktop ergonomic floor is raised to the 44px WCAG 2.5.5 minimum that
+   ios_mobile.css declares. This file loads last, so the override must live
+   here to win the cascade against the base `min-height: 28px !important`. */
+@media (max-width: 1024px) {
+  .tt-pos-tab {
+    min-height: 44px !important;
+  }
+}
+
 .tt-pos-tab__count {
   font-family: var(--font-mono) !important;
   font-variant-numeric: tabular-nums !important;
@@ -1356,14 +1415,20 @@ button.bugatti-dropdown__item:focus {
   overflow: hidden !important;
 }
 
-#view-trade > .tt-panel--watchlist {
-  grid-column: 1 !important;
-}
-#view-trade > .tt-panel--chart {
-  grid-column: 2 !important;
-}
-#view-trade > #ticket-context-panel {
-  grid-column: 3 !important;
+/* Explicit desktop columns for the 3-pane cockpit. Scoped to >=1025px: on the
+   phone single-column Trade and the 600-1024px two-column split these would
+   force an implicit 3rd track and pull the ticket back to column 3, breaking
+   both responsive templates (theme_terminal.css:1236 phone, :1212 tablet). */
+@media (min-width: 1025px) {
+  #view-trade > .tt-panel--watchlist {
+    grid-column: 1 !important;
+  }
+  #view-trade > .tt-panel--chart {
+    grid-column: 2 !important;
+  }
+  #view-trade > #ticket-context-panel {
+    grid-column: 3 !important;
+  }
 }
 
 @media (min-width: 1360px) {
@@ -1380,7 +1445,10 @@ button.bugatti-dropdown__item:focus {
   }
 }
 
-@media (min-width: 900px) and (max-width: 1359px) {
+/* Narrow DESKTOP only. Previously min-width:900px, which forced the 3-column
+   cockpit over the 600-1024px tablet two-column split (ios_mobile.css:778 and
+   theme_terminal.css:1212) and over the phone single column. */
+@media (min-width: 1025px) and (max-width: 1359px) {
   #view-trade.tt-view[data-active="true"] {
     grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) minmax(310px, 380px) !important;
     gap: 12px !important;

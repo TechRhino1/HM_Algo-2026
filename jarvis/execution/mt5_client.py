@@ -34,6 +34,8 @@ class MT5Client:
     # a correctness bug) but bounds how long a waiter waits and records who holds
     # it, so the wedge is reported instead of absorbed.
     _shared_lock = TrackedRLock("mt5_shared", default_wait_sec=DEFAULT_WAIT_SEC)
+    _symbol_spec_cache: ClassVar[Dict[str, Tuple[float, Dict[str, Any]]]] = {}
+    _pending_orders_cache: ClassVar[Tuple[float, List[Dict[str, Any]]]] = (0.0, [])
 
     def __init__(self, magic_number: int = 888999, mode: str = "live", timeout_sec: float = 4.0,
                  auto_init: bool = True):
@@ -201,6 +203,11 @@ class MT5Client:
     def get_symbol_trading_spec(self, symbol: str) -> Dict[str, Any]:
         """Fetches live broker trading specifications for a symbol with fallback to symbol registry."""
         resolved = self.resolve_symbol_name(symbol)
+        now_ts = time.time()
+        cached = self._symbol_spec_cache.get(resolved)
+        if cached is not None and (now_ts - cached[0]) < 3600.0:
+            return dict(cached[1])
+
         spec_dict = {
             "name": resolved,
             "symbol": resolved,
@@ -228,6 +235,7 @@ class MT5Client:
                 "digits": s.digits,
                 "spread": int(s.typical_spread_pips * 10),
             })
+            self._symbol_spec_cache[resolved] = (now_ts, dict(spec_dict))
             return spec_dict
 
         try:
@@ -247,6 +255,7 @@ class MT5Client:
                         "volume_max": float(getattr(sym_info, "volume_max", 100.0) or 100.0),
                         "volume_step": float(getattr(sym_info, "volume_step", 0.01) or 0.01),
                     })
+                    self._symbol_spec_cache[resolved] = (now_ts, dict(spec_dict))
         except Exception as e:
             logger.warning(f"Failed to fetch MT5 symbol info for {resolved}: {e}")
         return spec_dict
@@ -848,6 +857,7 @@ class MT5Client:
                     logger.error(f"MT5 Pending Order Failed for {resolved}: {err_msg}")
                     return {"status": "FAILED", "reason": err_msg}
 
+                self._pending_orders_cache = (0.0, [])
                 logger.info(f"⚡ PENDING ORDER PLACED: Ticket={result.order} {order_type} {volume} {resolved} @ {price}")
                 return {
                     "status": "PLACED",
@@ -862,16 +872,25 @@ class MT5Client:
         return TimeoutGuard.run_sync(_send_pending, timeout_sec=5.0, default={"status": "FAILED", "reason": "Timeout"}, task_name=f"MT5_Pending_{symbol}")
 
     def get_pending_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Returns active pending orders from MT5."""
+        """Returns active pending orders from MT5 with 1.0s fast caching."""
         if self.mode == "paper" or not MT5_AVAILABLE or not self.is_connected:
             with self._lock:
                 resolved = self.resolve_symbol_name(symbol) if symbol else None
                 if resolved:
                     return [o for o in self._paper_pending_orders.values() if o.get("symbol") == resolved or o.get("symbol") == symbol]
                 return list(self._paper_pending_orders.values())
+
+        now_ts = time.time()
+        # Fast-path cache check for universal queries
+        if symbol is None and (now_ts - self._pending_orders_cache[0]) < 1.0:
+            return list(self._pending_orders_cache[1])
+
         resolved = self.resolve_symbol_name(symbol) if symbol else None
-        orders = mt5.orders_get(symbol=resolved) if resolved else mt5.orders_get()
+        with self._lock:
+            orders = mt5.orders_get(symbol=resolved) if resolved else mt5.orders_get()
         if not orders:
+            if symbol is None:
+                self._pending_orders_cache = (now_ts, [])
             return []
         ord_symbols = [str(o.symbol) for o in orders]
         offset = broker_utc_offset(mt5_module=mt5, symbols=ord_symbols)
@@ -903,10 +922,13 @@ class MT5Client:
                 "comment": o.comment,
                 "time_setup": utc_setup
             })
+        if symbol is None:
+            self._pending_orders_cache = (now_ts, list(res))
         return res
 
     def cancel_pending_order(self, ticket: int) -> Dict[str, Any]:
         """Cancels a pending order by ticket."""
+        self._pending_orders_cache = (0.0, [])
         if self.mode == "paper" or not MT5_AVAILABLE or not self.is_connected:
             with self._lock:
                 self._paper_pending_orders.pop(ticket, None)
@@ -915,7 +937,8 @@ class MT5Client:
             "action": getattr(mt5, "TRADE_ACTION_REMOVE", 8),
             "order": ticket
         }
-        result = mt5.order_send(request)
+        with self._lock:
+            result = mt5.order_send(request)
         if result and result.retcode in [getattr(mt5, "TRADE_RETCODE_DONE", 10009), getattr(mt5, "TRADE_RETCODE_PLACED", 10008)]:
             logger.info(f"⚡ PENDING ORDER CANCELLED: Ticket={ticket}")
             return {"status": "CANCELLED", "ticket": ticket}

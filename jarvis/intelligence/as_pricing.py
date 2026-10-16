@@ -97,6 +97,21 @@ def half_spread(
     return max(base_atr * 0.10, min(base_atr * 0.85, risk_term + liq_term))
 
 
+def optimal_quote_prices(
+    mid: float,
+    inventory: float = 0.0,
+    gamma: float = 0.10,
+    sigma: float = 0.001,
+    time_left_s: float = 60.0,
+    kappa: float = 1.5,
+    atr: float = 0.0,
+) -> Tuple[float, float, float]:
+    """Returns (reservation_price, optimal_buy_limit, optimal_sell_limit)."""
+    r = reservation_price(mid, inventory, gamma, sigma, time_left_s)
+    delta = half_spread(gamma, sigma, time_left_s, kappa, atr, mid)
+    return r, r - delta, r + delta
+
+
 def compute_as_limit_entry(
     mid: float,
     side: str,

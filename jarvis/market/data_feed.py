@@ -349,15 +349,19 @@ class DataFeedEngine:
         return h
 
     def fetch_rates(self, symbol: str, timeframe: str = "H1", num_bars: int = 300, include_current_bar: bool = False) -> pd.DataFrame:
-        cache_key = f"{symbol}_{timeframe}_{num_bars}_{include_current_bar}"
+        cache_key = f"{symbol}_{timeframe}_{include_current_bar}"
         now = time.time()
         entry = self._cache.get(cache_key)
-        if entry is not None and now - entry["timestamp"] < self._cache_ttl_sec:
-            return entry["df"]
+        if entry is not None and (now - entry["timestamp"]) < self._cache_ttl_sec:
+            cached_df = entry["df"]
+            if len(cached_df) >= num_bars:
+                return cached_df.tail(num_bars).copy()
+
+        fetch_bars = max(num_bars, 300)
 
         def _fetch():
             if not MT5_AVAILABLE or self.mt5_client is None or getattr(self.mt5_client, "mode", "dry_run") == "dry_run":
-                df = self._generate_realistic_rates(symbol, timeframe, num_bars)
+                df = self._generate_realistic_rates(symbol, timeframe, fetch_bars)
                 df.attrs["data_source"] = "SYNTHETIC_FALLBACK"
                 # Fabricated bars have no age to verify. Marked UNKNOWN rather
                 # than FRESH so nothing downstream can mistake a synthetic
@@ -382,7 +386,7 @@ class DataFeedEngine:
                         "terminal returns.",
                         symbol, timeframe,
                     )
-                df = self._generate_realistic_rates(symbol, timeframe, num_bars)
+                df = self._generate_realistic_rates(symbol, timeframe, fetch_bars)
                 df.attrs["data_source"] = "SYNTHETIC_FALLBACK"
                 df.attrs["freshness"] = FRESHNESS_UNKNOWN
                 return df
@@ -402,10 +406,10 @@ class DataFeedEngine:
 
             def _read():
                 with DataFeedEngine.get_mt5_fetch_lock():
-                    r = mt5.copy_rates_from_pos(_broker_sym, mt5_tf, start_pos, num_bars)
+                    r = mt5.copy_rates_from_pos(_broker_sym, mt5_tf, start_pos, fetch_bars)
                     if r is None or len(r) == 0:
                         # Fallback to pos 0 if start_pos returns empty
-                        r = mt5.copy_rates_from_pos(_broker_sym, mt5_tf, 0, num_bars)
+                        r = mt5.copy_rates_from_pos(_broker_sym, mt5_tf, 0, fetch_bars)
                 return r
 
             def _build(rates):
@@ -550,7 +554,7 @@ class DataFeedEngine:
         self._note_health(df_result, symbol, timeframe)
         self._cache[cache_key] = {"df": df_result, "timestamp": now}
         CACHE_ENTRIES.set(len(self._cache), cache="data_feed.rates")
-        return df_result
+        return df_result.tail(num_bars).copy()
 
     def fetch_multi_timeframe(
         self,

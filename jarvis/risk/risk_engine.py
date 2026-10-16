@@ -223,13 +223,19 @@ class RiskEngine:
         if account.equity > 0:
             proj_risk_pct = (total_projected_risk_usd / account.equity) * 100.0
             effective_portfolio_risk_cap = self.max_portfolio_risk_pct
-            if account.equity < 500.0:
-                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 10.0)
+            max_acceptable_dollar_risk = float('inf')
+            if account.equity < 250.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 16.0)
+                max_acceptable_dollar_risk = 35.0
+            elif account.equity < 500.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 12.0)
+                max_acceptable_dollar_risk = 45.0
             elif account.equity < 1000.0:
                 effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 8.0)
+                max_acceptable_dollar_risk = 60.0
 
-            if proj_risk_pct > effective_portfolio_risk_cap:
-                breaches.append(f"ADAPTIVE_GATE_8: Projected portfolio risk ({proj_risk_pct:.2f}%) exceeds budget ({effective_portfolio_risk_cap:.1f}%).")
+            if proj_risk_pct > effective_portfolio_risk_cap and total_projected_risk_usd > max_acceptable_dollar_risk:
+                breaches.append(f"ADAPTIVE_GATE_8: Projected portfolio risk ({proj_risk_pct:.2f}% / ${total_projected_risk_usd:.2f}) exceeds budget ({effective_portfolio_risk_cap:.1f}% / ${max_acceptable_dollar_risk:.2f}).")
 
         # Condition 9: Margin Utilization Safe
         if account.equity > 0:
@@ -389,13 +395,21 @@ class RiskEngine:
             if not guard.get("passed"):
                 rejection_reasons.extend(guard.get("reasons", []))
 
-            # 8. Cross-Asset Correlation check
+            # 8. Cross-Asset Directional Correlation check
+            target_side = getattr(decision, "bias", "BUY").upper()
             for pos in positions:
                 if resolve_symbol(pos.symbol).canonical == canon:
                     continue  # Same-symbol is governed by adaptive same-symbol validator
+                pos_side = getattr(pos, "side", getattr(pos, "type", "BUY")).upper()
                 corr = self.correlation_engine.get_correlation(symbol, pos.symbol)
-                if corr > 0.70:
-                    rejection_reasons.append(f"Correlation too high ({corr:.2f}) with existing position {pos.symbol}.")
+                # Directional correlation: same direction with positive corr OR opposite direction with negative corr
+                same_direction = (target_side == pos_side)
+                directional_heat = corr if same_direction else -corr
+                if directional_heat > 0.75:
+                    rejection_reasons.append(
+                        f"CORRELATION_GATE: Excessive correlated directional exposure ({directional_heat:.2f}) "
+                        f"between incoming {target_side} {symbol} and existing {pos_side} {pos.symbol}."
+                    )
 
             if rejection_reasons:
                 return {

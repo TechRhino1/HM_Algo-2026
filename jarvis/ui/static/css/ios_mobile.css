@@ -270,26 +270,106 @@
      column name (dashboard.js copies the <th> text onto each <td> as
      `data-label`), and the whole card is a single tap target that opens the
      existing detail view. The table layout is untouched at >= 1025px. */
-  /* Institutional data tables retain proper HTML table semantics */
-  .tt-table {
+  /* ── The card engine ────────────────────────────────────────────────────
+     Gated on `data-hm-cards`, which dashboard.js sets only on tables it has
+     actually stamped with `data-label`. A table without labels (headerless,
+     or one rendered by a page that does not run the dashboard bundle) keeps
+     its normal layout and the sideways scroll, so this can never misfire into
+     an unlabelled key/value soup. */
+  table[data-hm-cards] {
+    display: block;
     width: 100%;
     border-collapse: collapse;
   }
+  /* The header row is not deleted, only visually hidden, so the column
+     semantics survive for assistive tech and the `data-label` stamp retains
+     its origin. */
+  table[data-hm-cards] > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  table[data-hm-cards] > tbody {
+    display: block;
+    width: 100%;
+  }
+  /* One record = one card. */
+  table[data-hm-cards] > tbody > tr {
+    display: block;
+    margin: 0 0 10px;
+    padding: 10px 12px;
+    background: var(--ios-card);
+    border: 0.5px solid var(--ios-sep);
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+  }
+  table[data-hm-cards] > tbody > tr:last-child { margin-bottom: 0; }
+  table[data-hm-cards] > tbody > tr[aria-selected="true"] {
+    border-color: var(--ios-blue);
+    box-shadow: 0 0 0 1px var(--ios-blue);
+  }
+  table[data-hm-cards] > tbody > tr[data-clickable="true"] { cursor: pointer; }
+  table[data-hm-cards] > tbody > tr[data-clickable="true"]:active {
+    transform: scale(0.995);
+  }
+
+  /* Each cell is a labelled key/value row: column name left, value right. */
+  table[data-hm-cards] > tbody > tr > td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    padding: 6px 0;
+    border: 0;
+    border-bottom: 0.5px solid var(--ios-sep);
+    white-space: normal;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  table[data-hm-cards] > tbody > tr > td:last-child { border-bottom: 0; }
+  table[data-hm-cards] > tbody > tr > td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    max-width: 55%;
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--ios-label-2);
+  }
+  /* Headerless / actions column: no label to show, value may sit right. */
+  table[data-hm-cards] > tbody > tr > td[data-label=""] {
+    justify-content: flex-end;
+  }
+  table[data-hm-cards] > tbody > tr > td[data-label=""]::before { content: none; }
+
+  /* The primary cell is the record's identity — promoted to a full-width
+     card header, its label dropped, so a card reads "EURUSD" first. */
+  table[data-hm-cards] > tbody > tr > td[data-primary] {
+    display: block;
+    padding: 0 0 8px;
+    margin-bottom: 4px;
+    border-bottom: 0.5px solid var(--ios-sep);
+    text-align: left;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--ios-label);
+  }
+  table[data-hm-cards] > tbody > tr > td[data-primary]::before { content: none; }
 
   /* The economic-calendar row carries two values in the event cell (event name
      + currency pairs) and a `white-space: nowrap` time/countdown cell. In a
-     multi-column grid those become a horizontal squeeze: the two spans in the
-     event cell fight for one flex row and the nowrap time/countdown text
-     blows past the track. A stacked single-column card reads better on a
-     phone — each labelled field on its own line, and the event cell stacks
-     name above pairs instead of side-by-side. */
-  .tt-news > tbody > tr {
-    display: block;
-    grid-template-columns: none;
-  }
-  /* The event cell bypasses the generic label-left / value-right flex layout:
-     it holds two stacked spans and the long event string needs the full card
-     width to wrap cleanly. The label sits as a small caption above. */
+     two-column flex those become a horizontal squeeze, so the event cell stacks
+     instead. */
   .tt-news > tbody > tr > td.tt-news__event {
     display: block;
     padding: 2px 0;
@@ -297,6 +377,7 @@
   .tt-news > tbody > tr > td.tt-news__event::before {
     display: block;
     margin-bottom: 2px;
+    max-width: 100%;
   }
   .tt-news > tbody > tr > td.tt-news__event > * {
     display: block;

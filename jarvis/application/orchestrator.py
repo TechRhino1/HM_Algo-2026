@@ -1083,6 +1083,8 @@ class JarvisOrchestrator:
                     self.risk_engine.release_risk(canonical_sym)
                     active_sym_positions = [p for p in active_sym_positions if p.ticket != opp_pos.ticket]
                     positions = [p for p in positions if p.ticket != opp_pos.ticket]
+                    cooldown_active = False
+                    self._last_execution_time[canonical_sym] = 0.0
 
         if not is_exec_style_match:
             pass

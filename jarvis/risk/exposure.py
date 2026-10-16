@@ -178,8 +178,19 @@ class ExposureManager:
         total_risk_usd = open_risk_usd + incoming_risk_usd
         if account and account.equity > 0:
             total_risk_pct = (total_risk_usd / account.equity) * 100.0
-            if total_risk_pct > effective_portfolio_risk_cap:
-                breaches.append(f"Portfolio Risk Budget exceeded ({total_risk_pct:.2f}% > {effective_portfolio_risk_cap:.1f}% max portfolio risk).")
+            max_acceptable_dollar_risk = (effective_portfolio_risk_cap / 100.0) * account.equity
+            if account.equity < 250.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 16.0)
+                max_acceptable_dollar_risk = 35.0
+            elif account.equity < 500.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 12.0)
+                max_acceptable_dollar_risk = 45.0
+            elif account.equity < 1000.0:
+                effective_portfolio_risk_cap = max(self.max_portfolio_risk_pct, 8.0)
+                max_acceptable_dollar_risk = 60.0
+
+            if total_risk_pct > effective_portfolio_risk_cap and total_risk_usd > max_acceptable_dollar_risk:
+                breaches.append(f"Portfolio Risk Budget exceeded ({total_risk_pct:.2f}% / ${total_risk_usd:.2f} > {effective_portfolio_risk_cap:.1f}% / ${max_acceptable_dollar_risk:.2f} max portfolio risk).")
 
         # 4. Margin Utilization & Notional Exposure
         exposure_pct = 0.0
@@ -195,12 +206,17 @@ class ExposureManager:
                 spec = resolve_symbol(pos.symbol)
                 contract_size = getattr(pos, 'contract_size', spec.contract_size) or 100000.0
                 current_price = getattr(pos, 'current_price', getattr(pos, 'entry_price', 1.0))
-                
-                # For instruments where USD is the base currency (e.g. USDJPY, USDCHF, USDCAD),
-                # contract_size is already in USD (e.g. 100,000 USD). Multiplying by current_price in JPY/CHF
-                # converts it into foreign currency instead of USD!
+
+                # Currency conversion to USD
                 if spec.canonical.startswith("USD") and not spec.canonical.endswith("USD"):
                     pos_notional = pos.volume * contract_size
+                elif spec.canonical.endswith("USD"):
+                    pos_notional = pos.volume * contract_size * current_price
+                elif "JPY" in spec.canonical:
+                    usdjpy_rate = 150.0
+                    if account and hasattr(account, "rates") and isinstance(account.rates, dict) and "USDJPY" in account.rates:
+                        usdjpy_rate = float(account.rates["USDJPY"])
+                    pos_notional = (pos.volume * contract_size * current_price) / max(usdjpy_rate, 1.0)
                 else:
                     pos_notional = pos.volume * contract_size * current_price
                 if getattr(pos, 'side', getattr(pos, 'type', '')).upper() in ('BUY', 'LONG', '0'):

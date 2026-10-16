@@ -271,10 +271,13 @@ class PositionMonitorEngine:
                 logger.error(f"Error managing position #{pos.ticket}: {e}", exc_info=True)
 
     def _execute_exit(self, pos: PositionSnapshot, reason: str) -> bool:
-        """Central canonical exit dispatcher with grace period enforcement and audit logging."""
-        if self._is_manual_trade(pos) and getattr(self, "manual_mode", MANUAL_MANAGEMENT_MODE) != "FULL":
-            logger.debug(f"🛡️ Discretionary exit '{reason}' suppressed for manual trade #{pos.ticket}")
-            return False
+        if self._is_manual_trade(pos):
+            eff_mode = getattr(self, "manual_mode", MANUAL_MANAGEMENT_MODE)
+            if reason == "PROXIMITY_TP_HARVEST" and eff_mode in ("TRAIL", "FULL"):
+                pass  # Institutional profit banking near TP is allowed
+            elif eff_mode != "FULL":
+                logger.debug(f"🛡️ Discretionary exit '{reason}' suppressed for manual trade #{pos.ticket}")
+                return False
 
         # Proximity TP harvest is an institutional target fulfillment; never suppress with grace period
         open_dur_sec = self._get_position_duration_sec(pos)
@@ -545,6 +548,7 @@ class PositionMonitorEngine:
                         p_res = self.mt5_client.close_position(pos.ticket, volume=close_volume)
                         if p_res and p_res.get("status") in ("PARTIALLY_CLOSED", "CLOSED"):
                             self._partially_closed_tickets.add(pos.ticket)
+                            self._be_locked.add(pos.ticket)
                             # Lock breakeven buffer on remaining runner to secure risk-free trade
                             _p = self._exit_policy.get(pos.ticket) or ExitPolicy.for_symbol(symbol, spec)
                             _be_buf = _p.buffer_distance(risk_dist_init)
@@ -670,10 +674,18 @@ class PositionMonitorEngine:
             try:
                 st = getattr(ctx, "structure", None)
                 if st is not None:
-                    if pos.type == "BUY" and getattr(st, "higher_lows", False) and st.demand_zone[0] > 0:
-                        struct_level = float(st.demand_zone[0])
-                    elif pos.type == "SELL" and getattr(st, "lower_highs", False) and st.supply_zone[1] > 0:
-                        struct_level = float(st.supply_zone[1])
+                    if pos.type == "BUY" and getattr(st, "higher_lows", False):
+                        sw_low = float(getattr(st, "swing_low", 0.0) or 0.0)
+                        dz_low = float(st.demand_zone[0]) if getattr(st, "demand_zone", None) else 0.0
+                        candidates = [lvl for lvl in (sw_low, dz_low) if lvl > pos.open_price]
+                        if candidates:
+                            struct_level = max(candidates)
+                    elif pos.type == "SELL" and getattr(st, "lower_highs", False):
+                        sw_high = float(getattr(st, "swing_high", 0.0) or 0.0)
+                        sz_high = float(st.supply_zone[1]) if getattr(st, "supply_zone", None) else 0.0
+                        candidates = [lvl for lvl in (sw_high, sz_high) if 0 < lvl < pos.open_price]
+                        if candidates:
+                            struct_level = min(candidates)
             except Exception:
                 struct_level = None
 
@@ -1272,7 +1284,14 @@ class PositionMonitorEngine:
         except Exception:
             dollar_per_unit = 100_000.0
 
-        max_risk_usd = max(equity * 0.02, 50.0)
+        if equity < 250.0:
+            max_risk_usd = max(equity * 0.05, 12.0)
+        elif equity < 500.0:
+            max_risk_usd = max(equity * 0.04, 18.0)
+        elif equity < 1000.0:
+            max_risk_usd = max(equity * 0.03, 25.0)
+        else:
+            max_risk_usd = max(equity * 0.02, 50.0)
         max_dist = max_risk_usd / max(dollar_per_unit * pos.volume, 1e-6)
 
         if is_buy:
@@ -1658,8 +1677,8 @@ class PositionMonitorEngine:
             has_structural_break = any("CHOCH" in s or "BOS" in s for s in reversal_signals)
             signal_count = len(reversal_signals)
 
-            # ── PHASE 0: Early Structural Thesis Invalidation (-0.75R <= current_r < 0.20R) ──
-            if -0.75 <= current_r < 0.20:
+            # ── PHASE 0: Early Structural Thesis Invalidation (current_r < 0.20R) ──
+            if current_r < 0.20:
                 # Decisive structural breakdown of the trade's premise:
                 # Requires confirmed CHoCH/BOS against the trade, plus at least one of:
                 # (1) Liquidity sweep in opposite direction (e.g. SSL swept & reclaimed for a short)
