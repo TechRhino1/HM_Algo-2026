@@ -839,6 +839,15 @@ body {
   .cx-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: var(--hm-space-3); }
 }
 
+/* ---- Phones: dock the panel bar above the global tab bar -------------
+   hm_mobile_nav.js fixes a 49px + safe-area tab bar to the viewport bottom
+   on every phone page; the panel bar and the content clearance move up by
+   the same band. */
+@media (max-width: 599px) {
+  .cx-panelbar { bottom: calc(49px + env(safe-area-inset-bottom)); }
+  .cx-main { padding-bottom: calc(145px + env(safe-area-inset-bottom)); }
+}
+
 /* ---- Small phones ---------------------------------------------------- */
 @media (max-width: 420px) {
   .cx-metrics { grid-template-columns: minmax(0, 1fr); }

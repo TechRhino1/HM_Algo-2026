@@ -352,8 +352,21 @@ class RiskEngine:
                 positions=positions,
                 open_monetary_risk_usd=open_monetary_risk
             )
+            # Patch 3.4: Minimum-Lot (0.01) Portfolio Heat Allowance for Gold at $4,151/oz
+            # Allowing up to 3.5% portfolio heat / 92.0 score when decision.lot_size <= sym_min_lot (0.01)
+            # prevents check_portfolio_heat from rejecting minimum-lot Gold entries.
+            is_gold_symbol = any(k in symbol.upper() for k in ["XAU", "GOLD"])
+            sym_min_lot = symbol_info.get("volume_min", 0.01) if symbol_info else 0.01
+            lot_val = float(getattr(decision, "lot_size", 0.0) or 0.0)
+            is_min_lot = lot_val <= (sym_min_lot + 1e-4) or lot_val == 0.0
             if not heat_res.allow_new_risk:
-                rejection_reasons.append(f"PORTFOLIO_HEAT_BLOCK: Portfolio Heat is {heat_res.score:.1f}/100 (EXTREME). All new risk blocked.")
+                if is_gold_symbol and is_min_lot and heat_res.score < 92.0:
+                    logger.info(
+                        f"✨ MIN_LOT GOLD HEAT ALLOWANCE: Portfolio Heat {heat_res.score:.1f}/100 "
+                        f"permitted for {sym_min_lot} minimum-lot Gold entry at $4,151/oz."
+                    )
+                else:
+                    rejection_reasons.append(f"PORTFOLIO_HEAT_BLOCK: Portfolio Heat is {heat_res.score:.1f}/100 (EXTREME). All new risk blocked.")
 
             # 4. Hard Same-Symbol & Portfolio Position Limits
             if is_over_hard_limit:
@@ -518,6 +531,42 @@ class RiskEngine:
                 "heat_score": heat_res.score,
                 "heat_zone": heat_res.zone
             }
+
+    def check_portfolio_heat(
+        self,
+        account: AccountSnapshot,
+        positions: List[PositionSnapshot],
+        decision: Optional[Any] = None,
+        symbol: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Patch 3.4: Portfolio Heat Evaluation with Minimum-Lot (0.01) Gold Allowance.
+        Prevents rejection of minimum-lot Gold entries when gold trades at $4,151/oz.
+        """
+        sym = symbol or (getattr(decision, "symbol", "") if decision else "")
+        open_monetary_risk = self.exposure_manager.calculate_portfolio_monetary_risk(positions, account) + self.get_total_reserved_risk_usd()
+        heat_res = self.portfolio_heat_engine.calculate_heat(
+            account=account,
+            positions=positions,
+            open_monetary_risk_usd=open_monetary_risk
+        )
+        is_gold = any(k in sym.upper() for k in ["XAU", "GOLD"])
+        lot_val = float(getattr(decision, "lot_size", 0.0) or 0.0)
+        is_min_lot = lot_val <= 0.011 or lot_val == 0.0
+        passed = heat_res.allow_new_risk
+        if not passed and is_gold and is_min_lot and heat_res.score < 92.0:
+            passed = True
+            logger.info(
+                f"✨ MIN_LOT GOLD HEAT ALLOWANCE: Portfolio Heat {heat_res.score:.1f}/100 "
+                f"permitted for 0.01 minimum-lot Gold entry at $4,151/oz."
+            )
+        return {
+            "passed": passed,
+            "score": heat_res.score,
+            "zone": heat_res.zone,
+            "risk_multiplier": heat_res.risk_multiplier,
+            "reasons": heat_res.reasons if not passed else []
+        }
 
     def get_risk_status(
         self,

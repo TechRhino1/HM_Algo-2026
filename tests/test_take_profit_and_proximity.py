@@ -12,13 +12,13 @@ def test_exit_policy_relative_tp_progress_breakeven():
     """Verify that achieving 50% progress toward a sub-1.6R target triggers breakeven lock."""
     policy = ExitPolicy.for_symbol("GOLD.i#", resolve("GOLD.i#"))
     
-    # SELL position: entry=4150.00, SL=4170.00 (20 pts risk = 1R), TP=4140.00 (10 pts target = 0.50R)
+    # SELL position: entry=4150.00, SL=4160.00 (10 pts risk = 1R), TP=4140.00 (10 pts target = 1.0R)
     entry = 4150.00
-    initial_sl = 4170.00
-    current_sl = 4170.00
+    initial_sl = 4160.00
+    current_sl = 4160.00
     tp = 4140.00
     price = 4145.00
-    favorable_dist = 5.00  # 5 pts = exactly 50% of 10 pts target move
+    favorable_dist = 5.00  # 5 pts = exactly 50% of 10 pts target move (0.50R)
 
     dec = evaluate_exit(
         side="SELL",
@@ -37,6 +37,40 @@ def test_exit_policy_relative_tp_progress_breakeven():
     assert dec.new_sl < entry
     assert dec.new_sl < initial_sl
     assert any("BE_LOCK_50%TP" in act for act in dec.actions)
+
+
+def test_exit_policy_zero_tp_and_tight_target_guard():
+    """Verify that zero TP and sub-0.45R excursions do not prematurely lock breakeven."""
+    policy = ExitPolicy.for_symbol("GOLD.i#", resolve("GOLD.i#"))
+
+    # Case 1: TP == 0.0 (Unassigned manual trade TP)
+    dec_no_tp = evaluate_exit(
+        side="BUY",
+        entry=4150.00,
+        initial_sl=4140.00,
+        current_sl=4140.00,
+        tp=0.0,
+        price=4153.00,
+        favorable_dist=3.00,  # 0.30R
+        atr=8.0,
+        policy=policy,
+    )
+    assert dec_no_tp.be_locked is False
+
+    # Case 2: Accidental tight target (0.50R target, 50% progress is only 0.25R)
+    dec_tight = evaluate_exit(
+        side="SELL",
+        entry=4150.00,
+        initial_sl=4170.00,  # 20 pts risk
+        current_sl=4170.00,
+        tp=4140.00,          # 10 pts target = 0.50R
+        price=4145.00,
+        favorable_dist=5.00,  # 0.25R excursion (< 0.45R floor)
+        atr=8.0,
+        policy=policy,
+    )
+    # Must NOT lock BE because excursion is only 0.25R
+    assert dec_tight.be_locked is False
 
 
 def test_exit_policy_relative_tp_progress_milestones():

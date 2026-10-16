@@ -194,10 +194,16 @@ def evaluate_exit(
     buffer_dist = policy.buffer_distance(risk_dist)
     digits = policy.digits
 
-    # Progress-to-TP metrics (SKILL.md §8 & §11)
-    tp_dist = abs(tp - entry) if (tp is not None and tp > 0) else 0.0
-    progress_tp = (favorable_dist / tp_dist) if tp_dist > 1e-6 else 0.0
-    target_r = (tp_dist / risk_dist) if risk_dist > 1e-6 else 0.0
+    # Safe Relative Progress-to-TP Calculation (SKILL.md §8 & §11, Issue 2 Guard)
+    progress_tp = 0.0
+    target_r = 0.0
+    tp_dist = 0.0
+    if tp is not None and tp > 0:
+        signed_tp_dist = (tp - entry) if is_buy else (entry - tp)
+        if signed_tp_dist > 1e-7:
+            tp_dist = signed_tp_dist
+            progress_tp = max(0.0, favorable_dist / signed_tp_dist)
+            target_r = signed_tp_dist / max(risk_dist, 1e-6)
 
     # ── 1. Partial profit banking (risk reduction) ──────────────────────────
     # Take a partial BEFORE moving to breakeven so the position is de-risked
@@ -213,8 +219,9 @@ def evaluate_exit(
     # cause of +20R winners being closed at +0.9R.
     #
     # Breakeven lock triggers when dedicated be_trigger_r is reached, OR on >= 50%
-    # progress toward TP for scalps / sub-1.6R structural targets.
-    be_by_tp = (progress_tp >= 0.50 and (target_r <= 1.60 or r_multiple >= 0.40))
+    # progress toward TP for scalps / sub-1.65R structural targets with >= +0.45R excursion.
+    is_short_horizon_target = 0.0 < target_r <= 1.65
+    be_by_tp = (is_short_horizon_target and progress_tp >= 0.50 and r_multiple >= 0.45)
     be_triggered = be_already_locked or (r_multiple >= policy.be_trigger_r) or be_by_tp
     if not be_already_locked:
         if r_multiple >= policy.be_trigger_r:

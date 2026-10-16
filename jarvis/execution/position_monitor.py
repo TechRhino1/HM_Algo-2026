@@ -402,6 +402,28 @@ class PositionMonitorEngine:
         self._initial_risk_dist[pos.ticket] = dist
         return dist
 
+    def _should_harvest_proximity(
+        self,
+        progress_to_tp: float,
+        current_r: float,
+        bias: str,
+        last_bar_open: float = 0.0,
+        last_bar_close: float = 0.0,
+    ) -> bool:
+        """
+        Prevent premature harvesting while candle momentum is still expanding into
+        the resting broker TP limit order, and never clip winners below +1.15R.
+        """
+        if progress_to_tp < 0.92 or current_r < 1.15:
+            return False
+        # Only harvest early if the latest bar shows rejection/stall against our bias
+        if bias == "BUY" and last_bar_open > 0 and last_bar_close > 0 and last_bar_close < last_bar_open:
+            return True
+        if bias == "SELL" and last_bar_open > 0 and last_bar_close > 0 and last_bar_close > last_bar_open:
+            return True
+        # If progress >= 97% (within spread noise of TP), harvest unconditionally
+        return progress_to_tp >= 0.97
+
     # ─── Single-Position Logic ──────────────────────────────────────────────────
 
     def _manage_single_position(
@@ -743,9 +765,26 @@ class PositionMonitorEngine:
                         prox_thresh = max(prox_thresh, 0.40, atr * 0.12)
 
                     target_r = tp_distance / max(risk_dist, 1e-6)
-                    # Active Proximity Harvest: if currently within micro proximity or >= 96% progress
-                    # Must have captured meaningful profit (>= 1.5R) to avoid prematurely cutting winners for pennies
-                    if ((dist_to_tp <= max(pip_size * 2.0, spread_dist_val * 1.2)) or (tp_prog >= 0.96 and dist_to_tp <= prox_thresh * 1.5)) and (current_r >= 1.50 or target_r <= 1.0):
+                    # Issue 1 Institutional Fix: Proximity Harvesting Guard
+                    # Fetch latest closed bar open and close to detect stall/rejection
+                    last_bar_open = 0.0
+                    last_bar_close = 0.0
+                    try:
+                        if self.data_feed:
+                            df_m5 = self.data_feed.fetch_rates(canon_sym, timeframe="M5", num_bars=2, include_current_bar=False)
+                            if df_m5 is not None and not df_m5.empty:
+                                last_bar_open = float(df_m5["open"].iloc[-1])
+                                last_bar_close = float(df_m5["close"].iloc[-1])
+                    except Exception:
+                        pass
+
+                    if self._should_harvest_proximity(
+                        progress_to_tp=tp_prog,
+                        current_r=current_r,
+                        bias=pos.type,
+                        last_bar_open=last_bar_open,
+                        last_bar_close=last_bar_close,
+                    ):
                         logger.info(
                             f"🎯 PROXIMITY_TP_HARVEST: #{pos.ticket} ({pos.symbol} {pos.type}) "
                             f"within {dist_to_tp:.4f} of TP (progress={tp_prog*100:.1f}%, gain={current_r:.2f}R). "

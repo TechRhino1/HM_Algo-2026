@@ -62,6 +62,39 @@ class ExposureManager:
 
         return round(total_risk_usd, 2)
 
+    def resolve_canonical(self, symbol: str) -> str:
+        try:
+            return resolve_symbol(symbol).canonical
+        except Exception:
+            return symbol
+
+    def get_active_risk_positions_for_symbol(self, symbol: str, open_positions: list) -> int:
+        """
+        Count active risk positions for symbol, ignoring risk-free runners where
+        SL is locked at or beyond break-even.
+        """
+        target_canon = self.resolve_canonical(symbol)
+        sym_positions = [
+            p for p in open_positions
+            if self.resolve_canonical(getattr(p, "symbol", "")) == target_canon
+        ]
+
+        at_risk_count = 0
+        for p in sym_positions:
+            side = getattr(p, "side", getattr(p, "type", "BUY"))
+            is_buy = str(side).upper() in ("BUY", "LONG", "0")
+            sl = float(getattr(p, "sl", 0.0) or 0.0)
+            open_p = float(getattr(p, "open_price", getattr(p, "entry_price", 0.0)) or 0.0)
+            status = str(getattr(p, "milestone_status", "") or "")
+            if status in ("TP1_HIT_BE_LOCKED", "BE_LOCKED", "RUNNER_TRAILING", "TP2_HIT_PROFIT_LOCKED", "TP3_RUNNER_TRAILING"):
+                continue  # Risk-free runner
+            if is_buy and sl > 0 and open_p > 0 and sl >= (open_p - 1e-5):
+                continue  # Risk-free runner; allow fresh pullback entry
+            if (not is_buy) and sl > 0 and open_p > 0 and sl <= (open_p + 1e-5):
+                continue  # Risk-free runner; allow fresh pullback entry
+            at_risk_count += 1
+        return at_risk_count
+
     def check_currency_directional_exposure(
         self,
         target_symbol: str,
@@ -164,14 +197,15 @@ class ExposureManager:
             breaches.append(f"Max Concurrent Positions reached ({len(active_risk_positions)} active risk / {len(positions)} total >= {effective_max_open_positions} allowed).")
 
         # 2. Per-Symbol Exposure (Soft Limit = 1, Hard Limit = 2)
-        sym_positions = [p for p in positions if resolve_symbol(p.symbol).canonical == target_canon]
+        sym_positions = [p for p in positions if self.resolve_canonical(p.symbol) == target_canon]
         symbol_count = len(sym_positions)
-        sym_has_derisked = any(p not in active_risk_positions for p in sym_positions)
+        at_risk_sym_count = self.get_active_risk_positions_for_symbol(symbol, positions)
+        sym_has_derisked = at_risk_sym_count < symbol_count
 
         if symbol_count >= self.hard_max_symbol_positions:
             breaches.append(f"Hard Max Exposure for symbol {symbol} reached ({symbol_count} >= {self.hard_max_symbol_positions}).")
-        elif symbol_count >= self.base_max_symbol_positions and not (is_second_trade_approved or sym_has_derisked):
-            breaches.append(f"Base Exposure limit for symbol {symbol} reached ({symbol_count} >= {self.base_max_symbol_positions}). Requires Adaptive Second-Trade Approval.")
+        elif at_risk_sym_count >= self.base_max_symbol_positions and not (is_second_trade_approved or sym_has_derisked):
+            breaches.append(f"Base Exposure limit for symbol {symbol} reached ({at_risk_sym_count} active risk positions >= {self.base_max_symbol_positions}). Requires Adaptive Second-Trade Approval.")
 
         # 3. Portfolio Monetary Risk Budget
         open_risk_usd = self.calculate_portfolio_monetary_risk(positions, account)
@@ -251,3 +285,5 @@ class ExposureManager:
             "breaches": breaches,
             "exposure_pct": exposure_pct if account and account.equity > 0 else 0.0
         }
+
+ExposureEngine = ExposureManager

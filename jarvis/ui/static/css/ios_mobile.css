@@ -412,27 +412,24 @@
     grid-template-areas: "rail" "panebar" "main" "status";
   }
 
-  /* ── Nav bar: brand + session + account, then the large title ──────── */
+  /* ── Nav bar: brand + session, then the account summary ─────────────── */
   .tt-rail {
     grid-area: rail;
     position: sticky;
     top: 0;
     z-index: 30;
     display: grid;
-    grid-template-columns: auto 1fr auto;
-    /* The tab strip needs its own named row. theme_terminal.css:2341 still
-       carries `.tt-tabs { grid-area: tabs }`, and a grid-area naming no area
-       in the active template makes the item auto-place into implicit tracks -
-       which is how the pills collapsed into 22px stubs stacked on the title
-       row (implicit 0px columns included). */
+    grid-template-columns: minmax(0, 1fr) auto;
+    /* Destinations moved to the fixed bottom tab bar (hm_mobile_nav.js), so
+       the rail keeps only the brand row, the account summary and - outside
+       the trade view - the title. */
     grid-template-areas:
-      "drawer brand   session"
-      "account account account"
-      "title  title   title"
-      "tabs   tabs    tabs";
+      "brand   session"
+      "account account"
+      "title   title";
     align-items: center;
-    gap: var(--ios-sp-2);
-    padding: max(var(--ios-sp-2), var(--ios-safe-t)) var(--ios-sp-4) var(--ios-sp-2);
+    gap: var(--ios-sp-1);
+    padding: max(var(--ios-sp-1), var(--ios-safe-t)) var(--ios-sp-3) var(--ios-sp-1);
     /* Glass retained */
     background-image: var(--hm-glass-sheen),
       linear-gradient(180deg, var(--ios-bg-2), var(--ios-bg-2));
@@ -445,59 +442,88 @@
     font-weight: 600;
     letter-spacing: -0.01em;
   }
-  .tt-drawer-trigger {
-    grid-area: drawer;
-    min-width: var(--ios-tap);
-    min-height: var(--ios-tap);
-  }
+  /* The More tab opens the drawer, so the hamburger is redundant chrome. */
+  .tt-drawer-trigger { display: none; }
   .tt-session { grid-area: session; justify-self: end; }
 
-  /* Account strip collapses to one scrolling row — same figures, far less
-     vertical chrome than the desktop strip. */
+  /* Account strip: a four-cell summary row that fits the viewport exactly -
+     no mid-number slicing, no horizontal scroll. Tapping it expands to the
+     full metric list (handled in hm_mobile_nav.js). */
   .tt-rail__group {
     grid-area: account;
-    display: flex;
-    gap: var(--ios-sp-4);
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    padding: var(--ios-sp-1) 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--ios-sp-1);
+    overflow: visible;
+    padding: var(--ios-sp-1) 0 0;
+    cursor: pointer;
   }
   .tt-rail__group::-webkit-scrollbar { display: none; }
-  .tt-metric { flex: 0 0 auto; }
-  .tt-metric__label {
-    font-size: var(--ios-fs-caption);
+
+  #account-strip .tt-metric {
+    flex: initial;
+    min-width: 0;
+    /* Beat the inline `padding:0 var(--hm-space-3)` on each metric. */
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  /* The label and value are inline spans on desktop; as blocks they get the
+     cell width and ellipsize instead of clipping mid-digit. */
+  #account-strip .tt-metric__label,
+  #account-strip .tt-metric__value {
+    display: block;
+    max-width: 100%;
+  }
+  #account-strip .tt-metric__label {
+    font-size: 0.5625rem;
     color: var(--ios-label-2);
-    text-transform: none;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .tt-metric__value {
-    font-size: var(--ios-fs-body);
-    font-weight: 600;
+  #account-strip .tt-metric__value {
+    /* !important beats the inline font-size on each value span. */
+    font-size: 0.75rem !important;
+    font-weight: 700;
     color: var(--ios-label);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The account identity control belongs to the expanded state. */
+  #account-strip .tt-metric--account { display: none; }
+
+  #account-strip[data-hm-expanded="true"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: var(--ios-sp-2);
+    padding-bottom: var(--ios-sp-1);
+  }
+  #account-strip[data-hm-expanded="true"] .tt-metric--account {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+    gap: var(--ios-sp-2);
+  }
+  #account-strip[data-hm-expanded="true"] .tt-metric__value {
+    font-size: var(--ios-fs-body) !important;
   }
 
-  /* Account strip overflow. On a 390px phone the four metrics + the account
-     identity button are wider than the screen — the strip scrolls, which the
-     user could not otherwise tell from a static layout. A right-edge fade
-     gradient surfaces the affordance without dimming the content the user
-     can already see. */
-  .tt-rail__group#account-strip {
-    -webkit-mask-image: linear-gradient(
-      to right, #000 0, #000 calc(100% - 24px), transparent 100%);
-            mask-image: linear-gradient(
-      to right, #000 0, #000 calc(100% - 24px), transparent 100%);
-  }
-
-  /* Large title (UINavigationBar convention). */
+  /* Large title (UINavigationBar convention), slimmed: it is now the only
+     view indicator on the phone (the destination strip moved to the bottom
+     tab bar). The trade view hides it entirely - the pane segments under it
+     already say where you are. */
   .tt-largetitle {
     grid-area: title;
     display: block;
-    font-size: var(--ios-fs-large);
+    font-size: var(--ios-fs-title1);
     font-weight: 700;
     letter-spacing: -0.022em;
     color: var(--ios-label);
-    padding: var(--ios-sp-1) 0 var(--ios-sp-2);
+    padding: 0 0 var(--ios-sp-1);
   }
+  body[data-view="trade"] .tt-largetitle { display: none; }
 
   /* Redundancy removed on phones: the tab bar below reaches every view in one
      tap, so the drawer's duplicate "Views" list and the markets dropdown leave
@@ -507,51 +533,11 @@
   .tt-drawer__only-views { display: none; }
   .tt-rail__group--secondary { display: none; }
 
-  /* ── Tab bar stays in rail header at the top ─────────────────────
-     A native-style scrolling tab strip: pills keep their content width and
-     the strip scrolls edge to edge (the mask fade defined in theme_terminal
-     surfaces the overflow). Equal-flex pills crushed "Symbol Control" to a
-     22px stub and stacked its text over the neighbouring pills. */
-  .tt-tabs {
-    grid-area: tabs;
-    position: static;
-    display: flex;
-    gap: 2px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-    scroll-snap-type: x proximity;
-    margin: 0 calc(var(--ios-sp-4) * -1);
-    padding: 0 var(--ios-sp-4) var(--ios-sp-1);
-  }
-  .tt-tabs::-webkit-scrollbar { display: none; }
-
-  .tt-tab {
-    flex: 0 0 auto;
-    min-width: 0;
-    min-height: var(--ios-tab-h);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    padding: var(--ios-sp-1) var(--ios-sp-3);
-    background: transparent;
-    border: 0;
-    color: var(--ios-label-2);
-    font-size: var(--ios-fs-caption);
-    font-weight: 600;
-    scroll-snap-align: center;
-    white-space: nowrap;
-  }
-  .tt-tab[aria-selected="true"] { color: var(--ios-blue); }
-  .tt-tab__label {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+  /* Destinations live in the fixed bottom tab bar now (hm_mobile_nav.js);
+     the strip is desktop/tablet chrome. The !important is required: the same
+     element is .bugatti-nav-links, which theme_bugatti.css (loaded last)
+     forces to display:flex !important. */
+  .tt-rail .tt-tabs { display: none !important; }
 
   /* The copilot FAB is fixed at bottom 42px; the quick-action bar occupies
      that band (it sits at `tab-h + safe-b` and is ~65px tall), so the FAB
@@ -570,6 +556,18 @@
     overflow-x: hidden;
   }
   .tt-status { display: none; }
+
+  /* Pane swap (segment taps and horizontal swipes in dashboard.js) gets a
+     light push-in so the change of context is legible. */
+  .tt-app[data-pane="watchlist"] .tt-panel--watchlist,
+  .tt-app[data-pane="chart"] .tt-panel--chart,
+  .tt-app[data-pane="ticket"] .tt-panel--ticket {
+    animation: hmPaneIn 0.22s var(--ios-ease);
+  }
+  @keyframes hmPaneIn {
+    from { opacity: 0.35; transform: translateY(6px); }
+    to   { opacity: 1;    transform: none; }
+  }
 
   /* On a phone the shell has only one pane visible at a time: the trade view
      keeps three panels that swap in and out of a 1fr grid cell, while the
@@ -939,7 +937,10 @@
 @media (max-width: 1024px) and (prefers-reduced-motion: reduce) {
   .tt-drawer,
   .universal-auth-card,
-  .tt-view[data-active="true"] {
+  .tt-view[data-active="true"],
+  .tt-app[data-pane="watchlist"] .tt-panel--watchlist,
+  .tt-app[data-pane="chart"] .tt-panel--chart,
+  .tt-app[data-pane="ticket"] .tt-panel--ticket {
     transition: none !important;
     animation: none !important;
   }

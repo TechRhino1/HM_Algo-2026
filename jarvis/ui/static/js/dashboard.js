@@ -407,6 +407,48 @@
     }
   }
 
+  /* Hash deep links: /#symbols, /#analyst, /#news, ... switch the active
+     view; an empty hash (the Cockpit tab) means the trade view. The phone
+     tab bar and More sheet link by hash. */
+  function viewFromHash() {
+    var h = (window.location.hash || '').replace(/^#/, '');
+    return VIEWS.indexOf(h) !== -1 ? h : null;
+  }
+
+  /* Horizontal swipe between the trade panes on phones. Touches that start
+     on the chart canvas (pan/zoom), on form controls, or inside an element
+     marked [data-no-swipe] never become swipes. */
+  (function () {
+    var main = document.querySelector('.tt-main');
+    if (!main || !window.matchMedia) return;
+    var phone = window.matchMedia('(max-width: 599px)');
+    var sx = 0, sy = 0, live = false;
+    main.addEventListener('touchstart', function (ev) {
+      live = false;
+      if (!phone.matches || ev.touches.length !== 1 || state.view !== 'trade') return;
+      var t = ev.touches[0];
+      var target = t.target;
+      if (target && target.closest &&
+          target.closest('canvas, .tv-lightweight-charts, input, textarea, select, [data-no-swipe]')) return;
+      sx = t.clientX;
+      sy = t.clientY;
+      live = true;
+    }, { passive: true });
+    main.addEventListener('touchend', function (ev) {
+      if (!live) return;
+      live = false;
+      var t = ev.changedTouches[0];
+      var dx = t.clientX - sx;
+      var dy = t.clientY - sy;
+      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      var idx = PANES.indexOf(state.pane);
+      if (idx < 0) idx = 0;
+      var next = dx < 0 ? idx + 1 : idx - 1;
+      if (next < 0 || next >= PANES.length) return;
+      setPane(PANES[next]);
+    }, { passive: true });
+  })();
+
   /* ── Account strip ────────────────────────────────────────────────────── */
   function renderAccount() {
     var acc = state.account;
@@ -6668,6 +6710,13 @@
         setView(viewParam);
       }
     } catch(e){}
+    // Hash deep links win over the query string; later hash changes (tab bar
+    // taps, More sheet items, the back button) follow along.
+    var hashView = viewFromHash();
+    if (hashView) setView(hashView);
+    window.addEventListener('hashchange', function () {
+      setView(viewFromHash() || 'trade');
+    });
     // Reparent the tab bar for the current width and keep it correct across
     // breakpoint changes (orientation flip, desktop↔phone resize).
     syncTabBarHost();

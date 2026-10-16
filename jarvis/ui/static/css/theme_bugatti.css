@@ -3288,3 +3288,148 @@ button.bugatti-dropdown__item:focus {
   color: #ffffff;
 }
 
+/* ═══ Phone bottom tab bar + More sheet (hm_mobile_nav.js) ═══════════════
+   The global phone navigation. Destinations move to thumb reach: the
+   dashboard's top destination strip and the market/positions headers' desk
+   nav are replaced at ≤599px by this fixed bottom bar, so the top chrome
+   shrinks to brand + account. Page-local docks dock above it (market
+   .mobile-nav-bar, console .cx-panelbar; the dashboard .tt-qbar already
+   reserves this exact band in ios_mobile.css). Reserved band:
+   49px + safe-area inset. */
+@media (max-width: 599px) {
+  :root { --hm-tabbar-h: 49px; }
+
+  .hm-tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: var(--hm-z-nav);
+    display: flex;
+    align-items: stretch;
+    height: calc(var(--hm-tabbar-h) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: rgba(7, 9, 14, 0.94);
+    background-image: var(--hm-glass-sheen, none),
+      linear-gradient(180deg, rgba(11, 15, 23, 0.92), rgba(11, 15, 23, 0.92));
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border-top: 0.5px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .hm-tabbar__tab {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    min-height: var(--hm-tabbar-h);
+    padding: 4px 2px 0;
+    background: transparent;
+    border: 0;
+    color: #8b93a7;
+    font-family: var(--font-hud);
+    text-decoration: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .hm-tabbar__ico { font-size: 1.15rem; line-height: 1.15; }
+  .hm-tabbar__label {
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hm-tabbar__tab:active { background: rgba(120, 120, 128, 0.16); }
+  .hm-tabbar__tab[aria-current="page"] { color: var(--bugatti-blue); }
+  .hm-tabbar__tab[aria-current="page"] .hm-tabbar__ico {
+    filter: drop-shadow(0 0 6px rgba(0, 102, 255, 0.45));
+  }
+
+  /* Pages scroll clear of the bar (the dashboard and console shells reserve
+     the band in their own layouts and are skipped in JS). */
+  body.hm-pad-tabbar {
+    padding-bottom: calc(var(--hm-tabbar-h) + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Page-local docks sit above the bar. */
+  .mobile-nav-bar {
+    bottom: calc(var(--hm-tabbar-h) + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* The desk nav row is redundant next to the tab bar; brand + account (and
+     the page's search box) stay. */
+  .bugatti-navbar:not(.tt-rail) .bugatti-nav-links { display: none !important; }
+
+  /* ── More sheet ─────────────────────────────────────────────────────── */
+  .hm-sheet { position: fixed; inset: 0; z-index: var(--hm-z-drawer); }
+  .hm-sheet__scrim {
+    position: absolute;
+    inset: 0;
+    background: rgba(2, 4, 8, 0.6);
+  }
+  .hm-sheet__panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 78vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px 16px
+      calc(var(--hm-tabbar-h) + env(safe-area-inset-bottom, 0px) + 16px);
+    background: rgba(9, 12, 19, 0.97);
+    background-image: var(--hm-glass-sheen, none),
+      linear-gradient(180deg, rgba(12, 16, 25, 0.97), rgba(12, 16, 25, 0.97));
+    border-top: 0.5px solid rgba(255, 255, 255, 0.1);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.55);
+    animation: hmSheetIn 0.24s ease-out;
+  }
+  @keyframes hmSheetIn {
+    from { transform: translateY(24px); opacity: 0.5; }
+    to   { transform: none; opacity: 1; }
+  }
+  .hm-sheet__grabber {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.25);
+    margin: 4px auto 10px;
+  }
+  .hm-sheet__section {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #8b93a7;
+    margin: 14px 0 6px;
+  }
+  .hm-sheet__item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 48px;
+    padding: 0 12px;
+    border-radius: 10px;
+    color: #e6e9f2;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .hm-sheet__item:active { background: rgba(120, 120, 128, 0.18); }
+  .hm-sheet__ico { width: 24px; text-align: center; font-size: 1.05rem; }
+  .hm-sheet__item--active { color: var(--bugatti-blue); }
+
+  body.hm-sheet-open { overflow: hidden; }
+}
+
+@media (max-width: 599px) and (prefers-reduced-motion: reduce) {
+  .hm-sheet__panel { animation: none !important; }
+}
+

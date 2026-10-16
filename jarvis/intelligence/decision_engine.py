@@ -1867,6 +1867,47 @@ class DecisionEngine:
             master_confluence_tier=locals().get("_master_tier", "UNKNOWN")
         )
 
+    def _check_pullback_reclaim(
+        self,
+        context: MarketContext,
+        mtf_data: Optional[Dict[str, Any]] = None,
+        bias: str = "BUY"
+    ) -> bool:
+        """
+        Patch 3.2: Allow Bull-Flag Pullback Hook Re-Entries.
+        Bypass momentum deceleration rejection when price reclaims the EMA and
+        the latest closed M15/M5 bar closes in the direction of the trade (is_pullback_reclaim=True).
+        """
+        try:
+            df = None
+            if mtf_data and isinstance(mtf_data, dict):
+                df = mtf_data.get("timing")
+                if df is None or getattr(df, "empty", True):
+                    df = mtf_data.get("primary")
+            if df is None or getattr(df, "empty", True) or len(df) < 5:
+                df = getattr(context, "df_m5", None)
+            if df is None or getattr(df, "empty", True) or len(df) < 5:
+                return False
+
+            close = float(df["close"].iloc[-1])
+            open_p = float(df["open"].iloc[-1])
+            c_price = float(getattr(context, "current_price", close) or close)
+
+            # Fast EMA (span=9)
+            ema9 = float(df["close"].ewm(span=9, adjust=False).mean().iloc[-1])
+
+            if bias == "BUY":
+                # Price reclaimed EMA and latest closed candle is bullish
+                if (c_price >= ema9 or close >= ema9) and close > open_p:
+                    return True
+            elif bias == "SELL":
+                # Price broke below EMA and latest closed candle is bearish
+                if (c_price <= ema9 or close <= ema9) and close < open_p:
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _is_momentum_valid_for_regime(
         self,
         bias: str,
@@ -1875,13 +1916,20 @@ class DecisionEngine:
         regime: str,
         order_flow_confirmed: bool = False,
         is_pullback_reclaim: bool = False,
+        context: Optional[MarketContext] = None,
+        mtf_data: Optional[Dict[str, Any]] = None,
     ) -> Tuple[bool, str]:
         """
         Regime-Adaptive Momentum Validator.
         Allows uncapped momentum (up to ±98) in expansion/breakout regimes and index trends,
         while strictly capping momentum (<= 75) in ranging/consolidation regimes.
         Accommodates healthy trend pullbacks where momentum temporarily decelerates before re-acceleration.
+        Bypasses deceleration rejection when price reclaims the EMA and latest closed bar closes
+        in the direction of the trade (Patch 3.2).
         """
+        if not is_pullback_reclaim and context is not None:
+            is_pullback_reclaim = self._check_pullback_reclaim(context, mtf_data, bias)
+
         expansion_regimes = {
             "TREND_BULL", "TREND_BEAR", "STRONG_TREND_BULL", "STRONG_TREND_BEAR",
             "BREAKOUT", "POST_BREAKOUT"
