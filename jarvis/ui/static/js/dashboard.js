@@ -6644,6 +6644,11 @@
     Array.prototype.forEach.call(tables, function (t) {
       labelTable(t);
       if (t.getAttribute('data-hm-cards')) return;
+      // Only a table with a real header row can carry column labels, and only
+      // a labelled table should become cards. Without this guard a header-less
+      // table would get `data-hm-cards` and be rendered as key/value cards with
+      // blank labels.
+      if (!t.querySelector('thead tr > th')) return;
       t.setAttribute('data-hm-cards', 'true');
       if (typeof MutationObserver === 'function') {
         var mo = new MutationObserver(function () { labelTable(t); });

@@ -316,7 +316,7 @@ def hm_start(mode: str = "live", port: int = 8501, host: str = "127.0.0.1", trad
     try:
         from jarvis.data.broker_symbols import ensure_mt5_terminal
 
-        if ensure_mt5_terminal(allow_launch=True):
+        if ensure_mt5_terminal(allow_launch=False):
             logger.info("MetaTrader 5 terminal attached; live bars and execution are available.")
         else:
             logger.warning(

@@ -255,6 +255,143 @@ body {
   flex-shrink: 0 !important;
 }
 
+/* ── Responsive Bugatti Header (<=1024px) ─────────────────────────────────
+   The market / console / positions headers are a single desktop row: brand,
+   desk pills and the right utilities are all `flex-shrink: 0` inside a
+   `flex-wrap: nowrap` inner row, so below ~900px they ran off the screen and
+   were clipped by `body { overflow-x: hidden }`. Neither the hm_ui.css
+   `<=900px` header grid nor the ios_pages.css header block applied to them:
+   both target `.stocks-hud > .brand-wrapper` / `.nav-links-wrapper`, a
+   structure these templates no longer use (they ship `.bugatti-brand` /
+   `.bugatti-nav-links` / `.bugatti-navbar__right`).
+
+   Below 1025px the inner row wraps into two lines — brand (truncating) +
+   utilities, then the desk nav on its own full-width line where the pills
+   wrap. The nav is wrapped, NOT a momentum-scroll strip: an `overflow-x:
+   auto` ancestor clips the absolutely-positioned Markets / Desks dropdown
+   panels. Desktop (>=1025px) is untouched.
+
+   Every selector is scoped with `:not(.tt-rail)`: the dashboard rail is also
+   `.bugatti-navbar` (`<header class="tt-rail bugatti-navbar">`) and carries
+   `.bugatti-brand`, `.tt-tabs.bugatti-nav-links` and `.bugatti-desk-link`
+   tabs, all of which are laid out by the ios_mobile.css phone/tablet shell.
+   These rules must never reach it. */
+@media (max-width: 1024px) {
+  .bugatti-navbar:not(.tt-rail) {
+    padding: 8px 12px !important;
+    padding-top: max(8px, env(safe-area-inset-top, 0px)) !important;
+  }
+
+  .bugatti-navbar:not(.tt-rail) .bugatti-navbar__inner {
+    flex-wrap: wrap !important;
+    row-gap: 6px !important;
+  }
+
+  /* The wordmark is the only part allowed to truncate; the crest and the
+     state badge are state, and a clipped badge reads as a different state. */
+  .bugatti-navbar:not(.tt-rail) .bugatti-brand {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+  .bugatti-navbar:not(.tt-rail) .bugatti-brand__text {
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  .bugatti-navbar:not(.tt-rail) .bugatti-brand__mark,
+  .bugatti-navbar:not(.tt-rail) .bugatti-brand__badge {
+    flex: 0 0 auto !important;
+  }
+
+  .bugatti-navbar:not(.tt-rail) .bugatti-navbar__right {
+    flex: 0 1 auto !important;
+    min-width: 0 !important;
+  }
+
+  /* Desk navigation owns its own line. */
+  .bugatti-navbar:not(.tt-rail) .bugatti-nav-links {
+    order: 3 !important;
+    flex: 1 0 100% !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+    padding: 2px 0 !important;
+  }
+
+  /* 44px tap targets (WCAG 2.5.5 / Apple HIG) for every header control. */
+  .bugatti-navbar:not(.tt-rail) .bugatti-desk-link {
+    min-height: 44px !important;
+    padding: 0 14px !important;
+    border-radius: 999px !important;
+  }
+  .bugatti-navbar:not(.tt-rail) .bugatti-acc-trigger {
+    min-height: 44px !important;
+  }
+
+  /* india.css pins the search box at a fixed 380px, which cannot fit beside
+     the brand once the header is narrower than a desktop. */
+  .bugatti-navbar:not(.tt-rail) .search-container {
+    width: auto !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+  .bugatti-navbar:not(.tt-rail) .search-input-box {
+    width: 100% !important;
+  }
+}
+
+/* Phone and small tablet (<=900px — the same line the bottom dock appears
+   on): the header becomes brand + account on the first line, the desk nav on
+   the second, and the search box (where the page has one) on a third
+   full-width line. `display: contents` promotes the account dropdown and the
+   search box out of the right group so each can own a line; without support
+   the fallback keeps the group whole on its own row. */
+@media (max-width: 900px) {
+  .bugatti-navbar:not(.tt-rail) .bugatti-navbar__right {
+    display: contents !important;
+  }
+  .bugatti-navbar:not(.tt-rail) .bugatti-navbar__right > .tt-dropdown {
+    order: 1 !important;
+    flex: 0 0 auto !important;
+    margin-left: auto !important;
+  }
+  .bugatti-navbar:not(.tt-rail) .search-container {
+    order: 4 !important;
+    flex: 1 1 100% !important;
+  }
+  .bugatti-navbar:not(.tt-rail) .bugatti-nav-links {
+    order: 2 !important;
+  }
+}
+
+@media (max-width: 599px) {
+  /* The state badge is the first thing to go when the wordmark runs short of
+     room; the page heading already names the desk. */
+  .bugatti-navbar:not(.tt-rail) .bugatti-brand__badge {
+    display: none !important;
+  }
+  /* Tighter pills so Cockpit / Markets / Desks stay on one line at 360px. */
+  .bugatti-navbar:not(.tt-rail) .bugatti-desk-link {
+    padding: 0 10px !important;
+    font-size: 0.75rem !important;
+  }
+}
+
+/* Console is the one header that is genuinely two rows on desktop
+   (`.bugatti-navbar__inner` + `.cx-topbar__row--secondary`). The 52px
+   single-row flex lock laid those two rows side-by-side inside a 52px strip,
+   so console opts out of the lock and stacks normally. Guarded with `:has()`
+   so a browser without it keeps today's behaviour rather than losing the lock
+   on every header. */
+@media (min-width: 1025px) {
+  .bugatti-navbar:has(> .cx-topbar__row) {
+    height: auto !important;
+    min-height: 0 !important;
+    display: block !important;
+    align-items: normal !important;
+  }
+}
+
 /* Mobile Toggler */
 .bugatti-toggler {
   border: 1px solid var(--titanium-border-strong) !important;
@@ -632,7 +769,11 @@ body {
   border-spacing: 0;
 }
 
-.table-bugatti thead th, .tt-table thead th {
+/* `:not([data-hm-cards])` keeps these wide-desktop cell metrics away from the
+   <=1024px stacked-card tables, whose card padding/borders are set in
+   ios_mobile.css. theme_bugatti loads last, so without the exclusion these
+   !important paddings would win over the card layout. */
+.table-bugatti:not([data-hm-cards]) thead th, .tt-table:not([data-hm-cards]) thead th {
   font-family: var(--font-hud) !important;
   font-size: 0.6875rem !important;
   letter-spacing: 0.06em !important;
@@ -644,16 +785,16 @@ body {
   white-space: nowrap;
 }
 
-.table-bugatti tbody tr, .tt-table tbody tr {
+.table-bugatti:not([data-hm-cards]) tbody tr, .tt-table:not([data-hm-cards]) tbody tr {
   transition: background 0.15s ease !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
 }
 
-.table-bugatti tbody tr:hover, .tt-table tbody tr:hover {
+.table-bugatti:not([data-hm-cards]) tbody tr:hover, .tt-table:not([data-hm-cards]) tbody tr:hover {
   background: rgba(0, 102, 255, 0.08) !important;
 }
 
-.table-bugatti tbody td, .tt-table tbody td {
+.table-bugatti:not([data-hm-cards]) tbody td, .tt-table:not([data-hm-cards]) tbody td {
   padding: 8px 12px !important;
   font-size: 0.8125rem !important;
   vertical-align: middle !important;
@@ -765,16 +906,20 @@ table.tt-table td:first-child,
   padding-left: 12px !important;
 }
 
-/* Actions column table-cell styling */
-.tt-table--positions th.tt-pos-actions-col,
-.tt-table--positions td.tt-pos-actions,
-td.tt-pos-actions,
-th.tt-pos-actions-col {
-  display: table-cell !important;
-  text-align: right !important;
-  padding-right: 12px !important;
-  white-space: nowrap !important;
-  width: 1% !important;
+/* Actions column table-cell styling — DESKTOP ONLY; the forced table-cell
+   display would break the <=1024px stacked-card rows (the actions cell must
+   lay out as a flex key/value row there, not a table cell). */
+@media (min-width: 1025px) {
+  .tt-table--positions th.tt-pos-actions-col,
+  .tt-table--positions td.tt-pos-actions,
+  td.tt-pos-actions,
+  th.tt-pos-actions-col {
+    display: table-cell !important;
+    text-align: right !important;
+    padding-right: 12px !important;
+    white-space: nowrap !important;
+    width: 1% !important;
+  }
 }
 
 /* ── Forms, Inputs & Switchgear ──────────────────────────────────────────── */

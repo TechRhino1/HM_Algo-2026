@@ -167,8 +167,11 @@ def _terminal_process_running() -> Optional[bool]:
     except Exception:
         return None
     try:
-        for proc in psutil.process_iter(["name"]):
+        for proc in psutil.process_iter(["name", "exe"]):
             name = (proc.info.get("name") or "").lower()
+            exe = (proc.info.get("exe") or "").lower()
+            if "liveupdate" in exe:
+                continue
             if name in _TERMINAL_EXE_NAMES:
                 return True
         return False
