@@ -429,7 +429,7 @@
       "title   title";
     align-items: center;
     gap: var(--ios-sp-1);
-    padding: max(var(--ios-sp-1), var(--ios-safe-t)) var(--ios-sp-3) var(--ios-sp-1);
+    padding: max(var(--ios-sp-1), var(--ios-safe-t)) var(--ios-sp-2) var(--ios-sp-1);
     /* Glass retained */
     background-image: var(--hm-glass-sheen),
       linear-gradient(180deg, var(--ios-bg-2), var(--ios-bg-2));
@@ -445,6 +445,21 @@
   /* The More tab opens the drawer, so the hamburger is redundant chrome. */
   .tt-drawer-trigger { display: none; }
   .tt-session { grid-area: session; justify-self: end; }
+
+  /* Brand row: "HM ALGO 2.0" + the session chip share one 360px line. The
+     DEMO badge (rail-only copy) leaves - the tablet sidebar already drops it
+     and the account panel carries the broker mode - and the wordmark steps
+     down to 14px so the session text ("CLOSED - WEEKEND · 1d 23h 50m") keeps
+     its countdown instead of being ellipsized. If a longer brand ever lands
+     here, the wordmark ellipsizes first (titles min-width 0). */
+  .tt-rail .porsche-brand__badge { display: none; }
+  .porsche-brand-titles { min-width: 0; }
+  /* !important + rail scoping: theme_bugatti.css (loaded after this sheet)
+     pins the wordmark at 0.96rem with 0.12em tracking !important; at 360px
+     that is 131px and collides with the session chip. 13px + 0.06em measures
+     ~103px. Same-specificity !important still loses on source order, so the
+     selector adds .tt-rail. */
+  .tt-rail .tt-brand__text { font-size: 0.8125rem !important; letter-spacing: 0.06em !important; }
 
   /* Account strip: a four-cell summary row that fits the viewport exactly -
      no mid-number slicing, no horizontal scroll. Tapping it expands to the
@@ -492,8 +507,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* The account identity control belongs to the expanded state. */
-  #account-strip .tt-metric--account { display: none; }
+  /* The account identity control belongs to the expanded state. It is also
+     .bugatti-dropdown, which theme_bugatti.css forces to inline-flex
+     !important, so the hide needs !important too. */
+  #account-strip .tt-metric--account { display: none !important; }
 
   #account-strip[data-hm-expanded="true"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -501,7 +518,7 @@
     padding-bottom: var(--ios-sp-1);
   }
   #account-strip[data-hm-expanded="true"] .tt-metric--account {
-    display: flex;
+    display: inline-flex !important;
     grid-column: 1 / -1;
     align-items: center;
     gap: var(--ios-sp-2);

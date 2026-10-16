@@ -89,8 +89,16 @@ def _window_features(window, bias=0.0):
     lo20 = np.min(lows[-last:])
     pos = (closes[-1] - lo20) / (hi20 - lo20 + 1e-9)
 
-    up_closes = np.sum(deltas > 0)
-    frac_up = up_closes / (len(deltas) + 1e-9)
+    # Parkinson realized volatility
+    hl_ratio = np.maximum(highs[-last:] / np.maximum(lows[-last:], 1e-9), 1.0)
+    parkinson_vol = float(np.sqrt(np.mean((np.log(hl_ratio)) ** 2) / (4.0 * np.log(2.0))))
+
+    # Footprint volume delta imbalance proxy
+    ranges = np.maximum(highs[-last:] - lows[-last:], 1e-9)
+    buy_vols = vols[-last:] * ((closes[-last:] - lows[-last:]) / ranges)
+    sell_vols = vols[-last:] * ((highs[-last:] - closes[-last:]) / ranges)
+    tot_vol = np.sum(buy_vols + sell_vols)
+    delta_imbalance = float(np.sum(buy_vols - sell_vols) / (tot_vol + 1e-9))
 
     feat = [
         closes[-1] / (closes[0] + 1e-9) - 1.0,
@@ -103,6 +111,8 @@ def _window_features(window, bias=0.0):
         pos,
         frac_up,
         bias,
+        parkinson_vol,
+        delta_imbalance,
     ]
     return np.array(feat, dtype=float)
 

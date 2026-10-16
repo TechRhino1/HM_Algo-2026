@@ -260,6 +260,54 @@ class MT5Client:
             logger.warning(f"Failed to fetch MT5 symbol info for {resolved}: {e}")
         return spec_dict
 
+    def get_market_depth(self, symbol: str) -> Optional[List[Dict[str, Any]]]:
+        """
+        Fetches Level 2 Depth of Market (DOM) book info for the given symbol.
+        Returns a list of dicts: [{"type": "BUY"|"SELL", "price": float, "volume": float}, ...]
+        or None if market depth is unavailable or broker does not support Level 2 book.
+        """
+        self._reconnect_if_needed()
+        if self.mode == "paper" or not self.is_connected or not MT5_AVAILABLE or mt5 is None:
+            return None
+
+        resolved = self.resolve_symbol_name(symbol)
+        try:
+            with self._lock:
+                sub_res = mt5.market_book_add(resolved)
+                if not sub_res:
+                    return None
+                book = mt5.market_book_get(resolved)
+                if not book:
+                    return None
+
+                result = []
+                for item in book:
+                    t = getattr(item, "type", 0)
+                    type_str = "SELL" if t in (1, 4) else ("BUY" if t in (2, 3) else "UNKNOWN")
+                    vol = float(getattr(item, "volume_dbl", 0.0) or getattr(item, "volume", 0.0) or 0.0)
+                    price = float(getattr(item, "price", 0.0) or 0.0)
+                    result.append({
+                        "type": type_str,
+                        "price": price,
+                        "volume": vol
+                    })
+                return result
+        except Exception as e:
+            logger.debug(f"Failed to fetch market book for {resolved}: {e}")
+            return None
+
+    def release_market_depth(self, symbol: str) -> bool:
+        """Unsubscribes from Level 2 Depth of Market book for symbol."""
+        if self.mode == "paper" or not self.is_connected or not MT5_AVAILABLE or mt5 is None:
+            return True
+        resolved = self.resolve_symbol_name(symbol)
+        try:
+            with self._lock:
+                return bool(mt5.market_book_release(resolved))
+        except Exception as e:
+            logger.debug(f"Failed to release market book for {resolved}: {e}")
+            return False
+
     def get_account_snapshot(self) -> AccountSnapshot:
         # `_reconnect_if_needed()` first: it is what rewrites self.mode to
         # "paper" when the MT5 package is absent, and that rewrite has to be

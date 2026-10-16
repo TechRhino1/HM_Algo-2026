@@ -163,9 +163,14 @@ class DynamicRiskAndLevelsEngine:
         # Anti-Wick Shield: Asset-specific buffer to absorb stop-hunts and wick probes
         cfg = get_symbol_profile_config(sym_name)
         if is_gold:
-            anti_wick_mult = 0.35  # 100% UNCHANGED
+            anti_wick_mult = 0.35  # Baseline gold buffer
         else:
             anti_wick_mult = cfg.anti_wick_buffer_atr
+
+        # Dynamic Volatility Adaptation: Scale anti-wick shield during volatility expansion / spikes
+        vol_ratio_eff = getattr(vol, "volatility_ratio", atr_ratio) or atr_ratio
+        if getattr(vol, "state", "NORMAL").upper() in ("EXPANSION", "EXTREME") or (vol_ratio_eff and vol_ratio_eff > 1.3):
+            anti_wick_mult = anti_wick_mult * max(1.0, min(1.8, float(vol_ratio_eff)))
 
         anti_wick_buffer = atr * anti_wick_mult
         effective_buffer = max(dynamic_buffer, anti_wick_buffer)

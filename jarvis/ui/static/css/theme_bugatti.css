@@ -3366,6 +3366,10 @@ button.bugatti-dropdown__item:focus {
      the page's search box) stay. */
   .bugatti-navbar:not(.tt-rail) .bugatti-nav-links { display: none !important; }
 
+  /* Status pills wrap mid-word in narrow table columns ("LO / W",
+     "ME / DIU / M") - a chip is one token and never breaks. */
+  .tt-chip { white-space: nowrap; }
+
   /* ── More sheet ─────────────────────────────────────────────────────── */
   .hm-sheet { position: fixed; inset: 0; z-index: var(--hm-z-drawer); }
   .hm-sheet__scrim {

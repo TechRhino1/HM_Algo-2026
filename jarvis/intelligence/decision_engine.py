@@ -1032,6 +1032,7 @@ class DecisionEngine:
             "Risk/Reward >= 1.5": rr_ratio >= min_rr,
             "Positive Expected Value": ev > 0 and ev >= effective_min_ev,
             "Spread Protection": spread <= max_spread and not context.volatility.is_excessive_spread,
+            "Volatility Spike Circuit Breaker": not getattr(context.volatility, "volatility_spike_breaker", False),
             "AI Multi-Score Gate": ai_score >= min_score,
             "Devil Adversarial Guard": devil_report.penalty_score <= (self.max_devil_penalty + (5.0 if ai_score >= 80.0 else 0.0)) and len(devil_report.threats_detected) < 3,
             "Calibrated Win Prob >= 50%": calibrated_win_p >= (required_win_p - 0.005),
@@ -1150,7 +1151,12 @@ class DecisionEngine:
 
         of_res = {"signal": "NEUTRAL", "strength": 0.0, "institutional_activity": False}
         if mtf_data and "primary" in mtf_data and not mtf_data["primary"].empty:
-            of_res = self.order_flow.analyze_order_flow(mtf_data["primary"])
+            m_depth = mtf_data.get("market_depth") if isinstance(mtf_data, dict) else None
+            of_res = self.order_flow.analyze_order_flow(mtf_data["primary"], market_depth=m_depth)
+            try:
+                context.order_flow = of_res
+            except Exception:
+                pass
             
             if of_res["institutional_activity"] and of_res["signal"] == tentative_bias:
                 ai_score = min(100.0, ai_score + (of_res["strength"] * 10.0))

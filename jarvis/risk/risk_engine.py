@@ -446,6 +446,8 @@ class RiskEngine:
                     _typ = float(getattr(resolve_symbol(decision.symbol), "typical_atr_pct", 0.0) or 0.0)
                     if _atr > 0 and _price > 0 and _typ > 0:
                         atr_ratio = min(3.0, max(0.33, (_atr / _price) * 100.0 / _typ))
+                    if hasattr(_vol, "volatility_ratio") and _vol.volatility_ratio > 0:
+                        atr_ratio = min(3.0, max(atr_ratio, float(_vol.volatility_ratio)))
                 except Exception:
                     atr_ratio = 1.0
 

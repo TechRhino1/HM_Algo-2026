@@ -27,6 +27,7 @@ HARD_GATES = {
     "Risk/Reward >= 1.5",
     "Valid Stop Loss Distance",
     "Positive Expected Value",
+    "Volatility Spike Circuit Breaker",
 }
 
 # Granular confidence penalties for soft gates

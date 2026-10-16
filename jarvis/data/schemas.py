@@ -142,6 +142,10 @@ class VolatilityContext:
     is_excessive_spread: bool = False
     forward_atr_forecast: float = 0.0
     spread_risk_score: float = 0.0
+    parkinson_volatility: float = 0.0
+    garman_klass_volatility: float = 0.0
+    volatility_ratio: float = 1.0
+    volatility_spike_breaker: bool = False
 
 @dataclass
 class MomentumContext:

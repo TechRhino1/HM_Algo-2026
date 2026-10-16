@@ -49,10 +49,14 @@ class OnlineMLPredictor:
         "strategy_type_score",       # 21. Strategy category baseline score (0.0 to 1.0)
         "order_flow_imbalance",      # 22. Order flow delta imbalance (-1.0 to +1.0)
         "vwap_distance_normalized",  # 23. Distance from VWAP in ATR units (-1.0 to +1.0)
-        "confluence_master_score"    # 24. Master Confluence Score normalized (0.0 to 1.0)
+        "confluence_master_score",   # 24. Master Confluence Score normalized (0.0 to 1.0)
+        "order_book_imbalance",      # 25. Level 2 DOM / Footprint OBI (-1.0 to +1.0)
+        "vpin_toxicity",             # 26. Volume-Synchronized Probability of Toxicity (0.0 to 1.0)
+        "parkinson_vol_ratio",       # 27. Realized Parkinson/GK Volatility Ratio (-1.0 to 1.5)
+        "cvd_divergence_signal"      # 28. CVD multi-bar divergence alignment (+1.0, -1.0, 0.0)
     ]
 
-    # Institutional prior weights for 24-D feature space
+    # Institutional prior weights for 28-D feature space
     DEFAULT_WEIGHTS = np.array([
         0.35,   # 1. momentum_trend_score
         0.25,   # 2. adx_strength
@@ -77,7 +81,11 @@ class OnlineMLPredictor:
         0.15,   # 21. strategy_type_score
         0.20,   # 22. order_flow_imbalance
         0.10,   # 23. vwap_distance_normalized
-        0.25    # 24. confluence_master_score
+        0.25,   # 24. confluence_master_score
+        0.25,   # 25. order_book_imbalance
+        -0.20,  # 26. vpin_toxicity
+        -0.15,  # 27. parkinson_vol_ratio
+        0.30    # 28. cvd_divergence_signal
     ], dtype=float)
 
     def __init__(
@@ -126,6 +134,8 @@ class OnlineMLPredictor:
         self._lock = threading.Lock()
         self._grad_buffer = []
         self._batch_size = 3
+        self._grad_accum_w = np.zeros(self.n_features, dtype=float)
+        self._grad_accum_b = 1e-4
         self._feature_importance = np.abs(self.weights).copy()
         self._brier_window = deque(maxlen=50)
         self._drift_events = 0
@@ -355,6 +365,27 @@ class OnlineMLPredictor:
         mtf_conf = float(getattr(context, "mtf_confluence_score", 0.0) or 0.0)
         conf_norm = min(1.0, max(0.0, mtf_conf / 100.0 if mtf_conf > 1.0 else mtf_conf))
 
+        # 25. Order Book Imbalance (-1.0 to +1.0 aligned with bias)
+        raw_obi = float(of_data.get("obi", 0.0) or 0.0) if isinstance(of_data, dict) else 0.0
+        obi_aligned = raw_obi if bias == "BUY" else (-raw_obi if bias == "SELL" else 0.0)
+
+        # 26. VPIN Toxicity (0.0 to 1.0)
+        vpin_val = float(of_data.get("vpin", 0.0) or 0.0) if isinstance(of_data, dict) else 0.0
+        vpin_norm = min(1.0, max(0.0, vpin_val))
+
+        # 27. Parkinson / GK Volatility Ratio (-1.0 to 1.5)
+        raw_vol_ratio = float(getattr(vol, "volatility_ratio", 1.0) or 1.0) if vol else 1.0
+        gk_ratio_feat = min(1.5, max(-1.0, raw_vol_ratio - 1.0))
+
+        # 28. CVD Divergence Signal (+1.0 aligned, -1.0 opposing, 0.0 none)
+        cvd_div = str(of_data.get("cvd_divergence", "NONE") or "NONE").upper() if isinstance(of_data, dict) else "NONE"
+        if (bias == "BUY" and "BULLISH" in cvd_div) or (bias == "SELL" and "BEARISH" in cvd_div):
+            cvd_signal = 1.0
+        elif (bias == "BUY" and "BEARISH" in cvd_div) or (bias == "SELL" and "BULLISH" in cvd_div):
+            cvd_signal = -1.0
+        else:
+            cvd_signal = 0.0
+
         features = np.array([
             trend_aligned,
             adx_norm,
@@ -379,7 +410,11 @@ class OnlineMLPredictor:
             strat_score,
             of_align,
             vwap_feat,
-            conf_norm
+            conf_norm,
+            obi_aligned,
+            vpin_norm,
+            gk_ratio_feat,
+            cvd_signal
         ], dtype=float)
 
         return features
@@ -527,13 +562,22 @@ class OnlineMLPredictor:
                 avg_grad_w = np.mean([g[0] for g in self._grad_buffer], axis=0)
                 avg_error = np.mean([g[1] for g in self._grad_buffer])
 
-                # Adaptive learning rate decay (never reset upward by drift handling)
+                # Adaptive learning rate with AdaGrad accumulator
                 self.training_steps += 1
-                eta = self.learning_rate / np.sqrt(self.training_steps)
+                if not hasattr(self, "_grad_accum_w") or len(self._grad_accum_w) != len(avg_grad_w):
+                    self._grad_accum_w = np.zeros_like(avg_grad_w)
+                if not hasattr(self, "_grad_accum_b"):
+                    self._grad_accum_b = 1e-4
+
+                self._grad_accum_w += avg_grad_w ** 2
+                self._grad_accum_b += avg_error ** 2
+
+                eta_w = self.learning_rate / (np.sqrt(self._grad_accum_w) + 1e-6)
+                eta_b = self.learning_rate / (np.sqrt(self._grad_accum_b) + 1e-6)
 
                 # Update weights & bias
-                self.weights -= eta * avg_grad_w
-                self.bias -= eta * avg_error
+                self.weights -= eta_w * avg_grad_w
+                self.bias -= eta_b * avg_error
 
                 # Clamp weights
                 self.weights = np.clip(self.weights, -3.0, 3.0)
@@ -605,11 +649,21 @@ class OnlineMLPredictor:
                     loaded_weights = data.get("weights")
                     if isinstance(loaded_weights, list) and len(loaded_weights) == self.n_features:
                         self.weights = np.array(loaded_weights, dtype=float)
-                        # Only a model whose weights we can actually apply may
-                        # contribute its fitted bias and its step count.
                         self.bias = float(data.get("bias", self.bias))
                         self.training_steps = int(data.get("training_steps", 10))
                         self.weights_source = "disk"
+                    elif isinstance(loaded_weights, list) and len(loaded_weights) == 24 and self.n_features == 28:
+                        # Seamless backward-compatible migration: preserve 24 trained weights and append 4 new priors
+                        migrated = self.DEFAULT_WEIGHTS.copy()
+                        migrated[:24] = np.array(loaded_weights, dtype=float)
+                        self.weights = migrated
+                        self.bias = float(data.get("bias", self.bias))
+                        self.training_steps = int(data.get("training_steps", 10))
+                        self.weights_source = "migrated"
+                        logger.info(
+                            "Migrated 24 learned features from %s to 28-D feature space; preserved trained weights & bias.",
+                            os.path.basename(self.model_file)
+                        )
                     else:
                         # The saved model was fitted on a DIFFERENT feature set,
                         # so its weights cannot be applied to this vector at all.
