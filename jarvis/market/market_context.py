@@ -173,10 +173,16 @@ class MarketContextEngine:
                 c_last = float(c.iloc[-1])
                 ema20 = float(c.ewm(span=20, adjust=False).mean().iloc[-1])
                 ema50 = float(c.ewm(span=min(50, len(df)), adjust=False).mean().iloc[-1])
-                if bias == "BEARISH" and (c_last > max(ema20, ema50) or (c_last > ema20 and c_last > c.iloc[-5:].min() * 1.003)):
-                    return "BULLISH" if (c_last > ema20 and (c_last > ema50 or ema20 > ema50 or c_last > ema20 * 1.002)) else "NEUTRAL"
-                elif bias == "BULLISH" and (c_last < min(ema20, ema50) or (c_last < ema20 and c_last < c.iloc[-5:].max() * 0.997)):
-                    return "BEARISH" if (c_last < ema20 and (c_last < ema50 or ema20 < ema50 or c_last < ema20 * 0.998)) else "NEUTRAL"
+                if bias == "BEARISH":
+                    if c_last > max(ema20, ema50) and ema20 > ema50:
+                        return "BULLISH"
+                    elif c_last > ema20:
+                        return "NEUTRAL"
+                elif bias == "BULLISH":
+                    if c_last < min(ema20, ema50) and ema20 < ema50:
+                        return "BEARISH"
+                    elif c_last < ema20:
+                        return "NEUTRAL"
             return bias
 
         if style in ("DAY_TRADING", "INTRADAY", "DAY"):

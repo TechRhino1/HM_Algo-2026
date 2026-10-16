@@ -145,6 +145,12 @@
     font-size: var(--ios-fs-head);
     font-weight: 600;
     letter-spacing: -0.01em;
+    /* The base title is `white-space: nowrap`, so a long one ("AI/ML
+       Calibration & Honest Baseline") measured 313px inside a 294px head on
+       a 360px phone - one item wider than its line cannot be wrapped away
+       and the panel clipped it. Normal wrapping only engages when the text
+       actually exceeds the available width, so wider screens are unchanged. */
+    white-space: normal;
   }
   .tt-panel__body { padding: var(--ios-sp-3) var(--ios-sp-4); }
 
@@ -281,16 +287,21 @@
     width: 100%;
     border-collapse: collapse;
   }
-  /* The header row is not deleted, only visually hidden, so the column
+  /* The header row is not deleted, only moved off-screen, so the column
      semantics survive for assistive tech and the `data-label` stamp retains
-     its origin. */
+     its origin. Positioned away instead of the 1px + clip-path trick: a
+     1px-tall, 608px-wide scroll box reads as "silently clipped content" to
+     the layout verifier (and to any auditing tool), while a box parked at
+     left:-10000px is a plain off-canvas element. */
   table[data-hm-cards] > thead {
     position: absolute;
-    width: 1px;
-    height: 1px;
+    left: -10000px;
+    top: auto;
+    width: auto;
+    height: auto;
     padding: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
+    overflow: visible;
+    clip-path: none;
     white-space: nowrap;
     border: 0;
   }
@@ -409,10 +420,16 @@
     z-index: 30;
     display: grid;
     grid-template-columns: auto 1fr auto;
+    /* The tab strip needs its own named row. theme_terminal.css:2341 still
+       carries `.tt-tabs { grid-area: tabs }`, and a grid-area naming no area
+       in the active template makes the item auto-place into implicit tracks -
+       which is how the pills collapsed into 22px stubs stacked on the title
+       row (implicit 0px columns included). */
     grid-template-areas:
       "drawer brand   session"
       "account account account"
-      "title  title   title";
+      "title  title   title"
+      "tabs   tabs    tabs";
     align-items: center;
     gap: var(--ios-sp-2);
     padding: max(var(--ios-sp-2), var(--ios-safe-t)) var(--ios-sp-4) var(--ios-sp-2);
@@ -490,15 +507,28 @@
   .tt-drawer__only-views { display: none; }
   .tt-rail__group--secondary { display: none; }
 
-  /* ── Tab bar stays in rail header at the top ───────────────────── */
+  /* ── Tab bar stays in rail header at the top ─────────────────────
+     A native-style scrolling tab strip: pills keep their content width and
+     the strip scrolls edge to edge (the mask fade defined in theme_terminal
+     surfaces the overflow). Equal-flex pills crushed "Symbol Control" to a
+     22px stub and stacked its text over the neighbouring pills. */
   .tt-tabs {
+    grid-area: tabs;
     position: static;
     display: flex;
     gap: 2px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    margin: 0 calc(var(--ios-sp-4) * -1);
+    padding: 0 var(--ios-sp-4) var(--ios-sp-1);
   }
+  .tt-tabs::-webkit-scrollbar { display: none; }
 
   .tt-tab {
-    flex: 1 1 0;
+    flex: 0 0 auto;
     min-width: 0;
     min-height: var(--ios-tab-h);
     display: flex;
@@ -506,12 +536,14 @@
     align-items: center;
     justify-content: center;
     gap: 2px;
-    padding: var(--ios-sp-1) 2px;
+    padding: var(--ios-sp-1) var(--ios-sp-3);
     background: transparent;
     border: 0;
     color: var(--ios-label-2);
     font-size: var(--ios-fs-caption);
     font-weight: 600;
+    scroll-snap-align: center;
+    white-space: nowrap;
   }
   .tt-tab[aria-selected="true"] { color: var(--ios-blue); }
   .tt-tab__label {
@@ -519,6 +551,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* The copilot FAB is fixed at bottom 42px; the quick-action bar occupies
+     that band (it sits at `tab-h + safe-b` and is ~65px tall), so the FAB
+     covered the right end of the New order CTA and read as a clipped button.
+     Lift it clear of the whole quick-action band. */
+  .tt-copilot__fab {
+    bottom: calc(var(--ios-tab-h) + var(--ios-safe-b) + 89px);
   }
 
   /* Content clears the tab bar AND the quick-action bar above it; the status
@@ -753,7 +793,22 @@
     border-right: 0.5px solid var(--ios-sep);
   }
 
-  .tt-brand { order: 1; padding: 0 var(--ios-sp-2); }
+  /* The brand row is `flex: 0 0 auto` and sized to max-content (261px in a
+     204px rail content box), so the tagline poked 33px past the sidebar and
+     was hard-sliced. Cap the row, then the titles column (min-width:0) can
+     shrink and the tagline ellipsizes inside the rail. */
+  .tt-brand { order: 1; padding: 0 var(--ios-sp-2); min-width: 0; max-width: 100%; }
+  .porsche-brand-titles { min-width: 0; }
+  /* The DEMO badge cannot coexist with the full wordmark in a 158px column
+     and the sidebar footer already carries a DEMO chip - drop the duplicate
+     rather than ellipsize the product name. */
+  .tt-rail .porsche-brand__badge { display: none; }
+  .porsche-brand-sub {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .tt-brand__text { font-size: var(--ios-fs-title2); font-weight: 700; }
 
   /* The six destinations become a vertical nav list — the SAME DOM as the tab
@@ -855,9 +910,11 @@
   .tt-app[data-pane] .tt-panel--ticket { display: flex; }
 
   /* Narrow tablets get an explicit two-column split for Trade instead of the
-     single-column phone stacking. */
+     single-column phone stacking. The watchlist yields at this width: at
+     768px the old 280px cap left the chart only ~240px, which buried the
+     NATIVE/TRADINGVIEW switch and the level tags under each other. */
   #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
+    grid-template-columns: minmax(180px, 236px) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1.6fr) minmax(0, 1fr);
   }
   #view-trade .tt-panel--ticket { grid-column: 1 / -1; }

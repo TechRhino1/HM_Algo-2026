@@ -159,6 +159,7 @@ class MomentumContext:
     micro_r2: float = 0.0
     micro_slope_angle: float = 0.0
     is_statistically_trending: bool = False
+    short_term_atr_disp: float = 0.0
 
 @dataclass
 class SessionContext:

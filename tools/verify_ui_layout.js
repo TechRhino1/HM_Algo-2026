@@ -76,13 +76,19 @@ const VIEWPORTS = [
    .tt-app shell, so GLASS_SELECTORS below never matched them and their glass
    was asserted nowhere - the four pages most recently given the treatment were
    the four pages whose treatment was unmeasured. */
+/* The `hud` selector must be the bar the page actually renders. The old
+   `.stocks-hud` / `.india-hud` / `.opt-hud` / `.cx-topbar` names were the
+   pre-Bugatti headers; every market page and the console now renders the same
+   `.bugatti-navbar` chrome, so the old selectors matched nothing and those
+   checks could only ever fail. */
 const PAGES = [
   { name: 'dashboard', url: '/dashboard', views: ['trade', 'news', 'analyst', 'markets', 'analytics', 'backtest'] },
   { name: 'forex', url: '/' },
-  { name: 'stocks', url: '/stocks', hud: '.stocks-hud' },
-  { name: 'india', url: '/india', hud: '.india-hud' },
-  { name: 'options', url: '/options', hud: '.opt-hud' },
-  { name: 'console', url: '/console', hud: '.cx-topbar' },
+  { name: 'stocks', url: '/stocks', hud: '.bugatti-navbar' },
+  { name: 'india', url: '/india', hud: '.bugatti-navbar' },
+  { name: 'options', url: '/options', hud: '.bugatti-navbar' },
+  { name: 'console', url: '/console', hud: '.bugatti-navbar' },
+  { name: 'positions', url: '/positions', hud: '.bugatti-navbar' },
 ];
 
 /* Controls WCAG 2.5.5 applies to: the primary way in and out of every view.
@@ -300,6 +306,9 @@ async function main() {
               if (cs.textOverflow === 'ellipsis') continue;
               if (el.closest('.tt-sr-only')) continue;
               if (el.closest('#chart, #chart-tv')) continue;
+              // The radar dial masks a rotating sweep beam to a circle - the
+              // clip IS the widget, like #chart's generated DOM above.
+              if (el.closest('.radar-sweep-screen')) continue;
               if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) continue;
               if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1 &&
                   (cs.overflowX === 'hidden' || cs.overflowX === 'clip')) {
@@ -347,6 +356,7 @@ async function main() {
             // whole point. Three naming conventions exist in this repo.
             if (el.closest('.tt-sr-only, .sr-only, .cx-visually-hidden')) continue;
             if (el.closest('#chart, #chart-tv')) continue;
+            if (el.closest('.radar-sweep-screen')) continue;
             if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) continue;
             // A horizontal clip only counts if the element cannot scroll to the
             // content itself (overflow auto/scroll is a working scroll box).

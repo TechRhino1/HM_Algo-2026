@@ -728,27 +728,28 @@ class DynamicRiskAndLevelsEngine:
                     inst_tp3 = float(inst_res.get("tp3_price", tp3_price))
                     clamped_tp_dist = abs(inst_tp - inst_entry)
 
-                    # Preserve institutional R:R: If risk was expanded to satisfy broker/crypto floor,
-                    # scale TP levels proportionally to prevent R:R compression below quality gate (>= 1.5)
+                    # Preserve institutional R:R: When stop is widened to satisfy structural floor,
+                    # TP must ALWAYS maintain at least min_target_rr (never clamped to 3x small scalp TP).
+                    min_target_rr = 2.0 if is_gold else 1.8
+                    min_structural_tp_dist = clamped_risk * min_target_rr
+
                     if clamped_risk > inst_risk and inst_risk > 0:
-                        expansion_ratio = min(clamped_risk / inst_risk, 3.0)
-                        max_tp_dist = round(clamped_risk * 5.0, digits)
-                        clamped_tp_dist = min(round(clamped_tp_dist * expansion_ratio, digits), max_tp_dist)
-                        if tentative_bias == "BUY":
-                            clamped_tp = round(inst_entry + clamped_tp_dist, digits)
-                            clamped_tp1 = round(inst_entry + min(abs(inst_tp1 - inst_entry) * expansion_ratio, max_tp_dist * 0.4), digits)
-                            clamped_tp2 = round(inst_entry + min(abs(inst_tp2 - inst_entry) * expansion_ratio, max_tp_dist * 0.7), digits)
-                            clamped_tp3 = round(inst_entry + min(abs(inst_tp3 - inst_entry) * expansion_ratio, max_tp_dist), digits)
-                        else:
-                            clamped_tp = round(inst_entry - clamped_tp_dist, digits)
-                            clamped_tp1 = round(inst_entry - min(abs(inst_tp1 - inst_entry) * expansion_ratio, max_tp_dist * 0.4), digits)
-                            clamped_tp2 = round(inst_entry - min(abs(inst_tp2 - inst_entry) * expansion_ratio, max_tp_dist * 0.7), digits)
-                            clamped_tp3 = round(inst_entry - min(abs(inst_tp3 - inst_entry) * expansion_ratio, max_tp_dist), digits)
+                        raw_expansion = clamped_risk / inst_risk
+                        expanded_tp_dist = clamped_tp_dist * raw_expansion
+                        clamped_tp_dist = max(expanded_tp_dist, min_structural_tp_dist)
                     else:
-                        clamped_tp = inst_tp
-                        clamped_tp1 = inst_tp1
-                        clamped_tp2 = inst_tp2
-                        clamped_tp3 = inst_tp3
+                        clamped_tp_dist = max(clamped_tp_dist, min_structural_tp_dist)
+
+                    if tentative_bias == "BUY":
+                        clamped_tp = round(inst_entry + clamped_tp_dist, digits)
+                        clamped_tp1 = round(inst_entry + (clamped_risk * 1.2), digits)
+                        clamped_tp2 = clamped_tp
+                        clamped_tp3 = round(inst_entry + (clamped_risk * 3.5), digits)
+                    else:
+                        clamped_tp = round(inst_entry - clamped_tp_dist, digits)
+                        clamped_tp1 = round(inst_entry - (clamped_risk * 1.2), digits)
+                        clamped_tp2 = clamped_tp
+                        clamped_tp3 = round(inst_entry - (clamped_risk * 3.5), digits)
 
                     clamped_rr = round(clamped_tp_dist / max(clamped_risk, 1e-9), 2)
 

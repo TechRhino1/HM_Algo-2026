@@ -925,6 +925,11 @@
 .tt-chart__levels {
   display: flex; align-items: center; gap: var(--hm-space-2);
   flex-wrap: wrap; min-width: 0;
+  /* One level chip can carry a label wider than the chart head on tablet
+     widths (235px chip in a 186px head), and a flex item wider than the line
+     cannot be wrapped away - it overflowed the head and was clipped by the
+     panel. `auto` makes the remainder reachable instead of invisible. */
+  overflow-x: auto;
 }
 .tt-level {
   display: inline-flex; align-items: center; gap: 5px;

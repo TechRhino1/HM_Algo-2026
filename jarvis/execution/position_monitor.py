@@ -742,11 +742,13 @@ class PositionMonitorEngine:
                     if "XAU" in symbol or "GOLD" in symbol:
                         prox_thresh = max(prox_thresh, 0.40, atr * 0.12)
 
+                    target_r = tp_distance / max(risk_dist, 1e-6)
                     # Active Proximity Harvest: if currently within micro proximity or >= 96% progress
-                    if (dist_to_tp <= max(pip_size * 2.0, spread_dist_val * 1.2)) or (tp_prog >= 0.96 and dist_to_tp <= prox_thresh * 1.5):
+                    # Must have captured meaningful profit (>= 1.5R) to avoid prematurely cutting winners for pennies
+                    if ((dist_to_tp <= max(pip_size * 2.0, spread_dist_val * 1.2)) or (tp_prog >= 0.96 and dist_to_tp <= prox_thresh * 1.5)) and (current_r >= 1.50 or target_r <= 1.0):
                         logger.info(
                             f"🎯 PROXIMITY_TP_HARVEST: #{pos.ticket} ({pos.symbol} {pos.type}) "
-                            f"within {dist_to_tp:.4f} of TP (progress={tp_prog*100:.1f}%). "
+                            f"within {dist_to_tp:.4f} of TP (progress={tp_prog*100:.1f}%, gain={current_r:.2f}R). "
                             f"Harvesting at market {c_price:.{digits}f} to bank profits."
                         )
                         if self._execute_exit(pos, reason="PROXIMITY_TP_HARVEST"):

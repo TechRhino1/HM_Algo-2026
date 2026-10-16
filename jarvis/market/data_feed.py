@@ -576,7 +576,8 @@ class DataFeedEngine:
         result = {}
         is_intraday = trade_style.upper() in ("SCALP", "DAY_TRADING", "INTRADAY", "DAY")
         for role, tf in timeframes.items():
-            inc_cur = True if (is_intraday and role in ("primary", "timing", "setup")) else False
+            # Primary execution and timing frames must always reflect current price action across all styles
+            inc_cur = True if (role in ("primary", "timing") or (is_intraday and role == "setup")) else False
             result[role] = self.fetch_rates(symbol, timeframe=tf, num_bars=num_bars, include_current_bar=inc_cur)
         return result
 

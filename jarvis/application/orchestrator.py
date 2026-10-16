@@ -841,14 +841,21 @@ class JarvisOrchestrator:
                 "persist": regime.regime_persistence
             }
 
-        # 4. Dispatch Parallel Analysts + Devil's Advocate (Regime & Momentum aligned)
+        # 4. Dispatch Parallel Analysts + Devil's Advocate (Structure & Macro HTF aligned)
         ts_val = getattr(context.momentum, "trend_score", 0.0) if hasattr(context, "momentum") else 0.0
-        if regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL):
+        st_bias = getattr(context.structure, "bias", "NEUTRAL")
+        mtf_align = getattr(context, "mtf_alignment", {}) or {}
+        d1_bias = mtf_align.get("D1", "NEUTRAL")
+
+        # Market structure and HTF anchor take precedence over lagging regime classifiers
+        if st_bias in ("BULLISH", "BEARISH"):
+            tentative_bias = "BUY" if st_bias == "BULLISH" else "SELL"
+        elif d1_bias in ("BULLISH", "BEARISH") and abs(ts_val) < 40:
+            tentative_bias = "BUY" if d1_bias == "BULLISH" else "SELL"
+        elif regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL):
             tentative_bias = "BUY"
         elif regime.primary_regime in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR):
             tentative_bias = "SELL"
-        elif context.structure.bias in ("BULLISH", "BEARISH"):
-            tentative_bias = "BUY" if context.structure.bias == "BULLISH" else "SELL"
         else:
             tentative_bias = "SELL" if ts_val < 0 else "BUY"
         analyst_reports, devil_report = self.analyst_cluster.run_all_parallel(context, regime, tentative_bias)

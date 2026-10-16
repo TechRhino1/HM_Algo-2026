@@ -794,7 +794,7 @@ body {
   .cx-topbar__row--secondary { gap: var(--hm-space-2); }
   .cx-brand__name { display: none; }
   .cx-iconbtn__label { display: none; }
-  .cx-main { padding: var(--hm-space-3); }
+  .cx-main { padding: var(--hm-space-3); padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
   .cx-view { gap: var(--hm-space-3); }
 
   .cx-view--trade { grid-template-columns: minmax(0, 1fr); }
@@ -807,7 +807,18 @@ body {
   body[data-panel="chart"] .cx-col--center,
   body[data-panel="ticket"] .cx-col--right { display: flex; }
 
-  .cx-panelbar { display: grid; }
+  /* The bar is the last item of the trade grid, so its `sticky bottom: 0`
+     had zero room to shift inside its own grid area and never docked - it
+     sat as a trailing block whose top sliver peeked over the fold at load.
+     Dock it to the viewport (no transformed ancestors on this page) and the
+     .cx-main padding above keeps content clear of it. */
+  .cx-panelbar {
+    display: grid;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+  }
 
   .cx-account { gap: var(--hm-space-3); }
   .cx-account__item--wide { display: none; }

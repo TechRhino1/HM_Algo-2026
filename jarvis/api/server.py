@@ -1743,7 +1743,6 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
 
 class _NoReverseDNSHTTPServer(ThreadingHTTPServer):
     """`ThreadingHTTPServer` without the blocking reverse-DNS lookup on bind.
-
     `http.server.HTTPServer.server_bind` ends with
     `self.server_name = socket.getfqdn(host)`. `getfqdn` is a REVERSE DNS
     lookup, and where that lookup does not answer it blocks for as long as the
@@ -1756,6 +1755,15 @@ class _NoReverseDNSHTTPServer(ThreadingHTTPServer):
     `server_name` only fills the `Server:` response header, so the literal host
     is a correct substitute and costs nothing.
     """
+
+    # `socketserver.TCPServer` ships `request_queue_size = 5`. Every page load
+    # opens six-plus parallel sockets and the SSE endpoints park a request
+    # thread for ~60s, so a normal load bursts straight through that backlog -
+    # and on Windows an overflowed backlog is REFUSED (WSAECONNREFUSED), not
+    # queued. Intermittent `ERR_CONNECTION_REFUSED` on static assets
+    # (theme_bugatti.css, hm_ui.js) under the layout verifier's rapid page
+    # loads traced back here.
+    request_queue_size = 128
 
     def server_bind(self):
         socketserver.TCPServer.server_bind(self)

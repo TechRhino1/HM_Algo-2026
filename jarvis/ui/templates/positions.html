@@ -86,6 +86,16 @@
     font-size: 0.8125rem;
     pointer-events: none;
   }
+  /* On a phone the search field (220px, 260px focused) plus Refresh plus the
+     Flatten All CTA is wider than the viewport; the fixed-width field shoved
+     the red CTA past the right edge where the body clipped it mid-label.
+     Search takes its own full-width line, actions share the next one. */
+  @media (max-width: 599px) {
+    .positions-page-title-row .d-flex { flex-wrap: wrap; }
+    .positions-search-box { flex: 1 1 100%; }
+    .positions-search-input,
+    .positions-search-input:focus { width: 100%; }
+  }
 </style>
 </head>
 <body class="bugatti-theme">

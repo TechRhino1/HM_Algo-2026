@@ -257,12 +257,12 @@ class DecisionEngine:
                 return "BUY" if trend_score >= 0.0 else "SELL"
             return "BUY" if bull_votes >= bear_votes else "SELL"
 
-        # CASE A: Strong Bullish Macro / Regime / D1 Anchor
-        elif (
-            is_bull_regime
-            or (htf_bias == "BULLISH" and not is_bear_regime)
-            or (d1_anchor_bias == "BULLISH" and not is_bear_regime)
-            or mtf_score >= 35.0
+        # CASE A: Strong Bullish Macro / Structure / Regime / D1 Anchor
+        if (
+            (htf_bias == "BULLISH" and d1_anchor_bias != "BEARISH")
+            or (d1_anchor_bias == "BULLISH" and htf_bias != "BEARISH")
+            or (is_bull_regime and not (htf_bias == "BEARISH" and d1_anchor_bias == "BEARISH"))
+            or mtf_score >= 30.0
         ):
             is_intraday = trade_style in ("SCALP", "DAY_TRADING")
 
@@ -308,18 +308,32 @@ class DecisionEngine:
                 return "BUY"
             return "BUY" if ((htf_bias == "BULLISH" or d1_anchor_bias == "BULLISH") and (bull_votes >= 1 or not is_intraday) and trend_score >= 0.0) else "HOLD"
 
-        # CASE B: Strong Bearish Macro / Regime
+        # CASE B: Strong Bearish Macro / Structure / Regime
         elif (
-            is_bear_regime
-            or (htf_bias == "BEARISH" and not is_bull_regime)
-            or mtf_score <= -35.0
+            (htf_bias == "BEARISH" and d1_anchor_bias != "BULLISH")
+            or (d1_anchor_bias == "BEARISH" and htf_bias != "BULLISH")
+            or (is_bear_regime and not (htf_bias == "BULLISH" and d1_anchor_bias == "BULLISH"))
+            or mtf_score <= -30.0
         ):
             is_intraday = trade_style in ("SCALP", "DAY_TRADING")
 
-            # 1. Structural / Momentum Guard for Intraday (SCALP & DAY_TRADING):
-            # If the primary execution timeframe is actively expanding BULLISH with positive momentum,
+            # 1. Structural / Momentum Guard for ALL STYLES (SCALP, DAY_TRADING, SWING):
+            # If the primary timeframe or HTF has bullish structure or active upward displacement,
             # STRICTLY PROHIBIT selling! Either flip to BUY if confirmed, or HOLD.
-            if is_intraday and (st.bias == "BULLISH" or st.bos_type == "BULLISH" or primary_tf_bias == "BULLISH" or trend_score >= 15.0 or delta_score >= 20.0):
+            has_bullish_structure = (
+                st.bias == "BULLISH"
+                or st.bos_type == "BULLISH"
+                or primary_tf_bias == "BULLISH"
+                or htf_bias == "BULLISH"
+                or d1_anchor_bias == "BULLISH"
+            )
+            has_bullish_expansion = (
+                trend_score >= 10.0
+                or delta_score >= 15.0
+                or (mom is not None and getattr(mom, "short_term_atr_disp", 0.0) >= 0.35)
+            )
+
+            if has_bullish_structure or has_bullish_expansion:
                 if (
                     authenticated_bull_reversal
                     or (trend_score >= 10.0 and (context_bias == "BULLISH" or st.bias == "BULLISH" or primary_tf_bias == "BULLISH"))
@@ -327,6 +341,7 @@ class DecisionEngine:
                     or (bull_votes >= 2 and bull_votes > bear_votes)
                 ):
                     return "BUY"
+                # If market is rallying upward or structure is bullish, NEVER SELL blindly!
                 return "HOLD"
 
             # 1b. Momentum Exhaustion Bottom & Liquidity Sweep Guard:
@@ -349,20 +364,19 @@ class DecisionEngine:
 
             # 3. Swing Trading Alignment:
             # If trade_style is SWING and both HTF (D1) and Context (H4) are BEARISH,
-            # SWING trades the HTF downtrend (selling bounces to premium / continuation), unless confirmed reversal.
+            # SWING trades the HTF downtrend only if primary structure is also aligned.
             if not is_intraday and htf_bias == "BEARISH":
-                if trend_score <= 5.0 or dp_zone in ("PREMIUM", "EQUILIBRIUM") or is_bear_regime:
-                    return "SELL"
+                if not (st.bias == "BULLISH" or primary_tf_bias == "BULLISH" or trend_score > 0):
+                    if trend_score <= 5.0 or dp_zone in ("PREMIUM", "EQUILIBRIUM") or is_bear_regime:
+                        return "SELL"
 
-            # 4. Sell Continuation / Retracement short
-            if trend_score <= 5.0 and st.bias != "BULLISH" and not (st.bos and trend_score > 0):
-                if st.bos and trend_score <= -10.0:
-                    return "SELL"
-                if st.bias == "BEARISH" or trend_score <= -10.0 or bear_votes > bull_votes:
-                    return "SELL"
-                if dp_zone in ("PREMIUM", "EQUILIBRIUM") and (has_bear_sweep or bear_votes >= 1 or is_bear_regime):
-                    return "SELL"
-                if htf_bias == "BEARISH" and (bear_votes >= 1 or is_bear_regime) and trend_score <= -5.0:
+            # 4. Sell Continuation / Retracement short:
+            # Strictly prohibit selling if D1 or HTF or primary structure is BULLISH
+            if htf_bias == "BULLISH" or d1_anchor_bias == "BULLISH" or st.bias == "BULLISH" or primary_tf_bias == "BULLISH":
+                return "HOLD"
+
+            if trend_score <= -15.0 and st.bias == "BEARISH" and primary_tf_bias == "BEARISH":
+                if st.bos or bear_votes > bull_votes or is_bear_regime:
                     return "SELL"
             return "HOLD"
 
@@ -866,12 +880,16 @@ class DecisionEngine:
             adx_val = getattr(context.momentum, "adx", 0.0) if hasattr(context, "momentum") else 0.0
             strong_expansion = (adx_val >= 20.0 and abs(ts) >= 20.0)
 
-            # Never allow counter-trend entries on Gold when opposing momentum is active,
+            # Never allow counter-trend entries on Gold when opposing momentum or HTF trend is active,
             # but allow pullbacks and liquidity sweep rebounds when structural confluence (sweep/BOS) is present
-            if tentative_bias == "SELL" and (ts >= 15.0 or (macro_bias == "BULLISH" and ts >= 0.0 and not is_validated_reversal)):
-                gold_trend_following_valid = False
-            elif tentative_bias == "BUY" and (ts <= -20.0 or (macro_bias == "BEARISH" and ts <= -10.0 and not (sweep_confirmed or bos_active or is_validated_reversal))):
-                gold_trend_following_valid = False
+            if tentative_bias == "SELL":
+                if (macro_bias == "BULLISH" or d1_anchor_bias == "BULLISH") and not is_validated_reversal:
+                    gold_trend_following_valid = False
+                elif ts >= 10.0:
+                    gold_trend_following_valid = False
+            elif tentative_bias == "BUY":
+                if (macro_bias == "BEARISH" or d1_anchor_bias == "BEARISH") and not is_validated_reversal and ts <= -15.0:
+                    gold_trend_following_valid = False
             elif effective_strat in ("TREND_FOLLOWING", "BREAKDOWN", "MOMENTUM_CONTINUATION", "STRUCTURE"):
                 if tentative_bias == "BUY":
                     if not (sweep_confirmed or st_zone in ("DISCOUNT", "EQUILIBRIUM") or bos_active or (strong_expansion and ts > 0)):
@@ -1103,9 +1121,10 @@ class DecisionEngine:
         if threat_lvl is not None and isinstance(threat_lvl, (int, float)) and threat_lvl > 0:
             spec = resolve_symbol(context.symbol)
             atr_val = context.volatility.atr if context.volatility.atr > 0 else (entry_price * 0.005)
+            min_target_rr_tuck = 2.0 if any(k in context.symbol.upper() for k in ["XAU", "GOLD"]) else 1.8
             if tentative_bias == "BUY" and entry_price < threat_lvl < tp_price:
                 adjusted_tp = round(threat_lvl - (atr_val * 0.1), spec.digits)
-                if adjusted_tp >= entry_price + (risk_dist * 1.0):
+                if adjusted_tp >= entry_price + (risk_dist * min_target_rr_tuck):
                     logger.info(f"[{context.symbol}] Devil's Advocate threat level {threat_lvl} detected ahead of TP! Tucking TP: {tp_price} -> {adjusted_tp}")
                     tp_price = adjusted_tp
                     tp2_price = adjusted_tp
@@ -1113,7 +1132,7 @@ class DecisionEngine:
                     rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
             elif tentative_bias == "SELL" and tp_price < threat_lvl < entry_price:
                 adjusted_tp = round(threat_lvl + (atr_val * 0.1), spec.digits)
-                if adjusted_tp <= entry_price - (risk_dist * 1.0):
+                if adjusted_tp <= entry_price - (risk_dist * min_target_rr_tuck):
                     logger.info(f"[{context.symbol}] Devil's Advocate threat level {threat_lvl} detected ahead of TP! Tucking TP: {tp_price} -> {adjusted_tp}")
                     tp_price = adjusted_tp
                     tp2_price = adjusted_tp
@@ -1365,13 +1384,12 @@ class DecisionEngine:
             strat_p = final_win_p
             strat_rr = rr_ratio
 
-            # Prerequisite trigger validation for non-benchmark assets:
+            # Prerequisite trigger validation across ALL assets:
             # A reversal strategy requires actual structural or liquidity trigger evidence
-            if not (is_gold_asset or is_oil_asset):
-                if strat == "CHOCH_STRUCTURAL_REVERSAL" and not bool(getattr(context.structure, "choch", False)):
-                    continue
-                if strat == "LIQUIDITY_SWEEP_REVERSAL" and not bool(getattr(context.liquidity, "sweep_detected", False)):
-                    continue
+            if strat == "CHOCH_STRUCTURAL_REVERSAL" and not bool(getattr(context.structure, "choch", False)):
+                continue
+            if strat == "LIQUIDITY_SWEEP_REVERSAL" and not bool(getattr(context.liquidity, "sweep_detected", False)):
+                continue
 
             # Strategy-specific edge & RR adjustments
             if strat == "RANGE_MEAN_REVERSION":
@@ -1765,14 +1783,41 @@ class DecisionEngine:
             # Only use LIMIT order when price is resting genuinely far away in a calm market
             order_type_decision = "LIMIT"
 
-        # Final tucking against Devil's Advocate threat levels across all order types
+        # Institutional Rule: NEVER tuck TP inside minimum acceptable R:R.
+        # If a major structural obstacle blocks the path to minimum R:R, maintain structural TP or veto.
+        min_required_rr = 2.0 if any(k in context.symbol.upper() for k in ["XAU", "GOLD"]) else 1.8
+        min_allowed_tp_dist = risk_dist * min_required_rr
+
         if threat_lvl is not None and isinstance(threat_lvl, (int, float)) and threat_lvl > 0:
             if tentative_bias == "BUY" and entry_price < threat_lvl <= tp_price:
-                tp_price = round(threat_lvl - (atr_val * 0.1), digits)
-                tp_dist = abs(tp_price - entry_price)
+                potential_tp = round(threat_lvl - (atr_val * 0.1), digits)
+                if (potential_tp - entry_price) >= min_allowed_tp_dist:
+                    tp_price = potential_tp
+                else:
+                    logger.warning(
+                        f"[{context.symbol}] Devil's threat level {threat_lvl} restricts BUY TP below "
+                        f"minimum R:R ({min_required_rr}:1). Maintaining structural TP {tp_price}."
+                    )
             elif tentative_bias == "SELL" and tp_price <= threat_lvl < entry_price:
-                tp_price = round(threat_lvl + (atr_val * 0.1), digits)
-                tp_dist = abs(tp_price - entry_price)
+                potential_tp = round(threat_lvl + (atr_val * 0.1), digits)
+                if (entry_price - potential_tp) >= min_allowed_tp_dist:
+                    tp_price = potential_tp
+                else:
+                    logger.warning(
+                        f"[{context.symbol}] Devil's threat level {threat_lvl} restricts SELL TP below "
+                        f"minimum R:R ({min_required_rr}:1). Maintaining structural TP {tp_price}."
+                    )
+
+        # Recalculate true physical distances and R:R ratio
+        tp_dist = abs(tp_price - entry_price)
+        risk_dist = abs(entry_price - sl_price)
+        rr_ratio = round(tp_dist / max(risk_dist, 1e-9), 2)
+
+        # Final Absolute Geometric Quality Gate Re-Check
+        if gate_passed and rr_ratio < (min_required_rr - 0.05):
+            decision_action = "NO_TRADE"
+            gate_passed = False
+            rejection_reasons.append(f"Geometric R:R ratio {rr_ratio:.2f}:1 fails minimum required {min_required_rr:.2f}:1")
 
         return DecisionObject(
             symbol=context.symbol,

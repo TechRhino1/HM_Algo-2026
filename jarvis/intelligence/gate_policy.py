@@ -24,6 +24,9 @@ HARD_GATES = {
     "Directional Bias",
     "Strategy Viable",
     "No Active Macro Shock",
+    "Risk/Reward >= 1.5",
+    "Valid Stop Loss Distance",
+    "Positive Expected Value",
 }
 
 # Granular confidence penalties for soft gates

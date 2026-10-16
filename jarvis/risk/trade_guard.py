@@ -139,10 +139,17 @@ class TradeGuard:
                 f"Invalid order geometry: unrecognised bias '{decision.bias}' (expected BUY or SELL)."
             )
 
-        # Pre-Execution Asymmetric Risk:Reward Check
-        rr_ratio = getattr(decision, "risk_reward_ratio", None)
-        if _is_finite(rr_ratio) and rr_ratio is not None and 0.0 < float(rr_ratio) < 1.79:
-            reasons.append(f"Sub-minimum Risk:Reward ratio {float(rr_ratio):.2f} (Minimum 1.80 required).")
+        # Pre-Execution True Geometric Risk:Reward Check (Direct Price Geometry)
+        actual_risk_dist = abs(decision.entry_price - decision.stop_loss)
+        actual_tp_dist = abs(decision.take_profit - decision.entry_price)
+        actual_rr = (actual_tp_dist / actual_risk_dist) if actual_risk_dist > 1e-6 else 0.0
+
+        min_rr_threshold = 1.75
+        if actual_rr < min_rr_threshold:
+            reasons.append(
+                f"Sub-minimum Risk:Reward ratio {actual_rr:.2f}:1 "
+                f"(risk={actual_risk_dist:.2f}, reward={actual_tp_dist:.2f}, minimum {min_rr_threshold:.2f} required)."
+            )
 
         is_passed = len(reasons) == 0
         return {

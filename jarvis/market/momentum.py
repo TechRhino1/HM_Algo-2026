@@ -45,11 +45,11 @@ class MomentumEngine:
         plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
         minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
 
-        tr_smooth = tr.rolling(window=self.adx_period, min_periods=1).sum()
-        plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(window=self.adx_period, min_periods=1).sum() / (tr_smooth + 1e-9))
-        minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(window=self.adx_period, min_periods=1).sum() / (tr_smooth + 1e-9))
+        tr_smooth = pd.Series(tr, index=df.index).ewm(alpha=1.0/self.adx_period, adjust=False).mean()
+        plus_di = 100 * (pd.Series(plus_dm, index=df.index).ewm(alpha=1.0/self.adx_period, adjust=False).mean() / (tr_smooth + 1e-9))
+        minus_di = 100 * (pd.Series(minus_dm, index=df.index).ewm(alpha=1.0/self.adx_period, adjust=False).mean() / (tr_smooth + 1e-9))
         dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)
-        adx = dx.rolling(window=self.adx_period, min_periods=1).mean()
+        adx = dx.ewm(alpha=1.0/self.adx_period, adjust=False).mean()
 
         # RSI 14
         delta = close.diff()
@@ -85,24 +85,24 @@ class MomentumEngine:
         elif c_price > cur_ema_f:
             score += 20.0
         elif c_price < cur_ema_f < cur_ema_m < cur_ema_s:
-            score -= 45.0
+            score -= (20.0 if short_term_atr_disp >= 0.30 else 45.0)
         elif c_price < cur_ema_f and c_price < cur_ema_m:
-            score -= 35.0
+            score -= (15.0 if short_term_atr_disp >= 0.30 else 35.0)
         elif c_price < cur_ema_f:
-            score -= 20.0
+            score -= 15.0
 
-        # 2. ADX & Direction (with displacement override for lagging Wilder smoothing)
+        # 2. ADX & Direction (with responsive displacement override for impulse rallies/selloffs)
         if cur_adx >= 20.0:
-            if short_term_atr_disp >= 0.75:
-                # Active upward expansion overrides lagging Wilder -DI
+            if short_term_atr_disp >= 0.35:
+                # Active upward velocity overrides lagging -DI
                 score += 25.0
-            elif short_term_atr_disp <= -0.75:
-                # Active downward expansion overrides lagging Wilder +DI
+            elif short_term_atr_disp <= -0.35:
+                # Active downward velocity overrides lagging +DI
                 score -= 25.0
             elif cur_plus_di > cur_minus_di:
-                score += 25.0
+                score += 20.0
             else:
-                score -= 25.0
+                score -= 20.0
 
         # 3. Slope (blend 10-bar baseline with 5-bar ultra-responsive micro-slope)
         window_slope = min(10, len(df))

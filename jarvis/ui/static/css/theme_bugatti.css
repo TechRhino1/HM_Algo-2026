@@ -68,30 +68,32 @@ body {
   background-attachment: fixed !important;
 }
 
-/* Overriding legacy rigid app shell traps. DESKTOP ONLY: on phone and tablet
-   the `.tt-app` grid (theme_terminal.css:110) plus the ios_mobile.css phone
-   app-bar / tablet sidebar templates own the shell. Forcing flex-column at
-   every width defeated both, collapsing the whole responsive layout back to a
-   single stack and removing the phone large title / tablet sidebar entirely.
-   Desktop behaviour is byte-identical. */
-@media (min-width: 1025px) {
-  body.tt-app, body.ios-app {
-    height: auto !important;
-    min-height: 100vh !important;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    display: flex !important;
-    flex-direction: column !important;
-  }
-}
+/* The legacy rigid-shell override used to live here: it forced `display:flex;
+   height:auto` on `body.tt-app` at >=1025px. That made the shell height
+   indefinite (min-height where height was meant), so the 1fr main row
+   resolved against CONTENT and the DOCUMENT scrolled instead of the view -
+   1053px of shell on a 900px screen, every fill-the-screen panel cut off at
+   the fold. theme_terminal.css:110 owns the contract (display:grid;
+   height:100dvh) and is deliberately allowed to win; the phone/tablet shells
+   live in ios_mobile.css. The layout verifier's "document does not scroll
+   (app shell)" check guards this from regressing. (body.ios-app never existed
+   in any template - that half was dead the day it was written.) */
 
 /* ── Universal Bugatti Navigation Bar Redesign ───────────────────────────── */
+/* `background` shorthand here reset background-image to none, which erased the
+   liquid-glass sheen from every bar this rule touches - including the
+   dashboard rail `.tt-rail.bugatti-navbar`, whose gradient layers are set by
+   theme_terminal.css. Split into `background-color` so the sheen underneath
+   survives. The inset 0.5px highlight is the same hairline the verifier
+   asserts on the market headers ("chrome bar carries the hairline sheen");
+   without it the bar reads as a flat, opaque slab, not glass. */
 .bugatti-navbar {
-  background: rgba(7, 9, 14, 0.94) !important;
+  background-color: rgba(7, 9, 14, 0.94) !important;
   backdrop-filter: blur(28px) !important;
   -webkit-backdrop-filter: blur(28px) !important;
   border-bottom: 1px solid var(--titanium-border) !important;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6),
+              inset 0 0.5px 0 rgba(255, 255, 255, 0.12) !important;
   padding: 0 16px !important;
   z-index: 2000 !important;
   position: sticky !important;
@@ -451,8 +453,12 @@ body {
 }
 
 /* ── Cockpit Card Architecture ───────────────────────────────────────────── */
+/* background-color, not the `background` shorthand: the shorthand killed the
+   `.tt-panel` sheen gradient from theme_terminal.css, leaving every panel a
+   flat opaque card (the verifier reported backgroundImage:none on all glass
+   surfaces). The tint stays exactly the same colour. */
 .card-bugatti, .tt-panel {
-  background: var(--bg-card) !important;
+  background-color: var(--bg-card) !important;
   backdrop-filter: blur(16px) !important;
   -webkit-backdrop-filter: blur(16px) !important;
   border: 1px solid var(--titanium-border) !important;
@@ -648,7 +654,18 @@ body {
   border-radius: 10px;
   margin-bottom: 12px;
   overflow-x: auto;
-  width: 100%;
+  /* `width: 100%` PLUS the template's inline `margin: 8px 16px 0` made the
+     margin box 598px inside a 566px panel - 32px of stepper clipped by the
+     chart panel's overflow:hidden on every desktop trading width. `auto`
+     fills the content box minus its own margins, which is what the inline
+     margin was asking for in the first place. */
+  width: auto;
+  max-width: 100%;
+  /* The strip scrolls by design (13 steps never fit the chart panel), but a
+     chip hard-sliced mid-word at the panel edge reads as a rendering fault.
+     Same native "there is more" fade the phone tab strip uses. */
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 28px), transparent 100%);
 }
 
 .lifecycle-step {

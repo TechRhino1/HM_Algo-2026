@@ -67,41 +67,37 @@ class MarketRegimeClassifier:
             scores[MarketRegime.BREAKOUT.value] += 0.8
             scores[MarketRegime.HIGH_VOLATILITY.value] += 0.5
 
-        # 3. Structure & BOS/CHoCH Impact
+        # 3. Market Structure Impact (Primary Driver: leads momentum)
         if structure.bos:
-            scores[MarketRegime.BREAKOUT.value] += 0.9
-            scores[MarketRegime.POST_BREAKOUT.value] += 0.6
+            scores[MarketRegime.BREAKOUT.value] += 1.4
+            scores[MarketRegime.POST_BREAKOUT.value] += 1.0
             if structure.bos_type == "BULLISH":
-                scores[MarketRegime.TREND_BULL.value] += 0.7
+                scores[MarketRegime.TREND_BULL.value] += 1.8
             elif structure.bos_type == "BEARISH":
-                scores[MarketRegime.TREND_BEAR.value] += 0.7
+                scores[MarketRegime.TREND_BEAR.value] += 1.8
         elif structure.choch:
-            scores[MarketRegime.REVERSAL.value] += 1.2
-            scores[MarketRegime.TRANSITION.value] += 0.6
+            scores[MarketRegime.REVERSAL.value] += 1.8
+            scores[MarketRegime.TRANSITION.value] += 1.0
         elif structure.higher_highs and structure.higher_lows:
-            scores[MarketRegime.TREND_BULL.value] += 0.9
+            scores[MarketRegime.TREND_BULL.value] += 2.0
         elif structure.lower_highs and structure.lower_lows:
-            scores[MarketRegime.TREND_BEAR.value] += 0.9
+            scores[MarketRegime.TREND_BEAR.value] += 2.0
         else:
             scores[MarketRegime.RANGE.value] += 0.5
             scores[MarketRegime.CONSOLIDATION.value] += 0.5
             scores[MarketRegime.TRANSITION.value] += 0.3
 
-        # 4. Momentum & ADX Trend Strength
+        # 4. Momentum & ADX Trend Strength (Capped to prevent overriding structural shifts)
         t_score = momentum.trend_score
         adx = momentum.adx
-        if adx >= 25:
-            adx_multiplier = 1.0 + max(0.0, (adx - 25) / 10.0) 
-            if t_score >= 45:
-                scores[MarketRegime.TREND_BULL.value] += 1.6 * adx_multiplier
-                if t_score >= 70:
-                    scores[MarketRegime.TREND_BULL.value] += 1.0 * adx_multiplier
-            elif t_score <= -45:
-                scores[MarketRegime.TREND_BEAR.value] += 1.6 * adx_multiplier
-                if t_score <= -70:
-                    scores[MarketRegime.TREND_BEAR.value] += 1.0 * adx_multiplier
+        if adx >= 22:
+            adx_multiplier = min(1.4, 1.0 + max(0.0, (adx - 22) / 15.0))
+            if t_score >= 35:
+                scores[MarketRegime.TREND_BULL.value] += 1.2 * adx_multiplier
+            elif t_score <= -35:
+                scores[MarketRegime.TREND_BEAR.value] += 1.2 * adx_multiplier
             else:
-                scores[MarketRegime.WEAK_TREND.value] += 0.8
+                scores[MarketRegime.WEAK_TREND.value] += 0.6
         elif adx < 18:
             scores[MarketRegime.RANGE.value] += 0.8
             scores[MarketRegime.CONSOLIDATION.value] += 0.6
