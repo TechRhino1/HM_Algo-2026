@@ -551,6 +551,7 @@ class TestRegressionFixes(unittest.TestCase):
             "sl": 2390.0,
             "tp": 2425.0
         })
+        orch.llm_controller = None
 
         # Run cycle for symbol. The stale-feed gate is neutralised: this test mocks
         # the decision and execution engines and asserts the LEARNING loop, but the
@@ -559,6 +560,8 @@ class TestRegressionFixes(unittest.TestCase):
         with patch(
             "jarvis.market.data_feed.first_untrusted_frame",
             return_value=(None, None, 0.0),
+        ), patch.object(
+            orch, "_first_untrusted_frame", return_value=(None, None, 0.0)
         ), patch.object(
             orch, "_first_unusable_frame", return_value=(None, None)
         ):

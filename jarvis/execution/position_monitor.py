@@ -547,20 +547,22 @@ class PositionMonitorEngine:
             # ── 0. Partial Profit-Taking (§B-2 / §B-3, Suppressed in Grace Period) ──
             if not in_grace_period and (not is_manual or effective_manual_mode == "FULL") and pos.ticket not in self._partially_closed_tickets and pos.volume >= 0.02:
                 decision_obj = self.state_manager.latest_decisions.get(symbol)
+                _p = self._exit_policy.get(pos.ticket) or ExitPolicy.for_symbol(symbol, spec)
                 first_target = self._coerce_positive_float(
                     getattr(decision_obj, "first_target_price", None)
                 )
                 target_pct = self._coerce_positive_float(
                     getattr(decision_obj, "first_target_volume_pct", None),
-                    default=PARTIAL_CLOSE_PCT,
+                    default=getattr(_p, "fast_cash_volume_pct", PARTIAL_CLOSE_PCT),
                 )
                 if not (0.0 < target_pct < 1.0):
-                    target_pct = PARTIAL_CLOSE_PCT
+                    target_pct = getattr(_p, "fast_cash_volume_pct", PARTIAL_CLOSE_PCT)
 
                 risk_dist_init = abs(pos.open_price - pos.sl) if pos.sl > 0 else (atr * 1.5)
                 current_r = ((c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)) / max(risk_dist_init, 1e-6)
+                p_trigger_r = getattr(_p, "fast_cash_r", PARTIAL_TP_TRIGGER_R)
                 if first_target is None:
-                    first_target = (pos.open_price + (risk_dist_init * PARTIAL_TP_TRIGGER_R)) if pos.type == "BUY" else (pos.open_price - (risk_dist_init * PARTIAL_TP_TRIGGER_R))
+                    first_target = (pos.open_price + (risk_dist_init * p_trigger_r)) if pos.type == "BUY" else (pos.open_price - (risk_dist_init * p_trigger_r))
 
                 is_target_hit = (c_price >= first_target) if pos.type == "BUY" else (c_price <= first_target)
                 if is_target_hit:
@@ -570,20 +572,23 @@ class PositionMonitorEngine:
                         p_res = self.mt5_client.close_position(pos.ticket, volume=close_volume)
                         if p_res and p_res.get("status") in ("PARTIALLY_CLOSED", "CLOSED"):
                             self._partially_closed_tickets.add(pos.ticket)
-                            self._be_locked.add(pos.ticket)
-                            # Lock breakeven buffer on remaining runner to secure risk-free trade
-                            _p = self._exit_policy.get(pos.ticket) or ExitPolicy.for_symbol(symbol, spec)
-                            _be_buf = _p.buffer_distance(risk_dist_init)
-                            be_candidate = round(
-                                pos.open_price + _be_buf if pos.type == "BUY" else pos.open_price - _be_buf,
+                            # CRITICAL FIX: Do NOT set self._be_locked here!
+                            # Locking full breakeven (+buffer) immediately upon partial take chokes 40% of runners on minor pullbacks.
+                            # Instead, de-risk the remaining runner by moving SL to -0.25R cushion (75% risk reduction).
+                            # Because 33%-50% profit was banked at fast_cash_r (1.50R), the trade is GUARANTEED net positive:
+                            # e.g., (0.33 * +1.5R) - (0.67 * 0.25R) = +0.33R net profit even on a worst-case stop-out.
+                            # True breakeven (+buffer) is locked only when price achieves policy.be_trigger_r (1.80R+).
+                            cushion_dist = risk_dist_init * 0.25
+                            cushion_sl = round(
+                                pos.open_price - cushion_dist if pos.type == "BUY" else pos.open_price + cushion_dist,
                                 digits,
                             )
-                            if pos.type == "BUY" and be_candidate > new_sl and be_candidate < c_price:
-                                new_sl = be_candidate
-                                actions.append(f"PARTIAL_BE@{new_sl:.4f}")
-                            elif pos.type == "SELL" and (new_sl == 0 or be_candidate < new_sl) and be_candidate > c_price:
-                                new_sl = be_candidate
-                                actions.append(f"PARTIAL_BE@{new_sl:.4f}")
+                            if pos.type == "BUY" and cushion_sl > new_sl and cushion_sl < c_price:
+                                new_sl = cushion_sl
+                                actions.append(f"PARTIAL_DERISK_SL@{new_sl:.4f}")
+                            elif pos.type == "SELL" and (new_sl == 0 or cushion_sl < new_sl) and cushion_sl > c_price:
+                                new_sl = cushion_sl
+                                actions.append(f"PARTIAL_DERISK_SL@{new_sl:.4f}")
 
             # ── 1.5 Adversarial Order Flow Shield (Suppressed in Grace Period) ────
             if not in_grace_period:

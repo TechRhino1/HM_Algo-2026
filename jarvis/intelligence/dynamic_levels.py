@@ -349,7 +349,7 @@ class DynamicRiskAndLevelsEngine:
                 if "ETHBTC" in sym_name:
                     min_crypto_pts = max(3.5 * spread_dist, 0.00030)
                 elif "ETH" in sym_name:
-                    eth_base_floor = 8.0 if "SCALP" in style.upper() else (14.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 18.0)
+                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
                     min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, eth_base_floor)
                 elif "BTC" in sym_name:
                     btc_base_floor = 300.0 if "SCALP" in style.upper() else 450.0
@@ -361,6 +361,13 @@ class DynamicRiskAndLevelsEngine:
             sl_dist = max(sl_dist, min_sl_dist)
             if is_gold:
                 sl_dist = min(sl_dist, 12.0 + spread_dist)
+            elif is_crypto:
+                if "ETH" in sym_name and "ETHBTC" not in sym_name:
+                    max_eth_sl = 18.0 if "SCALP" in style.upper() else (28.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 38.0)
+                    sl_dist = min(sl_dist, max_eth_sl + spread_dist)
+                elif "BTC" in sym_name:
+                    max_btc_sl = 550.0 if "SCALP" in style.upper() else (850.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 1200.0)
+                    sl_dist = min(sl_dist, max_btc_sl + spread_dist)
             sl_price = round(entry_price - sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
@@ -411,18 +418,20 @@ class DynamicRiskAndLevelsEngine:
                 max_tp_mult = asym_rr * (1.25 if is_strong_trend else 1.0)
                 tp_dist = min(front_run_target - entry_price, risk_dist * max_tp_mult)
             else:
-                tp_dist = risk_dist * (2.2 if is_ranging else asym_rr)
+                tp_dist = risk_dist * (2.2 if is_ranging else (asym_rr * (1.10 if is_strong_trend else 1.0)))
 
             tp_price = round(entry_price + tp_dist, digits)
             rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
 
             # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
-            # TP1: Initial scale-out milestone at +1.0R to +1.2R (or minor structural resistance with front-run)
-            minor_resistance = [t for t in opposing_targets if entry_price + (risk_dist * 0.8) <= (t - front_run_buffer) < tp_price]
+            # TP1: Initial scale-out milestone anchored to fast_cash_r (default 1.50R, preserved on Gold)
+            target_fast_cash_r = getattr(cfg, "fast_cash_r", 1.50) if not is_gold else 1.50
+            minor_resistance = [t for t in opposing_targets if entry_price + (risk_dist * (target_fast_cash_r * 0.85)) <= (t - front_run_buffer) < tp_price]
             if minor_resistance:
                 first_target_price = round(min(minor_resistance) - front_run_buffer, digits)
             else:
-                first_target_price = round(entry_price + (risk_dist * (0.90 if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else 1.0)), digits)
+                fc_mult = (target_fast_cash_r * 0.90) if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else target_fast_cash_r
+                first_target_price = round(entry_price + (risk_dist * fc_mult), digits)
 
             tp1_price = first_target_price
             tp2_price = tp_price
@@ -582,7 +591,7 @@ class DynamicRiskAndLevelsEngine:
                 if "ETHBTC" in sym_name:
                     min_crypto_pts = max(3.5 * spread_dist, 0.00030)
                 elif "ETH" in sym_name:
-                    eth_base_floor = 8.0 if "SCALP" in style.upper() else (14.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 18.0)
+                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
                     min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, eth_base_floor)
                 elif "BTC" in sym_name:
                     btc_base_floor = 300.0 if "SCALP" in style.upper() else 450.0
@@ -594,6 +603,13 @@ class DynamicRiskAndLevelsEngine:
             sl_dist = max(sl_dist, min_sl_dist)
             if is_gold:
                 sl_dist = min(sl_dist, 12.0 + spread_dist)
+            elif is_crypto:
+                if "ETH" in sym_name and "ETHBTC" not in sym_name:
+                    max_eth_sl = 18.0 if "SCALP" in style.upper() else (28.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 38.0)
+                    sl_dist = min(sl_dist, max_eth_sl + spread_dist)
+                elif "BTC" in sym_name:
+                    max_btc_sl = 550.0 if "SCALP" in style.upper() else (850.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 1200.0)
+                    sl_dist = min(sl_dist, max_btc_sl + spread_dist)
             sl_price = round(entry_price + sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
@@ -647,7 +663,7 @@ class DynamicRiskAndLevelsEngine:
                 tp_dist = min(entry_price - front_run_target, risk_dist * max_tp_mult)
                 tp_price = round(entry_price - tp_dist, digits)
             else:
-                tp_dist = risk_dist * (2.2 if is_ranging else asym_rr)
+                tp_dist = risk_dist * (2.2 if is_ranging else (asym_rr * (1.10 if is_strong_trend else 1.0)))
                 tp_price = round(entry_price - tp_dist + spread_dist, digits)
 
             # Ensure valid sell TP below entry
@@ -657,15 +673,17 @@ class DynamicRiskAndLevelsEngine:
             rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
 
             # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
-            # TP1: Initial scale-out milestone at +1.0R to +1.2R (or minor structural support with spread buffer + front-run)
-            minor_support = [t for t in opposing_targets if tp_price < (t + front_run_buffer + spread_dist) <= entry_price - (risk_dist * 0.8)]
+            # TP1: Initial scale-out milestone anchored to fast_cash_r (default 1.50R, preserved on Gold)
+            target_fast_cash_r = getattr(cfg, "fast_cash_r", 1.50) if not is_gold else 1.50
+            minor_support = [t for t in opposing_targets if tp_price < (t + front_run_buffer + spread_dist) <= entry_price - (risk_dist * (target_fast_cash_r * 0.85))]
             if minor_support:
                 first_target_price = round(max(minor_support) + front_run_buffer + spread_dist, digits)
             else:
-                first_target_price = round(entry_price - (risk_dist * (0.90 if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else 1.0)) + spread_dist, digits)
+                fc_mult = (target_fast_cash_r * 0.90) if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else target_fast_cash_r
+                first_target_price = round(entry_price - (risk_dist * fc_mult) + spread_dist, digits)
 
             if first_target_price >= entry_price:
-                first_target_price = round(entry_price - (risk_dist * 0.8), digits)
+                first_target_price = round(entry_price - (risk_dist * target_fast_cash_r * 0.8), digits)
 
             tp1_price = first_target_price
             tp2_price = tp_price
@@ -712,11 +730,11 @@ class DynamicRiskAndLevelsEngine:
         )
 
         if (is_strong_trend or vol_state in ("EXPANSION", "EXTREME")) and aligned_delta:
-            first_target_volume_pct = 0.25 if ("XAU" in sym_name or "GOLD" in sym_name) else 0.35
+            first_target_volume_pct = 0.25 if ("XAU" in sym_name or "GOLD" in sym_name) else getattr(cfg, "fast_cash_volume_pct", 0.33)
         elif is_ranging or vol_state == "COMPRESSION":
-            first_target_volume_pct = 0.50 if ("XAU" in sym_name or "GOLD" in sym_name) else 0.65
+            first_target_volume_pct = 0.50 if ("XAU" in sym_name or "GOLD" in sym_name) else 0.50
         else:
-            first_target_volume_pct = 0.50  # Default 50% partial
+            first_target_volume_pct = getattr(cfg, "fast_cash_volume_pct", 0.33)
 
         # 6. Runner Trailing Distance: 1.0 + 0.4 * 1_{EXPANSION} + 0.8 * 1_{EXTREME}
         is_expansion_val = 1.0 if vol_state == "EXPANSION" else 0.0
