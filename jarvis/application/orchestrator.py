@@ -1053,9 +1053,15 @@ class JarvisOrchestrator:
         # When the AI resolves a high-conviction setup in the OPPOSITE direction of an active trade,
         # and the opposing trade is flat or in drawdown (< 0.50R), do NOT let Base Exposure (1 >= 1)
         # block the reversal. Close the failing opposing trade first and execute the reversal cleanly.
+        def _get_pos_side(p: Any) -> str:
+            raw = getattr(p, "side", getattr(p, "type", "BUY"))
+            if isinstance(raw, int):
+                return "BUY" if raw == 0 else "SELL"
+            return str(raw or "BUY").upper()
+
         opposing_positions = [
             p for p in active_sym_positions
-            if getattr(p, "type", "").upper() != str(decision.bias).upper()
+            if _get_pos_side(p) != str(decision.bias).upper()
         ]
         if not dry_run and wants_entry and decision.decision == "EXECUTE" and opposing_positions:
             opp_pos = opposing_positions[0]
@@ -1063,7 +1069,7 @@ class JarvisOrchestrator:
             opp_sl_price = float(getattr(opp_pos, "sl", 0.0) or 0.0)
             opp_risk_dist = abs(opp_open_price - opp_sl_price) if opp_sl_price > 0 else (context.volatility.atr * 2.0)
             cur_price_val = float(getattr(context, "current_price", opp_open_price) or opp_open_price)
-            opp_r = ((cur_price_val - opp_open_price) if opp_pos.type == "BUY" else (opp_open_price - cur_price_val)) / max(opp_risk_dist, 1e-6)
+            opp_r = ((cur_price_val - opp_open_price) if _get_pos_side(opp_pos) == "BUY" else (opp_open_price - cur_price_val)) / max(opp_risk_dist, 1e-6)
 
             # Check open duration of opposing trade to give it minimum breathing room
             opp_open_time = getattr(opp_pos, "open_time", None)

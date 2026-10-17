@@ -25,6 +25,12 @@ from jarvis.market.correlations import DynamicCorrelationEngine
 
 logger = logging.getLogger("JARVIS_RiskEngine")
 
+def _normalize_pos_side(pos: Any) -> str:
+    raw = getattr(pos, "side", getattr(pos, "type", "BUY"))
+    if isinstance(raw, int):
+        return "BUY" if raw == 0 else "SELL"
+    return str(raw or "BUY").upper()
+
 class RiskEngine:
     def __init__(
         self,
@@ -202,7 +208,7 @@ class RiskEngine:
         # the enforced threshold was deliberately left unchanged. The comment/behaviour mismatch
         # is reported rather than silently "fixed".
         for p in existing_sym_positions:
-            p_side = getattr(p, "side", getattr(p, "type", "BUY")).upper()
+            p_side = _normalize_pos_side(p)
             if (p_side == "BUY" and decision.bias == "BUY") or (p_side == "SELL" and decision.bias == "SELL"):
                 # Allow pyramiding unless the existing position is deeply in drawdown.
                 # Enforced rule: block once unrealised loss exceeds -$2 or -0.5% of equity.
@@ -413,7 +419,7 @@ class RiskEngine:
             for pos in positions:
                 if resolve_symbol(pos.symbol).canonical == canon:
                     continue  # Same-symbol is governed by adaptive same-symbol validator
-                pos_side = getattr(pos, "side", getattr(pos, "type", "BUY")).upper()
+                pos_side = _normalize_pos_side(pos)
                 corr = self.correlation_engine.get_correlation(symbol, pos.symbol)
                 # Directional correlation: same direction with positive corr OR opposite direction with negative corr
                 same_direction = (target_side == pos_side)

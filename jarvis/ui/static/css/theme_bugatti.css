@@ -3437,3 +3437,77 @@ button.bugatti-dropdown__item:focus {
   .hm-sheet__panel { animation: none !important; }
 }
 
+/* ═══ Watchlist table: fit the pane at any font size ═════════════════════
+   The watchlist pane is a fixed ~390px column. The table's natural width is
+   content-driven (number-heavy cells, nowrap) and rem-sized, so it exceeded
+   the pane even at the default 16px root (399 > 388 -> horizontal scrollbar
+   and a clipped Session chip), and overflowed badly on browsers configured
+   with a larger default font (e.g. root 20px -> 479px wide). The only robust
+   sizing is px: px values are not affected by the browser's font-size
+   setting, while page zoom / DPI scale the pane and the table together. */
+@media (min-width: 1025px) {
+  #watch-table { font-size: 11px !important; }
+  #watch-table thead th { padding: 0 5px !important; font-size: 10px !important; }
+  #watch-table tbody td { padding: 0 5px !important; font-size: 11px !important; }
+  #watch-table .tt-num { font-size: 11px !important; }
+  #watch-table .tt-chip { font-size: 10px !important; padding: 1px 5px !important; }
+  #watch-table .tt-dir { font-size: 10px !important; padding: 1px 4px !important; }
+  /* The AI-selection body is a flex item in the watchlist column and shrank
+     below its own content on shorter windows, cutting its state box in half
+     (58px of a 136px box at 1366x768). Keep it at its content height and
+     trim the generously padded state box, so the radar rows below keep a
+     usable strip on short screens. */
+  #selection-body { flex: 0 0 auto; padding-top: 6px; padding-bottom: 6px; }
+  #selection-body .tt-state { min-height: 0; padding: 8px 16px; }
+}
+
+/* ═══ Laptop-width navbar (1025-1700px) ══════════════════════════════════
+   The desktop navbar was designed as one row, but the row's natural width
+   (brand + desk pills + session + account metrics + broker/mode/clock) is
+   ~1600px with live values. On any narrower desktop window - 1366 and 1280
+   laptops included - the account strip, which carries `flex-wrap: wrap` from
+   theme_terminal.css, wrapped to two or three lines inside the rail, which
+   theme_bugatti.css pins to 52px (`.bugatti-navbar { height: 52px !important }`,
+   same element), so the wrapped rows spilled above the viewport (the equity
+   row rendered half-clipped at the top edge). Nothing measured vertical
+   containment of the bar, so every verification run passed.
+   Fix: at laptop widths the navbar becomes a deliberate two-row bar - brand
+   + desk pills + session on the first line, account metrics + broker chips
+   right-aligned on the second. Metrics keep their full values at every data
+   width; no truncation of money. */
+@media (min-width: 1025px) and (max-width: 1700px) {
+  /* The shared navbar lock (height: 52px !important on .bugatti-navbar)
+     applies to the dashboard rail too - it is the same element. At laptop
+     widths the rail needs to grow into its second row. */
+  .bugatti-navbar.tt-rail {
+    height: auto !important;
+    min-height: 52px !important;
+  }
+  .tt-rail {
+    flex-wrap: wrap !important;
+    align-content: center;
+    row-gap: 2px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .tt-rail__spacer { display: none; }
+  .tt-rail__group {
+    margin-left: auto;
+    flex-wrap: nowrap !important;
+  }
+}
+
+/* Safety net at every desktop width: the strip never wraps vertically even
+   if a future value or chip outgrows the row - it shrinks (values ellipsize)
+   instead of spilling above the viewport. */
+@media (min-width: 1025px) {
+  .tt-rail__group { flex-wrap: nowrap !important; min-width: 0; }
+  .tt-rail__group .tt-metric { min-width: 0; }
+  .tt-rail__group .tt-metric__label,
+  .tt-rail__group .tt-metric__value {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+

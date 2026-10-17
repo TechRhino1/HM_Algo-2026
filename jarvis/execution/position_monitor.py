@@ -1513,6 +1513,26 @@ class PositionMonitorEngine:
                                 f"50% profit lock @ {candidate:.4f}"
                             )
                             return candidate, f"REGIME_INVALIDATION@{candidate:.4f}"
+                # Early Defense for Underwater Positions: If regime turns strongly against position
+                # (confidence >= 0.75 or STRONG_TREND), tighten SL to save capital (cut potential loss)
+                elif profit_pips < 0 and (confidence >= 0.75 or "STRONG" in regime_str):
+                    tightened_dist = max(risk_dist * 0.50, atr * 1.0)
+                    if pos.type == "BUY":
+                        candidate = round(pos.open_price - tightened_dist, 4)
+                        if candidate > current_sl and candidate < c_price:
+                            logger.info(
+                                f"🛡️ High-confidence regime inversion for underwater #{pos.ticket} ({regime_str} conf={confidence:.2f}) → "
+                                f"Tightening SL to {candidate:.4f} to cap downside."
+                            )
+                            return candidate, f"REGIME_DRAWDOWN_TIGHTEN@{candidate:.4f}"
+                    else:
+                        candidate = round(pos.open_price + tightened_dist, 4)
+                        if (current_sl == 0 or candidate < current_sl) and candidate > c_price:
+                            logger.info(
+                                f"🛡️ High-confidence regime inversion for underwater #{pos.ticket} ({regime_str} conf={confidence:.2f}) → "
+                                f"Tightening SL to {candidate:.4f} to cap downside."
+                            )
+                            return candidate, f"REGIME_DRAWDOWN_TIGHTEN@{candidate:.4f}"
         except Exception as e:
             logger.debug(f"Regime invalidation check failed for #{pos.ticket}: {e}")
 

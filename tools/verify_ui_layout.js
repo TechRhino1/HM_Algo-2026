@@ -67,6 +67,11 @@ const VIEWPORTS = [
   { name: 'phone-360', width: 360, height: 780, mobile: true },
   { name: 'phone-390', width: 390, height: 844, mobile: true },
   { name: 'tablet-768', width: 768, height: 1024, mobile: true },
+  /* The common 1366x768 laptop. The navbar's natural single-row width is
+     ~1580px, so this viewport is where the account strip used to wrap inside
+     the fixed-height rail and spill above the viewport - a break the
+     1440-wide desktop run never saw. */
+  { name: 'laptop-1366', width: 1366, height: 768, mobile: false },
   { name: 'desktop-1440', width: 1440, height: 900, mobile: false },
 ];
 
@@ -211,6 +216,36 @@ async function main() {
                 alpha: m && m[4] !== undefined ? parseFloat(m[4]) : (m ? 1 : 0),
                 sheen: /inset/.test(cs.boxShadow || '') && /0\.5px/.test(cs.boxShadow || ''),
               };
+            }
+          }
+
+          // ---- Chrome bar contains its children -------------------------------
+          // The dashboard rail is a fixed-height app-shell grid row. The
+          // account strip inside it carries flex-wrap:wrap, so below ~1580px
+          // it wrapped to three lines, the rail refused to grow, and the
+          // equity row rendered half-clipped ABOVE the viewport top. Nothing
+          // measured vertical containment of the bar, so every run passed.
+          {
+            const bar = document.querySelector(hudSel || '.tt-rail');
+            out.barOverflow = [];
+            if (bar) {
+              const oc = getComputedStyle(bar).overflowY;
+              /* A scrolling bar (the tablet sidebar) legitimately holds more
+                 content than its box; clipped bars are exactly the defect. */
+              if (oc !== 'auto' && oc !== 'scroll') {
+                const br = bar.getBoundingClientRect();
+                for (const c of bar.children) {
+                  if (c.hasAttribute('hidden')) continue;
+                  const cr = c.getBoundingClientRect();
+                  if (cr.width === 0 && cr.height === 0) continue;
+                  if (cr.top < br.top - 1 || cr.bottom > br.bottom + 1) {
+                    out.barOverflow.push(
+                      (String(c.className).split(' ')[0] || c.tagName.toLowerCase()) +
+                      ' [' + Math.round(cr.top) + ',' + Math.round(cr.bottom) + ']' +
+                      ' vs bar [' + Math.round(br.top) + ',' + Math.round(br.bottom) + ']');
+                  }
+                }
+              }
             }
           }
 
@@ -437,6 +472,14 @@ async function main() {
             ok(`${label}: chrome bar carries the hairline sheen (${hud.sel})`,
               hud.sheen, 'no inset 0.5px highlight in box-shadow');
           }
+        }
+
+        // 3c. The chrome bar must contain its children vertically (probe note
+        //     above: the account strip wrapped and spilled above the rail).
+        if (probe.barOverflow) {
+          ok(`${label}: chrome bar contains its children`,
+            probe.barOverflow.length === 0,
+            probe.barOverflow.slice(0, 3).join(', '));
         }
 
         // 4. App shell integrity + silent clipping (dashboard only).
