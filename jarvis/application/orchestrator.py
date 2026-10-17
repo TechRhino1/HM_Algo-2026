@@ -43,6 +43,7 @@ from jarvis.config.paths import mode_scoped_db_path
 from jarvis.market.sessions import SessionEngine
 from jarvis.execution.entry_policy import evaluate_entry
 from jarvis.intelligence.winrate_targeting import load_profiles
+from jarvis.intelligence.llm_controller import AutonomousLLMSystemController
 from jarvis.observability import log_event
 from jarvis.observability.instruments import DECISION_EVALUATIONS, DECISION_LATENCY
 
@@ -164,6 +165,7 @@ class JarvisOrchestrator:
         self.execution_engine = ExecutionEngine(self.mt5_client, self.state_manager)
         self.trade_memory = TradeMemory()
         self.strategy_memory = StrategyRegimeMemory(self.trade_memory)
+        self.llm_controller = AutonomousLLMSystemController(state_manager=self.state_manager)
 
         self.state_synchronizer = MT5StateSynchronizer(self.mt5_client, self.state_manager, self.event_bus)
         self.position_monitor = PositionMonitorEngine(
@@ -245,6 +247,13 @@ class JarvisOrchestrator:
                 # 4. Pending Order Staleness Cleanup (Task 2c)
                 if int(now) % 60 < 10:
                     self.order_manager.cleanup_stale_pending_orders(max_age_sec=1800)
+
+                # 5. Autonomous LLM Governor Dynamic Telemetry Refresh
+                if int(now) % 180 < 10:
+                    try:
+                        self.llm_controller.get_latest_directives()
+                    except Exception as e:
+                        logger.debug(f"LLM Governor background refresh error: {e}")
 
             except Exception as e:
                 logger.error(f"Watchdog supervisor error: {e}", exc_info=True)
@@ -796,6 +805,25 @@ class JarvisOrchestrator:
                     "execution": None,
                     "unusable_data": True,
                 }
+        # 1d. LLM Master Governor Symbol Directive Check
+        if hasattr(self, "llm_controller"):
+            try:
+                gov_directives = self.llm_controller.get_latest_directives()
+                sym_dir = gov_directives.symbol_directives.get(symbol)
+                if sym_dir and sym_dir.status == "PAUSED":
+                    logger.debug(f"[{symbol}] Entry paused by LLM Governor ({sym_dir.reason}).")
+                    return {
+                        "symbol": symbol,
+                        "trade_style": active_trade_style,
+                        "decision": None,
+                        "context": None,
+                        "authorized": False,
+                        "auth_reason": f"LLM_GOVERNOR_PAUSED: {sym_dir.reason}",
+                        "dry_run": bool(dry_run),
+                        "execution": None,
+                    }
+            except Exception as e:
+                logger.debug(f"LLM Governor check failed: {e}")
 
         _spec = _resolve_sym(symbol)
         
@@ -1120,6 +1148,17 @@ class JarvisOrchestrator:
             _reason = "ROLLOVER_BLACKOUT: Broker spread expansion window active (21:00-23:00 UTC)." if is_rollover_blackout else "ASIAN_SESSION_BLACKOUT: Low liquidity chop protection active (00:00-06:00 UTC)."
             auth_res = {"authorized": False, "reason": _reason}
         elif auth_res.get("authorized"):
+            # Apply LLM Governor dynamic risk multiplier
+            if hasattr(self, "llm_controller"):
+                try:
+                    gov_directives = self.llm_controller.get_latest_directives()
+                    if gov_directives.risk_multiplier != 1.0 and hasattr(decision, "calculated_risk_percent"):
+                        decision.calculated_risk_percent = round(
+                            max(0.25, min(2.5, decision.calculated_risk_percent * gov_directives.risk_multiplier)), 2
+                        )
+                except Exception as e:
+                    logger.debug(f"LLM Governor risk scaling failed: {e}")
+
             # Route through Master Adaptive Risk Engine (enforcing all 15 conditions if second trade)
             auth_res = self.risk_engine.authorize_execution(
                 decision, account, positions, sym_info,

@@ -494,17 +494,17 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
     "EURUSD": SymbolProfileConfig(
         symbol="EURUSD", canonical="EURUSD", asset_class="FOREX",
         strategy_weights={"RANGE_MEAN_REVERSION": 2.8, "TREND_PULLBACK": 2.5, "CHOCH_STRUCTURAL_REVERSAL": 2.2, "LIQUIDITY_SWEEP_REVERSAL": 2.0, "TREND_FOLLOWING": 2.0, "BREAKOUT_EXPANSION": 0.5},
-        banned_strategies=[], sl_atr_multiplier=2.60, min_target_rr=2.0, asym_rr=3.5,
-        fast_cash_r=1.50, fast_cash_volume_pct=0.33, be_trigger_r=1.80, runner_trail_atr=2.60,
-        session_restriction=False, allowed_utc_hours=None, contract_size=100_000.0, pip_size=0.0001, pip_value_per_lot=10.0, digits=5,
+        banned_strategies=[], sl_atr_multiplier=1.40, min_target_rr=2.0, asym_rr=3.5,
+        fast_cash_r=1.50, fast_cash_volume_pct=0.33, be_trigger_r=1.80, runner_trail_atr=2.00,
+        session_restriction=True, allowed_utc_hours=(7, 17), contract_size=100_000.0, pip_size=0.0001, pip_value_per_lot=10.0, digits=5,
         typical_spread_pips=1.6, max_allowed_spread_pips=3.5, commission_per_lot=0.0, margin_pct=0.1
     ),
     "GBPUSD": SymbolProfileConfig(
         symbol="GBPUSD", canonical="GBPUSD", asset_class="FOREX",
         strategy_weights={"TREND_PULLBACK": 3.0, "CHOCH_STRUCTURAL_REVERSAL": 2.6, "LIQUIDITY_SWEEP_REVERSAL": 2.2, "TREND_FOLLOWING": 2.2, "RANGE_MEAN_REVERSION": 1.8, "BREAKOUT_EXPANSION": 0.5},
-        banned_strategies=[], sl_atr_multiplier=2.60, min_target_rr=2.0, asym_rr=3.5,
-        fast_cash_r=1.50, fast_cash_volume_pct=0.33, be_trigger_r=1.80, runner_trail_atr=2.60,
-        session_restriction=False, allowed_utc_hours=None, contract_size=100_000.0, pip_size=0.0001, pip_value_per_lot=10.0, digits=5,
+        banned_strategies=[], sl_atr_multiplier=1.60, min_target_rr=2.0, asym_rr=3.5,
+        fast_cash_r=1.50, fast_cash_volume_pct=0.33, be_trigger_r=1.80, runner_trail_atr=2.20,
+        session_restriction=True, allowed_utc_hours=(7, 17), contract_size=100_000.0, pip_size=0.0001, pip_value_per_lot=10.0, digits=5,
         typical_spread_pips=1.8, max_allowed_spread_pips=3.8, commission_per_lot=0.0, margin_pct=0.1
     ),
     "USDJPY": SymbolProfileConfig(

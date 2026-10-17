@@ -195,6 +195,8 @@ class TradeMemory:
                     ml_features TEXT
                 )
             """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_trade_records_ts ON trade_records(timestamp);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_trade_records_sym ON trade_records(symbol);")
             self._conn.commit()
             # D3: bring the file up to SCHEMA_VERSION one numbered step at a time.
             # A brand-new file already has every column (the CREATE above) and

@@ -393,8 +393,6 @@ class SQLiteTradeDB:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_executed_trades_ticket ON executed_trades(ticket);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_executed_trades_symbol ON executed_trades(symbol);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_executed_trades_timestamp ON executed_trades(timestamp);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_executed_trades_regime ON executed_trades(regime);")
-
             # D3: bring the file up to the current shape one numbered step at a
             # time. This replaces an unconditional "add whatever column is
             # missing" sweep, which ran on every open and could express neither
@@ -408,6 +406,8 @@ class SQLiteTradeDB:
             version = migrate(conn, "executed_trades", SCHEMA_VERSION, MIGRATIONS)
             if version == SCHEMA_VERSION:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_executed_trades_position_id ON executed_trades(position_id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_executed_trades_sym_reg_id ON executed_trades(symbol, regime, id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_executed_trades_reg_closed_id ON executed_trades(regime, closed_at, id);")
             conn.commit()
 
             logger.info("SQLite database initialized successfully.")

@@ -130,7 +130,17 @@ class StrategySelector:
                 prior_weights["CHOCH_STRUCTURAL_REVERSAL"] = 1.0
                 prior_weights["LIQUIDITY_SWEEP_REVERSAL"] = 0.0
             elif is_crypto:
-                if "BTC" in symbol_name:
+                from datetime import datetime, timezone
+                is_weekend = datetime.now(timezone.utc).weekday() >= 5
+                if is_weekend:
+                    # Weekend: institutional CME/ETF desks closed -> low volume chop, prioritize VWAP range mean reversion
+                    prior_weights["RANGE_MEAN_REVERSION"] = 3.5
+                    prior_weights["CHOCH_STRUCTURAL_REVERSAL"] = 1.5
+                    prior_weights["TREND_FOLLOWING"] = 0.0
+                    prior_weights["BREAKOUT_EXPANSION"] = 0.0
+                    prior_weights["TREND_PULLBACK"] = 0.5
+                    prior_weights["LIQUIDITY_SWEEP_REVERSAL"] = 0.0
+                elif "BTC" in symbol_name:
                     # Bitcoin: Trend Following (3.0) and Breakout Expansion (2.5); ban shallow pullbacks (0/32 wins, -$430 loss)
                     prior_weights["TREND_FOLLOWING"] = 3.0
                     prior_weights["BREAKOUT_EXPANSION"] = 2.5

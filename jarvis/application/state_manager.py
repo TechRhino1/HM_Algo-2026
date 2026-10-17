@@ -92,6 +92,7 @@ class StateManager:
         self.market_contexts: Dict[str, MarketContext] = {}
         self.latest_decisions: Dict[str, DecisionObject] = {}
         self.radar_opportunities: List[Dict[str, Any]] = []
+        self.llm_governor_state: Dict[str, Any] = {}
         self.services_health: Dict[str, str] = {
             "MT5": "DISCONNECTED",
             "DATA_FEED": "OFFLINE",
@@ -224,6 +225,10 @@ class StateManager:
         }
         return snap
 
+    def update_llm_governor_state(self, state: Dict[str, Any]):
+        with self._rw_lock:
+            self.llm_governor_state = state or {}
+
     def get_state_snapshot(self) -> Dict[str, Any]:
         """Returns an atomic serialization of current system state for API/UI dashboards."""
         with self._rw_lock:
@@ -244,6 +249,7 @@ class StateManager:
                 "services": self.services_health,
                 "radar_opportunities": self.radar_opportunities,
                 "latest_decisions": dec_dict,
+                "llm_governor": self.llm_governor_state,
                 "recent_logs": self.logs[-50:],
                 "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             }
