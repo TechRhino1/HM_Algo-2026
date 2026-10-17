@@ -16,7 +16,7 @@ logger = logging.getLogger("JARVIS_ExecutionEngine")
 class ExecutionEngine:
     def __init__(self, mt5_client: MT5Client, state_manager: StateManager = GLOBAL_STATE):
         self.mt5_client = mt5_client
-        self.state_manager = state_manager
+        self.state_manager = state_manager or GLOBAL_STATE
 
     def _classify_broker_response(self, res: Optional[Dict[str, Any]]) -> str:
         """Classify broker response according to Spec v2.2 taxonomy:
@@ -95,14 +95,20 @@ class ExecutionEngine:
             return round(round(price / tick_size) * tick_size, digits)
         return round(price, digits)
 
-    def execute_decision(self, decision: DecisionObject, lots: float) -> Dict[str, Any]:
+    def execute_decision(
+        self,
+        decision: DecisionObject,
+        lots: float,
+        sym_spec: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Dispatches authorized decision to MT5 or Paper Simulator."""
         if not decision.execution_authorized or lots <= 0:
             logger.warning(f"Execution rejected for {decision.symbol}: Not authorized or invalid lot size ({lots}).")
             ORDERS_SUBMITTED.inc(mode=self._execution_mode(), status="BLOCKED")
             return {"status": "BLOCKED", "reason": "Execution unauthorized"}
 
-        if self.state_manager.is_safe_mode:
+        state_mgr = self.state_manager or GLOBAL_STATE
+        if getattr(state_mgr, "is_safe_mode", False):
             logger.warning(f"Execution blocked for {decision.symbol}: SAFE MODE is ACTIVE.")
             ORDERS_SUBMITTED.inc(mode=self._execution_mode(), status="BLOCKED")
             return {"status": "BLOCKED", "reason": "Safe mode active"}
@@ -117,7 +123,7 @@ class ExecutionEngine:
         decision.setup_id = setup_id_val
         setup_id = setup_id_val
 
-        mode = self.state_manager.execution_mode
+        mode = getattr(state_mgr, "execution_mode", "demo")
         trade_style = getattr(decision, "trade_style", "") or "DAY"
         ts_str = str(trade_style).upper()
         if "SWING" in ts_str:
@@ -131,9 +137,10 @@ class ExecutionEngine:
         comment = f"HMA2_{style_code}_{strat_code}_{mode_code}"
 
         # ── Pre-fill Broker-Safe Sizing and SL Distance Calculation (Spec v2.1 Refinement 1) ──
-        sym_spec = {}
-        if hasattr(self.mt5_client, "get_symbol_trading_spec"):
-            sym_spec = self.mt5_client.get_symbol_trading_spec(decision.symbol)
+        if sym_spec is None:
+            sym_spec = {}
+            if hasattr(self.mt5_client, "get_symbol_trading_spec"):
+                sym_spec = self.mt5_client.get_symbol_trading_spec(decision.symbol) or {}
         
         point = float(sym_spec.get("point", 0.0001) or 0.0001)
         digits = int(sym_spec.get("digits", 5) or 5)
@@ -151,17 +158,37 @@ class ExecutionEngine:
         executable_sl_dist = max(planned_sl_dist, min_broker_stop_dist)
         executable_tp_dist = abs(decision.take_profit - decision.entry_price) if decision.take_profit > 0 else 0.0
 
-        # If planned stop is too close to entry for the broker, adjust SL before dispatch
+        # If planned stop is too close to entry for the broker, adjust SL and TP proportionally
         if executable_sl_dist > planned_sl_dist + 1e-9:
-            logger.info(
-                f"🔧 ADJUSTING SL TO BROKER MINIMUM for {decision.symbol}: Planned {planned_sl_dist:.5f} -> Executable {executable_sl_dist:.5f} "
-                f"(stops_level={stops_level}, spread={spread_points} pts)"
-            )
+            # RULE 1: If broker minimum stop distance is > 2.0x planned stop,
+            # the scalp/intraday geometry is fundamentally invalid for this broker. BLOCK ORDER!
+            if executable_sl_dist > (planned_sl_dist * 2.0):
+                logger.error(
+                    f"🛑 EXECUTION BLOCKED for {decision.symbol}: Broker stops_level ({executable_sl_dist:.2f} pts) "
+                    f"is > 2.0x planned stop ({planned_sl_dist:.2f} pts). Scalp geometry invalid on this broker."
+                )
+                return {"status": "BLOCKED", "reason": f"Broker stops_level exceeds 2x planned stop ({executable_sl_dist:.2f} > {planned_sl_dist*2:.2f})"}
+
+            # RULE 2: If stop is modestly widened, Take Profit MUST be proportionally expanded
+            # to preserve at least 1.8:1 (or 2.0:1 for Gold) Risk:Reward ratio!
+            min_target_rr = 2.0 if ("XAU" in decision.symbol.upper() or "GOLD" in decision.symbol.upper()) else 1.8
+            expansion_ratio = executable_sl_dist / max(planned_sl_dist, 1e-6)
+            executable_tp_dist = max(executable_tp_dist * expansion_ratio, executable_sl_dist * min_target_rr)
+
             if decision.bias == "BUY":
                 decision.stop_loss = self._quantize_price(decision.entry_price - executable_sl_dist, tick_sz, digits)
+                decision.take_profit = self._quantize_price(decision.entry_price + executable_tp_dist, tick_sz, digits)
             else:
                 decision.stop_loss = self._quantize_price(decision.entry_price + executable_sl_dist, tick_sz, digits)
+                decision.take_profit = self._quantize_price(decision.entry_price - executable_tp_dist, tick_sz, digits)
+
             decision.sl_distance = executable_sl_dist
+            decision.tp_distance = executable_tp_dist
+            decision.risk_reward_ratio = round(executable_tp_dist / executable_sl_dist, 2)
+            logger.info(
+                f"🔧 RE-ALIGNED SL & TP to Broker Minimum: SL={decision.stop_loss} ({executable_sl_dist:.2f} pts), "
+                f"TP={decision.take_profit} ({executable_tp_dist:.2f} pts), R:R={decision.risk_reward_ratio}:1"
+            )
 
             # Adjust lot size down if widening the SL would breach the risk budget
             account_equity = self.state_manager.account.equity if self.state_manager.account else 10000.0
@@ -172,6 +199,17 @@ class ExecutionEngine:
             safe_lots = target_risk_usd / (executable_sl_dist * dollar_risk_per_price_unit)
             vol_step = float(sym_spec.get("volume_step", 0.01) or 0.01)
             vol_min = float(sym_spec.get("volume_min", 0.01) or 0.01)
+            
+            # Micro-account capital preservation guard:
+            # If minimum lot forced risk > $12.00 on account < $500, REJECT ORDER!
+            min_lot_risk_usd = vol_min * executable_sl_dist * dollar_risk_per_price_unit
+            if account_equity < 500.0 and min_lot_risk_usd > 12.0:
+                logger.error(
+                    f"🛑 EXECUTION BLOCKED for {decision.symbol}: Minimum lot {vol_min} would risk "
+                    f"${min_lot_risk_usd:.2f} on equity ${account_equity:.2f} (max $12.00 allowed)."
+                )
+                return {"status": "BLOCKED", "reason": f"Risk ${min_lot_risk_usd:.2f} exceeds micro account ceiling $12.00"}
+
             safe_lots = max(vol_min, round(safe_lots / vol_step) * vol_step)
             safe_lots = round(safe_lots, 2)
             if safe_lots < lots:
@@ -180,6 +218,14 @@ class ExecutionEngine:
                     f"(target risk ${target_risk_usd:.2f} on {executable_sl_dist:.5f} stop distance)"
                 )
                 lots = safe_lots
+
+        # FINAL PRE-DISPATCH R:R GATE: Never dispatch any order with R:R < 1.70:1!
+        final_risk = abs(decision.entry_price - decision.stop_loss)
+        final_reward = abs(decision.take_profit - decision.entry_price)
+        final_rr = (final_reward / max(final_risk, 1e-6)) if final_risk > 0 else 0.0
+        if final_rr < 1.70:
+            logger.error(f"🛑 REJECTED DISPATCH for {decision.symbol}: Final R:R ratio {final_rr:.2f}:1 is below 1.70:1 minimum!")
+            return {"status": "BLOCKED", "reason": f"Final R:R {final_rr:.2f}:1 < 1.70"}
 
         # Pre-quantize initial levels
         decision.entry_price = self._quantize_price(decision.entry_price, tick_sz, digits)

@@ -991,9 +991,11 @@ class JarvisOrchestrator:
             o for o in all_pending_orders if (getattr(o, "symbol", "") == symbol or (symbol == "XAUUSD" and "GOLD" in getattr(o, "symbol", "")) or canonical_sym in getattr(o, "symbol", "").upper())
         ]
 
-        # Asian Pre-Market Blackout Rule (01:00 to 05:00 UTC) for Live Execution
+        # Asian Pre-Market Blackout Rule (00:00 to 06:00 UTC) & Rollover Spread Window (21:00 to 23:00 UTC)
         now_utc_hour = datetime.now(timezone.utc).hour
-        is_asian_blackout = (1 <= now_utc_hour < 5) and not is_crypto(symbol) and self.mode == "live"
+        is_asian_blackout = (0 <= now_utc_hour < 6) and not is_crypto(symbol)
+        is_rollover_blackout = (21 <= now_utc_hour <= 23) and not is_crypto(symbol)
+        is_session_blackout = is_asian_blackout or is_rollover_blackout
 
         # Active Open Position Trailing & Profit Lock Management
         # Suppressed on a dry run. When PositionMonitorEngine is actively running,
@@ -1112,10 +1114,11 @@ class JarvisOrchestrator:
             decision.decision = "WAIT"
             decision.execution_authorized = False
             auth_res = {"authorized": False, "reason": f"COOLDOWN_GUARD: {remaining}s remaining before next {canonical_sym} trade."}
-        elif is_asian_blackout and wants_entry:
+        elif is_session_blackout and wants_entry:
             decision.decision = "WAIT"
             decision.execution_authorized = False
-            auth_res = {"authorized": False, "reason": "ASIAN_SESSION_BLACKOUT: Low liquidity chop protection active."}
+            _reason = "ROLLOVER_BLACKOUT: Broker spread expansion window active (21:00-23:00 UTC)." if is_rollover_blackout else "ASIAN_SESSION_BLACKOUT: Low liquidity chop protection active (00:00-06:00 UTC)."
+            auth_res = {"authorized": False, "reason": _reason}
         elif auth_res.get("authorized"):
             # Route through Master Adaptive Risk Engine (enforcing all 15 conditions if second trade)
             auth_res = self.risk_engine.authorize_execution(

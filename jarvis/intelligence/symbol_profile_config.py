@@ -73,14 +73,14 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
             "LIQUIDITY_SWEEP_REVERSAL": 0.5,   # Avoid counter-trend sweep fades in crypto
         },
         banned_strategies=[],
-        sl_atr_multiplier=2.50,                # Widen from 1.80 to give BTC breathing room
+        sl_atr_multiplier=1.50,                # Calibrated for local structural execution
         min_target_rr=2.0,
         asym_rr=3.5,
-        anti_wick_buffer_atr=0.60,             # Widen from 0.35 to absorb crypto wicks
+        anti_wick_buffer_atr=0.40,             # Calibrated to absorb crypto wicks
         fast_cash_r=1.50,
         fast_cash_volume_pct=0.33,
         be_trigger_r=1.80,
-        runner_trail_atr=2.20,                 # Widen from 1.50 so trails don't scratch early
+        runner_trail_atr=1.80,                 # Calibrated runner trail
         session_restriction=False,
         contract_size=1.0,
         pip_size=0.01,
@@ -107,14 +107,14 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
             "BREAKOUT_EXPANSION": 1.0,
         },
         banned_strategies=[],
-        sl_atr_multiplier=3.20,
+        sl_atr_multiplier=1.60,                # Calibrated local swing stop (was 3.20 macro stop)
         min_target_rr=2.0,
-        asym_rr=4.0,
-        anti_wick_buffer_atr=0.45,
-        fast_cash_r=1.00,
-        fast_cash_volume_pct=0.35,
-        be_trigger_r=2.00,
-        runner_trail_atr=2.60,
+        asym_rr=3.5,
+        anti_wick_buffer_atr=0.35,
+        fast_cash_r=1.50,
+        fast_cash_volume_pct=0.33,
+        be_trigger_r=1.80,
+        runner_trail_atr=1.80,
         session_restriction=False,
         contract_size=1.0,
         pip_size=0.01,
@@ -432,14 +432,14 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
             "TREND_FOLLOWING": 1.8,
         },
         banned_strategies=["RANGE_MEAN_REVERSION"],
-        sl_atr_multiplier=1.60,                # Institutional Gold SMC stop: tight anchor beyond swept swing
+        sl_atr_multiplier=1.00,                # Institutional Gold SMC stop: tight anchor beyond swept swing (max 10-12 pts)
         min_target_rr=2.0,
-        asym_rr=4.2,
+        asym_rr=3.8,
         anti_wick_buffer_atr=0.25,
         fast_cash_r=1.50,
         fast_cash_volume_pct=0.33,
         be_trigger_r=1.80,
-        runner_trail_atr=2.40,
+        runner_trail_atr=2.00,
         session_restriction=True,
         allowed_utc_hours=(7, 19),
         contract_size=100.0,

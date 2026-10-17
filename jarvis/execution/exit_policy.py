@@ -221,13 +221,13 @@ def evaluate_exit(
     # Breakeven lock triggers when dedicated be_trigger_r is reached, OR on >= 50%
     # progress toward TP for scalps / sub-1.65R structural targets with >= +0.45R excursion.
     is_short_horizon_target = 0.0 < target_r <= 1.65
-    be_by_tp = (is_short_horizon_target and progress_tp >= 0.50 and r_multiple >= 0.45)
+    be_by_tp = (is_short_horizon_target and progress_tp >= 0.70 and r_multiple >= 0.85)
     be_triggered = be_already_locked or (r_multiple >= policy.be_trigger_r) or be_by_tp
     if not be_already_locked:
         if r_multiple >= policy.be_trigger_r:
             dec.actions.append(f"BE_LOCK_{policy.be_trigger_r:.2f}R")
         elif be_by_tp:
-            dec.actions.append(f"BE_LOCK_50%TP({int(progress_tp*100)}%)")
+            dec.actions.append(f"BE_LOCK_70%TP({int(progress_tp*100)}%)")
 
     if be_triggered:
         dec.be_locked = True

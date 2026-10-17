@@ -856,7 +856,17 @@ class DecisionEngine:
                 is_prime_session_valid = False
             else:
                 is_prime_session_valid = (spread <= spec.max_spread_pips) or (ai_score >= 70.0)
-        elif is_gold or is_oil_asset:
+        elif is_gold:
+            cfg = get_symbol_profile_config(sym_name)
+            c_ts = getattr(context, "timestamp", None)
+            now_dt = c_ts if isinstance(c_ts, datetime) else datetime.now(timezone.utc)
+            if cfg and cfg.session_restriction and cfg.allowed_utc_hours:
+                start_h, end_h = cfg.allowed_utc_hours
+                # Strictly enforce 07:00 to 19:00 UTC (London & NY prime liquidity sessions) on weekdays
+                is_prime_session_valid = (now_dt.weekday() < 5) and (start_h <= now_dt.hour < end_h)
+            else:
+                is_prime_session_valid = (now_dt.weekday() < 5) and (7 <= now_dt.hour < 19)
+        elif is_oil_asset:
             is_prime_session_valid = True
         elif is_jpy:
             is_prime_session_valid = kz_active or (context.session.is_prime_session if hasattr(context, "session") and context.session else False) or (spread <= spec.typical_spread_pips * 1.5) or is_micro_mode or "SCALP" in t_style_check

@@ -273,9 +273,10 @@ class DynamicRiskAndLevelsEngine:
                     candidate_anchors.append(float(kl["price"]))
 
             if candidate_anchors:
-                # Anti-Wick Shield: Outer structural support boundary min(candidate_anchors)
-                anchors_in_range = [a for a in candidate_anchors if (entry_price - a) <= 3.0 * atr]
-                anchor = min(anchors_in_range) if anchors_in_range else (entry_price - 1.5 * atr)
+                # Anti-Wick Shield: Nearest structural support boundary max(candidate_anchors) within local breathing room
+                max_anchor_dist = 1.20 * atr if (is_gold or is_crypto) else 1.80 * atr
+                anchors_in_range = [a for a in candidate_anchors if 0 < (entry_price - a) <= max_anchor_dist]
+                anchor = max(anchors_in_range) if anchors_in_range else (entry_price - (0.85 * atr))
                 struct_sl_dist = (entry_price - anchor) + effective_buffer + spread_dist
             else:
                 struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
@@ -300,15 +301,29 @@ class DynamicRiskAndLevelsEngine:
                     sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
                     min_target_rr = 2.0
                     asym_rr = 2.8
+                elif is_gold:
+                    sl_dist = min(10.0 + spread_dist, max(6.0 + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 3.0
                 else:
                     sl_dist = min(2.20 * atr + spread_dist, max(1.25 * atr + spread_dist, struct_sl_dist))
                     min_target_rr = 2.0
                     asym_rr = 2.8
             else:  # SWING
                 if is_gold:
-                    max_swing_sl = min(cfg.sl_atr_multiplier * atr, max(25.0, 1.60 * atr))
+                    # Enforce strict small-account capital preservation (6.0 to 12.0 points max on Gold)
+                    max_swing_sl = min(12.0, max(6.0, 1.0 * atr))
                     min_target_rr = 2.0 if is_ranging else 2.5
-                    asym_rr = 2.5 if is_ranging else 4.2
+                    asym_rr = 2.5 if is_ranging else 3.8
+                elif is_crypto:
+                    if "ETH" in sym_name and "ETHBTC" not in sym_name:
+                        max_swing_sl = min(32.0, max(18.0, 1.40 * atr))
+                    elif "BTC" in sym_name:
+                        max_swing_sl = min(750.0, max(400.0, 1.40 * atr))
+                    else:
+                        max_swing_sl = cfg.sl_atr_multiplier * atr
+                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
+                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
                 else:
                     max_swing_sl = cfg.sl_atr_multiplier * atr
                     min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
@@ -322,10 +337,11 @@ class DynamicRiskAndLevelsEngine:
                 sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
 
             # Floor is derived from current conditions: >=3.5x spread and >=1.20x ATR to protect against noise
-            min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
             if is_gold:
-                min_sl_dist = max(min_sl_dist, 8.0)
-            elif is_silver:
+                min_sl_dist = max(3.5 * spread_dist, 6.0, min(10.0, 0.60 * atr + spread_dist))
+            else:
+                min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
+            if is_silver:
                 min_sl_dist = max(min_sl_dist, 0.35)
             elif is_oil:
                 min_sl_dist = max(min_sl_dist, 0.65)
@@ -333,16 +349,18 @@ class DynamicRiskAndLevelsEngine:
                 if "ETHBTC" in sym_name:
                     min_crypto_pts = max(3.5 * spread_dist, 0.00030)
                 elif "ETH" in sym_name:
-                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
-                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, eth_base_floor)
+                    eth_base_floor = 8.0 if "SCALP" in style.upper() else (14.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 18.0)
+                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, eth_base_floor)
                 elif "BTC" in sym_name:
-                    btc_base_floor = 450.0 if "SCALP" in style.upper() else 650.0
-                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, btc_base_floor)
+                    btc_base_floor = 300.0 if "SCALP" in style.upper() else 450.0
+                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, btc_base_floor)
                 else:
                     min_crypto_pts = 2.50
                 min_sl_dist = max(min_sl_dist, min_crypto_pts)
 
             sl_dist = max(sl_dist, min_sl_dist)
+            if is_gold:
+                sl_dist = min(sl_dist, 12.0 + spread_dist)
             sl_price = round(entry_price - sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
@@ -495,9 +513,10 @@ class DynamicRiskAndLevelsEngine:
                     candidate_anchors.append(float(kl["price"]))
 
             if candidate_anchors:
-                # Anti-Wick Shield: Outer structural resistance boundary max(candidate_anchors)
-                anchors_in_range = [a for a in candidate_anchors if (a - entry_price) <= 3.0 * atr]
-                anchor = max(anchors_in_range) if anchors_in_range else (entry_price + 1.5 * atr)
+                # Anti-Wick Shield: Nearest structural resistance boundary min(candidate_anchors) within local breathing room
+                max_anchor_dist = 1.20 * atr if (is_gold or is_crypto) else 1.80 * atr
+                anchors_in_range = [a for a in candidate_anchors if 0 < (a - entry_price) <= max_anchor_dist]
+                anchor = min(anchors_in_range) if anchors_in_range else (entry_price + (0.85 * atr))
                 struct_sl_dist = (anchor - entry_price) + effective_buffer + spread_dist
             else:
                 struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
@@ -515,15 +534,29 @@ class DynamicRiskAndLevelsEngine:
                     sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
                     min_target_rr = 2.0
                     asym_rr = 2.8
+                elif is_gold:
+                    sl_dist = min(10.0 + spread_dist, max(6.0 + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 3.0
                 else:
                     sl_dist = min(2.20 * atr + spread_dist, max(1.25 * atr + spread_dist, struct_sl_dist))
                     min_target_rr = 2.0
                     asym_rr = 2.8
             else:  # SWING
                 if is_gold:
-                    max_swing_sl = min(cfg.sl_atr_multiplier * atr, max(25.0, 1.60 * atr))
+                    # Enforce strict small-account capital preservation (6.0 to 12.0 points max on Gold)
+                    max_swing_sl = min(12.0, max(6.0, 1.0 * atr))
                     min_target_rr = 2.0 if is_ranging else 2.5
-                    asym_rr = 2.5 if is_ranging else 4.2
+                    asym_rr = 2.5 if is_ranging else 3.8
+                elif is_crypto:
+                    if "ETH" in sym_name and "ETHBTC" not in sym_name:
+                        max_swing_sl = min(32.0, max(18.0, 1.40 * atr))
+                    elif "BTC" in sym_name:
+                        max_swing_sl = min(750.0, max(400.0, 1.40 * atr))
+                    else:
+                        max_swing_sl = cfg.sl_atr_multiplier * atr
+                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
+                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
                 else:
                     max_swing_sl = cfg.sl_atr_multiplier * atr
                     min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
@@ -537,10 +570,11 @@ class DynamicRiskAndLevelsEngine:
                 sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
 
             # Floor is derived from current conditions: >=3.5x spread and >=1.20x ATR to protect against noise
-            min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
             if is_gold:
-                min_sl_dist = max(min_sl_dist, 8.0)
-            elif is_silver:
+                min_sl_dist = max(3.5 * spread_dist, 6.0, min(10.0, 0.60 * atr + spread_dist))
+            else:
+                min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
+            if is_silver:
                 min_sl_dist = max(min_sl_dist, 0.35)
             elif is_oil:
                 min_sl_dist = max(min_sl_dist, 0.65)
@@ -548,16 +582,18 @@ class DynamicRiskAndLevelsEngine:
                 if "ETHBTC" in sym_name:
                     min_crypto_pts = max(3.5 * spread_dist, 0.00030)
                 elif "ETH" in sym_name:
-                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
-                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, eth_base_floor)
+                    eth_base_floor = 8.0 if "SCALP" in style.upper() else (14.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 18.0)
+                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, eth_base_floor)
                 elif "BTC" in sym_name:
-                    btc_base_floor = 450.0 if "SCALP" in style.upper() else 650.0
-                    min_crypto_pts = max(3.5 * spread_dist, 1.80 * atr, btc_base_floor)
+                    btc_base_floor = 300.0 if "SCALP" in style.upper() else 450.0
+                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, btc_base_floor)
                 else:
                     min_crypto_pts = 2.50
                 min_sl_dist = max(min_sl_dist, min_crypto_pts)
 
             sl_dist = max(sl_dist, min_sl_dist)
+            if is_gold:
+                sl_dist = min(sl_dist, 12.0 + spread_dist)
             sl_price = round(entry_price + sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 

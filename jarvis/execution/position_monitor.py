@@ -1721,46 +1721,52 @@ class PositionMonitorEngine:
             # ── PHASE 0: Early Structural Thesis Invalidation (current_r < 0.20R) ──
             if current_r < 0.20:
                 # Decisive structural breakdown of the trade's premise:
-                # Requires confirmed CHoCH/BOS against the trade, plus at least one of:
-                # (1) Liquidity sweep in opposite direction (e.g. SSL swept & reclaimed for a short)
-                # (2) Significant adverse momentum / trend score inversion (|score| >= 25)
-                # (3) Multi-timeframe reversal (M5 & M15 flipped against trade)
-                # (4) Strong candlestick reversal or order flow absorption trap
-                if has_structural_break and signal_count >= 2:
+                # Requires confirmed CHoCH/BOS against the trade with signal_count >= 2,
+                # OR severe momentum inversion (|trend_score| >= 25) + MTF alignment flip against trade
+                # when underwater (saving 40-70% stop loss capital before full SL hit).
+                is_momentum_wreck = ("ADVERSE_MOMENTUM" in sig_summary and "MTF" in sig_summary and signal_count >= 2 and current_r <= -0.25)
+                if (has_structural_break and signal_count >= 2) or is_momentum_wreck:
                     return current_sl, None, True, f"STRUCTURAL_THESIS_INVALIDATION({current_r:.2f}R | {sig_summary})"
                 return current_sl, None, False, None
 
-            # Normal breathing room zone (+0.20R <= current_r < +0.50R)
-            if current_r < 0.50:
+            # ── NORMAL BREATHING ROOM ZONE (+0.20R <= current_r < +1.0R) ─────────
+            # Per institutional trading skills: NEVER choke a developing trade at +0.50R
+            # with premature breakeven moves on minor lower-timeframe noise or candles.
+            # Allow position full breathing room to develop toward target.
+            if current_r < 1.0:
                 return current_sl, None, False, None
 
-            # ── PHASE 3: High Profit Runner (current_r >= 1.80R) ─────────────────
-            if current_r >= 1.80:
+            # ── PHASE 3: High Profit Runner (current_r >= 2.0R) ──────────────────
+            if current_r >= 2.0:
                 if has_structural_break or signal_count >= 2:
                     return current_sl, None, True, f"RUNNER_REVERSAL_EXIT(+{current_r:.2f}R | {sig_summary})"
                 profit_dist = (c_price - pos.open_price) if is_buy else (pos.open_price - c_price)
-                lock_dist = profit_dist * 0.70
+                lock_dist = profit_dist * 0.75
                 candidate = round(pos.open_price + lock_dist if is_buy else pos.open_price - lock_dist, digits)
                 if (is_buy and candidate > current_sl) or ((not is_buy) and (current_sl == 0 or candidate < current_sl)):
-                    return candidate, f"RUNNER_REVERSAL_LOCK_70%@{candidate:.4f}", False, None
+                    return candidate, f"RUNNER_REVERSAL_LOCK_75%@{candidate:.4f}", False, None
 
-            # ── PHASE 2: Solid Profit (1.0R <= current_r < 1.80R) ────────────────
-            elif current_r >= 1.0:
-                if (has_structural_break and signal_count >= 2) or signal_count >= 3:
+            # ── PHASE 2: Solid Profit (+1.50R <= current_r < 2.0R) ───────────────
+            elif current_r >= 1.50:
+                # Only execute discretionary market close on overwhelming reversal confirmation (3+ signals with structural break)
+                if has_structural_break and signal_count >= 3:
                     return current_sl, None, True, f"DIRECTION_REVERSAL_BANK(+{current_r:.2f}R | {sig_summary})"
 
+                # Otherwise ratchet SL to lock at least +0.75R profit
                 profit_dist = (c_price - pos.open_price) if is_buy else (pos.open_price - c_price)
-                lock_dist = max(risk_dist * 0.50, profit_dist * 0.50)
+                lock_dist = max(risk_dist * 0.75, profit_dist * 0.55)
                 candidate = round(pos.open_price + lock_dist if is_buy else pos.open_price - lock_dist, digits)
                 if (is_buy and candidate > current_sl) or ((not is_buy) and (current_sl == 0 or candidate < current_sl)):
-                    return candidate, f"REVERSAL_LOCK_50%@{candidate:.4f}", False, None
+                    return candidate, f"REVERSAL_LOCK_75%@{candidate:.4f}", False, None
 
-            # ── PHASE 1: Early Profit (+0.50R <= current_r < 1.0R) ───────────────
+            # ── PHASE 1: Established Profit (+1.0R <= current_r < 1.50R) ─────────
             else:
-                buf = policy.buffer_distance(risk_dist) if hasattr(policy, "buffer_distance") else min(atr * 0.10, risk_dist * 0.10)
-                be_sl = round(pos.open_price + buf if is_buy else pos.open_price - buf, digits)
-                if (is_buy and be_sl > current_sl) or ((not is_buy) and (current_sl == 0 or be_sl < current_sl)):
-                    return be_sl, f"REVERSAL_DEFENSE_BE@{be_sl:.4f}({sig_summary})", False, None
+                # Only ratchet to breakeven if there is an actual confirmed opposite structural shift
+                if has_structural_break and signal_count >= 2:
+                    buf = policy.buffer_distance(risk_dist) if hasattr(policy, "buffer_distance") else min(atr * 0.10, risk_dist * 0.10)
+                    be_sl = round(pos.open_price + buf if is_buy else pos.open_price - buf, digits)
+                    if (is_buy and be_sl > current_sl) or ((not is_buy) and (current_sl == 0 or be_sl < current_sl)):
+                        return be_sl, f"REVERSAL_DEFENSE_BE@{be_sl:.4f}({sig_summary})", False, None
 
         except Exception as e:
             logger.debug(f"_check_market_direction_reversal error for #{pos.ticket}: {e}")

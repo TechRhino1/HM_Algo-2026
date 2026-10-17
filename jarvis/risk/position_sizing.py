@@ -184,21 +184,25 @@ class PositionSizer:
                 tier_cap = 2.0 * effective_risk_pct  # large accounts: strict
 
             # For micro accounts (< $1000), minimum broker lot (0.01) on Gold or Crypto
-            # forces an absolute dollar risk dictated by market volatility ($20-$35).
-            # Allowing up to $35 absolute risk (or up to 8.5% risk cap for Gold/Crypto)
-            # ensures viable high-EV institutional setups on Gold are not deadlock-rejected.
+            # forces an absolute dollar risk dictated by market volatility.
+            # On micro accounts (< $500), absolute risk must NEVER exceed $12.00 (under 2.7% max risk)
+            # to strictly prevent destructive single-trade drawdowns.
             is_gold_asset = any(k in sym_key for k in ("XAU", "GOLD"))
             is_crypto_asset = any(k in sym_key for k in ("BTC", "ETH", "SOL"))
 
-            if (is_gold_asset or is_crypto_asset) and 150.0 <= account_balance < 1000.0:
-                tier_cap = max(tier_cap, 8.5)
+            if (is_gold_asset or is_crypto_asset) and 150.0 <= account_balance < 500.0:
+                tier_cap = min(max(tier_cap, 3.0), 3.5)
+            elif (is_gold_asset or is_crypto_asset) and 500.0 <= account_balance < 1000.0:
+                tier_cap = max(tier_cap, 4.5)
 
-            # For very small accounts, also allow by dollar amount:
-            # If the actual dollar risk is small in absolute terms (≤ $35 for Gold/Crypto, ≤ $15 for FX),
-            # it's acceptable even if the percentage looks high.
+            # For very small accounts, enforce a calibrated dollar floor:
+            # - Accounts < $500: max $12.00 risk on Gold/Crypto, $8.00 on FX
+            # - Accounts $500-$1000: max $18.00 risk on Gold/Crypto, $12.00 on FX
             dollar_floor_ok = (
-                (actual_risk_dollars <= 35.0 and 150.0 <= account_balance < 1000.0 and (is_gold_asset or is_crypto_asset))
-                or (actual_risk_dollars <= 15.0 and 150.0 <= account_balance < 500.0)
+                (actual_risk_dollars <= 12.0 and 150.0 <= account_balance < 500.0 and (is_gold_asset or is_crypto_asset))
+                or (actual_risk_dollars <= 18.0 and 500.0 <= account_balance < 1000.0 and (is_gold_asset or is_crypto_asset))
+                or (actual_risk_dollars <= 8.0 and 150.0 <= account_balance < 500.0)
+                or (actual_risk_dollars <= 12.0 and 500.0 <= account_balance < 1000.0)
             )
 
             if is_micro_account and account_balance >= 100.0:
