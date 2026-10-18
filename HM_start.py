@@ -141,17 +141,18 @@ def _serveo_worker(port: int = 8501, custom_subdomain: str = "hm2026"):
                         break
                     time.sleep(0.1)
                     continue
-                if "Forwarding HTTP traffic from" in line or f"{custom_subdomain}.serveousercontent.com" in line:
-                    _TUNNEL_STATE["serveo_url"] = f"https://{custom_subdomain}.serveousercontent.com"
-                    _TUNNEL_STATE["serveo_status"] = "CONNECTED"
-                    # Only take the primary slot when Cloudflare is unavailable — see
-                    # _cloudflare_worker for why serveo is not dependable as the main link.
-                    if _TUNNEL_STATE.get("cloudflare_status") != "CONNECTED":
-                        _TUNNEL_STATE["url"] = _TUNNEL_STATE["serveo_url"]
-                        _save_active_tunnel_url(_TUNNEL_STATE["serveo_url"], "serveo")
-                        print(f"\n[HM_START] CUSTOM SUBDOMAIN ACTIVE (MOBILE LINK): {_TUNNEL_STATE['serveo_url']}\n", flush=True)
-                    logger.info(f"Custom Subdomain Active: {_TUNNEL_STATE['serveo_url']}")
-                    break
+                if "Forwarding HTTP traffic from" in line or "serveousercontent.com" in line:
+                    m = re.search(r"https://[a-zA-Z0-9-]+\.serveousercontent\.com", line)
+                    if m:
+                        actual_url = m.group(0)
+                        _TUNNEL_STATE["serveo_url"] = actual_url
+                        _TUNNEL_STATE["serveo_status"] = "CONNECTED"
+                        if _TUNNEL_STATE.get("cloudflare_status") != "CONNECTED":
+                            _TUNNEL_STATE["url"] = _TUNNEL_STATE["serveo_url"]
+                            _save_active_tunnel_url(_TUNNEL_STATE["serveo_url"], "serveo")
+                            print(f"\n[HM_START] SERVEO ACTIVE (MOBILE LINK): {_TUNNEL_STATE['serveo_url']}\n", flush=True)
+                        logger.info(f"Serveo Active: {_TUNNEL_STATE['serveo_url']}")
+                        break
                 if "Free users are limited" in line or "failed for listen port" in line:
                     rate_limited = True
 
