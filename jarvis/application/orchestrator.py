@@ -1318,7 +1318,7 @@ class JarvisOrchestrator:
         # hammering MT5 with dead socket calls that stall the worker pool.
         from jarvis.market.data_feed import _is_weekend_gap
         from jarvis.data.symbol_registry import is_crypto
-        if _is_weekend_gap(time.time()):
+        if symbols is None and _is_weekend_gap(time.time()):
             active_symbols = [s for s in active_symbols if is_crypto(s)]
 
         tasks = [(sym, style) for style in active_styles for sym in active_symbols]
@@ -1373,7 +1373,8 @@ class JarvisOrchestrator:
         except Exception as e:
             logger.debug(f"Stale pending order cleanup pass error: {e}")
 
-        best_opportunity, ranked_candidates, raw_results = self.scan_all_modes(dry_run=dry_run)
+        # Scan in dry-run mode so parallel threads do not race to execute before arbitration
+        best_opportunity, ranked_candidates, raw_results = self.scan_all_modes(dry_run=True)
 
         if best_opportunity:
             logger.info(

@@ -88,6 +88,8 @@ def _window_features(window, bias=0.0):
     hi20 = np.max(highs[-last:])
     lo20 = np.min(lows[-last:])
     pos = (closes[-1] - lo20) / (hi20 - lo20 + 1e-9)
+    up_closes = np.sum(deltas > 0)
+    frac_up = float(up_closes / (len(deltas) + 1e-9))
 
     # Parkinson realized volatility
     hl_ratio = np.maximum(highs[-last:] / np.maximum(lows[-last:], 1e-9), 1.0)

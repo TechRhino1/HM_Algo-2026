@@ -11,7 +11,7 @@ logger = logging.getLogger("JARVIS_StrategySelector")
 
 from jarvis.data.schemas import MarketRegime, RegimeOutput, MarketContext
 from jarvis.learning.strategy_bandit import StrategyBandit
-from jarvis.data.symbol_registry import resolve as resolve_symbol
+from jarvis.data.symbol_registry import resolve as resolve_symbol, is_crypto as check_is_crypto
 from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config, SYMBOL_PROFILES
 
 
@@ -70,7 +70,7 @@ class StrategySelector:
                 logger.debug("Symbol resolution failed for %s; asset class stays UNKNOWN: %s", context.symbol, e)
 
         is_jpy = "JPY" in symbol_name
-        is_crypto = (asset_class == "CRYPTO") or any(k in symbol_name for k in ["BTC", "ETH", "SOL"])
+        is_crypto = check_is_crypto(symbol_name) if symbol_name else (asset_class == "CRYPTO")
         is_gold = any(k in symbol_name for k in ["XAU", "GOLD"])
         is_oil = any(k in symbol_name for k in ["WTI", "OIL", "CRUDE"])
         is_commodity = (asset_class == "COMMODITY") or is_gold or is_oil

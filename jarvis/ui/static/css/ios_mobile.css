@@ -625,6 +625,23 @@
     padding-top: calc(var(--ios-sp-3) + 2px);
   }
 
+  /* Card density on a phone: the <=1024 card engine gives every cell 6px of
+     vertical padding, which on a 360-390px screen ran a nineteen-symbol
+     watchlist to ~4300px of cards. The phone trims rows to 3px (the value
+     type still sets the row height), tightens the card frame and keeps the
+     identity row prominent - same reading order, ~15% less scrolling. The
+     tablet sizes are untouched. */
+  table[data-hm-cards] > tbody > tr {
+    padding: 8px 12px;
+    margin: 0 0 8px;
+  }
+  table[data-hm-cards] > tbody > tr > td {
+    padding: 3px 0;
+  }
+  table[data-hm-cards] > tbody > tr > td[data-primary] {
+    padding: 0 0 6px;
+  }
+
   /* Pane selector as a segmented control. */
   .tt-pane-bar {
     grid-area: panebar;

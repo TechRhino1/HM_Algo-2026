@@ -10,6 +10,7 @@ from jarvis.execution.mt5_client import MT5Client
 from jarvis.application.state_manager import StateManager, GLOBAL_STATE
 from jarvis.observability import log_event
 from jarvis.observability.instruments import ORDERS_SUBMITTED, ORDER_LATENCY
+from jarvis.data.symbol_registry import resolve as resolve_symbol_spec
 
 logger = logging.getLogger("JARVIS_ExecutionEngine")
 
@@ -142,10 +143,11 @@ class ExecutionEngine:
             if hasattr(self.mt5_client, "get_symbol_trading_spec"):
                 sym_spec = self.mt5_client.get_symbol_trading_spec(decision.symbol) or {}
         
-        point = float(sym_spec.get("point", 0.0001) or 0.0001)
-        digits = int(sym_spec.get("digits", 5) or 5)
-        tick_sz = float(sym_spec.get("trade_tick_size", point) or point)
-        tick_val = float(sym_spec.get("trade_tick_value", 1.0) or 1.0)
+        reg_spec = resolve_symbol_spec(decision.symbol)
+        point = float(sym_spec.get("point") or (reg_spec.pip_size if reg_spec else 0.0001) or 0.0001)
+        digits = int(sym_spec.get("digits") or (reg_spec.digits if reg_spec else 5) or 5)
+        tick_sz = float(sym_spec.get("trade_tick_size") or (reg_spec.pip_size if reg_spec else point) or point)
+        tick_val = float(sym_spec.get("trade_tick_value") or (reg_spec.pip_value_per_lot if reg_spec else 1.0) or 1.0)
         dollar_risk_per_price_unit = tick_val / max(tick_sz, 1e-9)
 
         stops_level = int(sym_spec.get("trade_stops_level", 0) or 0)
@@ -219,13 +221,13 @@ class ExecutionEngine:
                 )
                 lots = safe_lots
 
-        # FINAL PRE-DISPATCH R:R GATE: Never dispatch any order with R:R < 1.70:1!
+        # FINAL PRE-DISPATCH R:R GATE: Never dispatch any order with degenerate R:R < 1.30:1!
         final_risk = abs(decision.entry_price - decision.stop_loss)
         final_reward = abs(decision.take_profit - decision.entry_price)
         final_rr = (final_reward / max(final_risk, 1e-6)) if final_risk > 0 else 0.0
-        if final_rr < 1.70:
-            logger.error(f"🛑 REJECTED DISPATCH for {decision.symbol}: Final R:R ratio {final_rr:.2f}:1 is below 1.70:1 minimum!")
-            return {"status": "BLOCKED", "reason": f"Final R:R {final_rr:.2f}:1 < 1.70"}
+        if final_rr < 1.30:
+            logger.error(f"🛑 REJECTED DISPATCH for {decision.symbol}: Final R:R ratio {final_rr:.2f}:1 is below 1.30:1 minimum!")
+            return {"status": "BLOCKED", "reason": f"Final R:R {final_rr:.2f}:1 < 1.30"}
 
         # Pre-quantize initial levels
         decision.entry_price = self._quantize_price(decision.entry_price, tick_sz, digits)

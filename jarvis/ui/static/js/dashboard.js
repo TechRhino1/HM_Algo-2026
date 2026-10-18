@@ -732,7 +732,6 @@
     var title = $('chart-title');
     if (title) title.textContent = sym + ' · ' + state.timeframe;
     renderReasoning();
-    renderCockpitHUD();
     prefillTicket();
     loadChart();
     loadSelection();
@@ -1460,267 +1459,10 @@
     return null;
   }
 
-  /* ── Bugatti Cockpit Instrument Cluster (HUD) ─────────────────────────── */
-  function renderCockpitHUD() {
-    var cluster = $('cockpit-hud-cluster');
-    if (!cluster) return;
-    var sym = state.symbol;
-    var d = findDecisionForSymbol(sym);
-    var acc = state.account;
-    var brokerUp = (state.services || {}).MT5 === 'CONNECTED';
-    var ms = sym ? (state.marketStatuses[sym] || {}) : {};
+    // Deprecated: Cockpit HUD replaced by Bento Institutional Grid
+  function renderCockpitHUD() {}
 
-    // 1. AI Direction & Regime Binnacle
-    setText($('hud-ai-symbol'), sym || '—');
-
-    var strat = d && (d.strategy || d.strategy_name || d.timeframe || d.trade_style);
-    setText($('hud-ai-strategy'), strat ? String(strat).toUpperCase().replace(/_/g, ' ') : 'STRATEGY');
-
-    // Setup Grade
-    var grade = d && (d.setup_grade || (d.quality_gate && d.quality_gate.grade) || (d.utility >= 1.2 ? 'GRADE A+' : 'GRADE A'));
-    var gradeEl = $('hud-ai-grade');
-    if (gradeEl) {
-      setText(gradeEl, grade || (d ? 'GRADE A' : 'SCANNING'));
-      if (grade === 'GRADE A+') {
-        gradeEl.className = 'binnacle-badge badge-green';
-      } else {
-        gradeEl.className = 'binnacle-badge badge-blue';
-      }
-    }
-
-    var dir = d ? String(d.direction || d.action || 'NEUTRAL').toUpperCase() : 'NEUTRAL';
-    if (!/BUY|SELL|NEUTRAL/.test(dir)) dir = 'NEUTRAL';
-    setText($('hud-ai-dir'), dir);
-
-    var dirBadge = $('hud-ai-dir-badge');
-    var pulseDot = $('hud-ai-pulse');
-    if (dirBadge) {
-      dirBadge.classList.remove('direction-pill-buy', 'direction-pill-sell', 'direction-pill-neutral');
-      if (dir === 'BUY') {
-        dirBadge.classList.add('direction-pill-buy');
-        if (pulseDot) pulseDot.style.background = '#00f59b';
-      } else if (dir === 'SELL') {
-        dirBadge.classList.add('direction-pill-sell');
-        if (pulseDot) pulseDot.style.background = '#ff3344';
-      } else {
-        dirBadge.classList.add('direction-pill-neutral');
-        if (pulseDot) pulseDot.style.background = '#94a3b8';
-      }
-    }
-
-    var confVal = null;
-    if (d) {
-      if (d.confidence !== undefined && d.confidence !== null) confVal = Number(d.confidence);
-      else if (d.consensus_score !== undefined && d.consensus_score !== null) confVal = Number(d.consensus_score);
-      else if (d.confidence_score !== undefined && d.confidence_score !== null) confVal = Number(d.confidence_score);
-    }
-    if (confVal !== null && isFinite(confVal)) {
-      if (confVal <= 1.0 && confVal > 0) confVal = confVal * 100;
-      var confPct = Math.round(Math.min(100, Math.max(0, confVal)));
-      setText($('hud-ai-conf'), confPct + '%');
-      var confBar = $('hud-ai-conf-bar');
-      if (confBar) confBar.style.width = confPct + '%';
-    } else {
-      setText($('hud-ai-conf'), '—');
-      var confBar = $('hud-ai-conf-bar');
-      if (confBar) confBar.style.width = '0%';
-    }
-
-    // Clean Regime Handling (Guards against [object Object] bug)
-    var regimeRaw = d ? (d.regime || d.market_regime || d.market_condition || (d.analysis && d.analysis.regime)) : null;
-    var regimeText = 'REGIME: SCANNING';
-    if (regimeRaw) {
-      if (typeof regimeRaw === 'object') {
-        regimeText = String(regimeRaw.primary_regime || regimeRaw.regime || regimeRaw.name || regimeRaw.type || 'ACTIVE REGIME');
-      } else {
-        regimeText = String(regimeRaw);
-      }
-      regimeText = regimeText.toUpperCase().replace(/_/g, ' ');
-    } else if (d) {
-      regimeText = 'REGIME DETECTED';
-    }
-    setText($('hud-ai-regime'), regimeText);
-
-    // EV & Expected Value
-    var ev = d && (d.expected_value || d.expected_value_r || d.ev);
-    if (ev !== undefined && ev !== null && isFinite(ev)) {
-      setText($('hud-ai-ev'), '+' + num(ev, 2) + 'R EV');
-    } else {
-      setText($('hud-ai-ev'), '+4.3R EV');
-    }
-
-    // Target R:R
-    var rr = d && (d.risk_reward_ratio || d.target_rr || d.rr);
-    if (rr && isFinite(rr)) {
-      setText($('hud-target-rr'), num(rr, 1) + ' : 1');
-    } else {
-      setText($('hud-target-rr'), '2.8 : 1');
-    }
-
-    // Multi-Timeframe Alignment Pips
-    var mtfM15 = $('mtf-m15');
-    var mtfH1 = $('mtf-h1');
-    var mtfH4 = $('mtf-h4');
-    var mtfD1 = $('mtf-d1');
-    var isBull = dir === 'BUY';
-    var isBear = dir === 'SELL';
-    function setMtfPip(el, bias) {
-      if (!el) return;
-      var pip = el.querySelector('.mtf-pip');
-      if (!pip) return;
-      pip.className = 'mtf-pip ' + (bias === 'BULL' ? 'pip-bull' : (bias === 'BEAR' ? 'pip-bear' : 'pip-neutral'));
-    }
-    setMtfPip(mtfM15, isBull ? 'BULL' : (isBear ? 'BEAR' : 'NEUTRAL'));
-    setMtfPip(mtfH1, isBull ? 'BULL' : (isBear ? 'BEAR' : 'NEUTRAL'));
-    setMtfPip(mtfH4, isBull ? 'BULL' : (isBear ? 'BEAR' : 'NEUTRAL'));
-    setMtfPip(mtfD1, isBull ? 'BULL' : (isBear ? 'BEAR' : 'NEUTRAL'));
-
-    // Arbiter Spread Friction Gate
-    var arbiterEl = $('hud-arbiter-gate');
-    if (arbiterEl) {
-      if (d && d.waiting_reasons && d.waiting_reasons.length) {
-        setText(arbiterEl, '⚠️ ' + String(d.waiting_reasons[0]).slice(0, 16));
-        arbiterEl.style.color = '#f59e0b';
-      } else {
-        setText(arbiterEl, '🛡️ SPREAD PASS (<18%)');
-        arbiterEl.style.color = '#38bdf8';
-      }
-    }
-
-    // 2. Capital Telemetry Binnacle
-    setText($('hud-acc-status'), brokerUp ? (acc && acc.login ? 'LIVE #' + acc.login : 'CONNECTED') : 'STANDBY');
-    var curr = (acc && acc.currency) ? acc.currency + ' ' : '$';
-    var eq = acc && acc.equity !== undefined ? Number(acc.equity) : 0;
-    var bal = acc && acc.balance !== undefined ? Number(acc.balance) : 0;
-    var freeM = acc && acc.free_margin !== undefined ? Number(acc.free_margin) : 0;
-
-    setText($('hud-equity'), eq > 0 ? curr + num(eq, 2) : '—');
-    setText($('hud-free-margin'), freeM > 0 ? curr + num(freeM, 2) : '—');
-
-    // Free Cushion Percentage
-    var freePct = (bal > 0 && freeM > 0) ? Math.min(100, Math.round((freeM / bal) * 100)) : 100;
-    setText($('hud-free-pct'), freePct + '%');
-    var cushionFill = $('hud-cushion-fill');
-    if (cushionFill) cushionFill.style.width = freePct + '%';
-
-    // Active Risk In Play
-    var openPositions = state.positions || [];
-    var activeRiskDollars = 0;
-    openPositions.forEach(function (pos) {
-      if (pos.sl && pos.open_price && pos.volume) {
-        var dist = Math.abs(pos.open_price - pos.sl);
-        var riskEst = dist * Number(pos.volume) * 100;
-        activeRiskDollars += Math.max(0, riskEst);
-      }
-    });
-    var activeRiskPct = bal > 0 ? (activeRiskDollars / bal) * 100 : 0;
-    setText($('hud-active-risk'), curr + num(activeRiskDollars, 2));
-    setText($('hud-active-risk-pct'), num(activeRiskPct, 1) + '%');
-
-    // Porsche Sport Chronograph Needle & Arc
-    var arc = $('hud-winrate-arc');
-    var needle = $('hud-chrono-needle');
-    var circumference = 163.36; // 2 * pi * 26
-    var cushionFrac = Math.max(0, Math.min(1, freePct / 100));
-    if (arc) {
-      arc.style.strokeDashoffset = circumference * (1 - cushionFrac);
-    }
-    if (needle) {
-      var angle = -120 + (cushionFrac * 240); // sweep -120 to +120 deg
-      needle.setAttribute('transform', 'rotate(' + Math.round(angle) + ' 35 35)');
-    }
-    setText($('hud-winrate-pct'), freePct + '%');
-    setText($('hud-chrono-label'), 'CUSHION');
-
-    // 3. Performance (Today's & Total P&L) Binnacle
-    var historyRows = state.history || [];
-    var todayStr = new Date().toISOString().slice(0, 10);
-
-    var todayRealized = 0;
-    var totalRealized = 0;
-    var grossProfit = 0;
-    var grossLoss = 0;
-    var wins = 0;
-    var losses = 0;
-    var counted = 0;
-    var todayTrades = 0;
-
-    historyRows.forEach(function (t) {
-      var p = historyPnl(t);
-      if (p === null) return;
-      counted++;
-      totalRealized += p;
-      if (p > 0) {
-        wins++;
-        grossProfit += p;
-      } else if (p < 0) {
-        losses++;
-        grossLoss += Math.abs(p);
-      }
-
-      var tTime = String(t.close_time || t.time || t.exit_time || '');
-      if (tTime && tTime.slice(0, 10) === todayStr) {
-        todayRealized += p;
-        todayTrades++;
-      }
-    });
-
-    var todayUnrealized = 0;
-    openPositions.forEach(function (pos) {
-      todayUnrealized += Number(pos.profit || 0);
-    });
-    var todayNet = todayRealized + todayUnrealized;
-
-    var todayEl = $('hud-today-pnl');
-    if (todayEl) {
-      setText(todayEl, (todayNet > 0 ? '+' : '') + curr + num(todayNet, 2));
-      todayEl.className = 'binnacle-hero-num tt-num ' + (todayNet > 0 ? 'hud-val-up' : (todayNet < 0 ? 'hud-val-dn' : ''));
-    }
-
-    var totalEl = $('hud-total-pnl');
-    if (totalEl) {
-      setText(totalEl, (totalRealized > 0 ? '+' : '') + curr + num(totalRealized, 2));
-    }
-
-    var pfEl = $('hud-profit-factor');
-    if (pfEl) {
-      if (grossLoss > 0) {
-        var pf = grossProfit / grossLoss;
-        setText(pfEl, num(pf, 2));
-        pfEl.style.color = pf >= 1.0 ? '#00f59b' : '#ff9f43';
-      } else if (grossProfit > 0) {
-        setText(pfEl, '∞');
-        pfEl.style.color = '#00f59b';
-      } else {
-        setText(pfEl, '—');
-      }
-    }
-
-    setText($('hud-total-r'), counted ? counted + ' Trades' : '0 Trades');
-    setText($('hud-session-status'), 'TODAY: ' + todayTrades + ' TRADES');
-
-    // Win / Loss segment bar & counts
-    var winRate = counted > 0 ? (wins / counted) : 0;
-    var winRatePct = Math.round(winRate * 100);
-    setText($('hud-win-rate-text'), winRatePct + '%');
-
-    var winSegment = $('hud-win-segment');
-    var lossSegment = $('hud-loss-segment');
-    if (winSegment && lossSegment) {
-      winSegment.style.width = winRatePct + '%';
-      lossSegment.style.width = (100 - winRatePct) + '%';
-    }
-    setText($('hud-win-count-lbl'), wins + 'W');
-    setText($('hud-loss-count-lbl'), losses + 'L');
-
-    // Payoff Ratio (Avg Win / Avg Loss)
-    var avgWin = wins > 0 ? (grossProfit / wins) : 0;
-    var avgLoss = losses > 0 ? (grossLoss / losses) : 0;
-    var payoff = avgLoss > 0 ? (avgWin / avgLoss) : 1.23;
-    setText($('hud-payoff-ratio'), num(payoff, 2) + 'R (Avg W: $' + num(avgWin, 2) + ' / L: $' + num(avgLoss, 2) + ')');
-  }
-
-  /* ── Reasoning ("why this trade") ─────────────────────────────────────── */
+/* ── Reasoning ("why this trade") ─────────────────────────────────────── */
   function renderReasoning() {
     var host = $('reason-body');
     var sym = state.symbol;
@@ -1986,6 +1728,13 @@
         secondsVisible: false,
         rightOffset: 4
       },
+      // A vertical touch drag over the canvas must scroll the pane around the
+      // chart, not pan the price scale in place. With the default (true) the
+      // chart was a scroll trap on a phone: once the finger landed on the
+      // canvas the chart panel/positions below could not be reached by touch.
+      // Horizontal drags still pan time, pinch still zooms, and mouse
+      // behaviour on desktop is unchanged.
+      handleScroll: { vertTouchDrag: false },
       crosshair: {
         mode: 1,
         vertLine: { color: 'rgba(56,189,248,0.5)', width: 1, style: 3, labelBackgroundColor: '#1a2438' },
@@ -3174,8 +2923,6 @@
   function toggleOrderTicket(open) {
     var ticketPanel = $('subpanel-ticket');
     var backdrop = $('ticket-backdrop');
-    var btnToggle = $('btn-toggle-ticket');
-    var btnWatchTrade = $('watch-quick-trade');
     if (!ticketPanel) return;
 
     var isOpen = ticketPanel.classList.contains('is-open');
@@ -3190,8 +2937,6 @@
 
       ticketPanel.classList.add('is-open');
       if (backdrop) backdrop.classList.add('is-open');
-      if (btnToggle) btnToggle.classList.add('active');
-      if (btnWatchTrade) btnWatchTrade.classList.add('active');
 
       prefillTicket();
       var symInput = $('ticket-symbol');
@@ -3204,8 +2949,6 @@
     } else {
       ticketPanel.classList.remove('is-open');
       if (backdrop) backdrop.classList.remove('is-open');
-      if (btnToggle) btnToggle.classList.remove('active');
-      if (btnWatchTrade) btnWatchTrade.classList.remove('active');
 
       setTimeout(function () {
         if (!ticketPanel.classList.contains('is-open')) {
@@ -6741,20 +6484,6 @@
     Array.prototype.forEach.call(document.querySelectorAll('[data-side]'), function (btn) {
       btn.addEventListener('click', function () { setSideTab(btn.getAttribute('data-side')); });
     });
-
-    var btnToggleTicket = $('btn-toggle-ticket');
-    if (btnToggleTicket) {
-      btnToggleTicket.addEventListener('click', function () {
-        toggleOrderTicket();
-      });
-    }
-
-    var btnWatchTrade = $('watch-quick-trade');
-    if (btnWatchTrade) {
-      btnWatchTrade.addEventListener('click', function () {
-        toggleOrderTicket();
-      });
-    }
 
     var ticketBackdrop = $('ticket-backdrop');
     if (ticketBackdrop) {
