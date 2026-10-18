@@ -3,7 +3,8 @@ HM Algo 2.0 — Multi-Timeframe Market Context Synthesizer.
 Orchestrates Market Structure, Liquidity, Volatility, Momentum, and Session intelligence across multiple timeframes.
 """
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
+import time
 import math
 import pandas as pd
 
@@ -32,6 +33,76 @@ class MarketContextEngine:
         self.momentum_engine = momentum_engine or MomentumEngine()
         self.order_flow_engine = order_flow_engine or InstitutionalVolumeOrderFlowEngine()
         self.candlestick_engine = candlestick_engine or CandlestickPriceActionEngine()
+        self._crypto_lead_lag_cache = (0.0, {})
+
+    def _compute_crypto_lead_lag(self, symbol: str) -> Dict[str, Any]:
+        """
+        Computes intermarket crypto lead-lag metrics (ETH/BTC ratio and relative strength)
+        per institutional advanced-trading skill §7/§11.
+        Cached for 15 seconds to eliminate redundant MT5 queries during multi-style scans.
+        """
+        from jarvis.data.symbol_registry import is_crypto
+        if not is_crypto(symbol):
+            return {}
+
+        now_t = time.time()
+        if now_t - self._crypto_lead_lag_cache[0] < 15.0 and self._crypto_lead_lag_cache[1]:
+            raw_cache = self._crypto_lead_lag_cache[1]
+            sym_upper = symbol.upper()
+            rel_strength = "WEAK" if raw_cache.get("eth_btc_trend") == "BEARISH" else ("STRONG" if raw_cache.get("eth_btc_trend") == "BULLISH" else "NEUTRAL")
+            if "BTC" in sym_upper:
+                rel_strength = "STRONG" if raw_cache.get("eth_btc_trend") == "BEARISH" else ("WEAK" if raw_cache.get("eth_btc_trend") == "BULLISH" else "NEUTRAL")
+            res = dict(raw_cache)
+            res["relative_strength"] = rel_strength
+            return res
+
+        try:
+            from jarvis.data.broker_symbols import resolve_broker_symbol
+            import MetaTrader5 as mt5
+
+            b_sym = resolve_broker_symbol("BTCUSD")
+            e_sym = resolve_broker_symbol("ETHUSD")
+
+            r_b = mt5.copy_rates_from_pos(b_sym, mt5.TIMEFRAME_H1, 0, 24)
+            r_e = mt5.copy_rates_from_pos(e_sym, mt5.TIMEFRAME_H1, 0, 24)
+
+            if r_b is None or r_e is None or len(r_b) < 10 or len(r_e) < 10:
+                return {}
+
+            df_b = pd.DataFrame(r_b)
+            df_e = pd.DataFrame(r_e)
+
+            merged = pd.merge(df_b[['time', 'close']], df_e[['time', 'close']], on='time', suffixes=('_btc', '_eth'))
+            if len(merged) < 8:
+                return {}
+
+            merged['ratio'] = merged['close_eth'] / merged['close_btc']
+            ratio_now = float(merged['ratio'].iloc[-1])
+            ratio_ema8 = float(merged['ratio'].ewm(span=8).mean().iloc[-1])
+            ratio_ema21 = float(merged['ratio'].ewm(span=21).mean().iloc[-1])
+
+            trend = "BEARISH" if (ratio_ema8 < ratio_ema21 and ratio_now < ratio_ema8) else (
+                "BULLISH" if (ratio_ema8 > ratio_ema21 and ratio_now > ratio_ema8) else "NEUTRAL"
+            )
+
+            raw = {
+                "eth_btc_ratio": round(ratio_now, 6),
+                "eth_btc_trend": trend,
+                "ratio_ema8": round(ratio_ema8, 6),
+                "ratio_ema21": round(ratio_ema21, 6)
+            }
+            self._crypto_lead_lag_cache = (now_t, raw)
+
+            sym_upper = symbol.upper()
+            rel_strength = "WEAK" if trend == "BEARISH" else ("STRONG" if trend == "BULLISH" else "NEUTRAL")
+            if "BTC" in sym_upper:
+                rel_strength = "STRONG" if trend == "BEARISH" else ("WEAK" if trend == "BULLISH" else "NEUTRAL")
+
+            res = dict(raw)
+            res["relative_strength"] = rel_strength
+            return res
+        except Exception:
+            return {}
 
     @staticmethod
     def _live_spread_pips_from_frame(df: pd.DataFrame, spec) -> Optional[float]:
@@ -284,6 +355,9 @@ class MarketContextEngine:
             quality += 20.0
         context_quality = min(100.0, quality)
 
+        # 11. Intermarket Crypto Lead-Lag Analysis (ETH/BTC relative strength)
+        crypto_lead_lag = self._compute_crypto_lead_lag(symbol)
+
         return MarketContext(
             symbol=symbol,
             timestamp=bar_timestamp,
@@ -302,5 +376,6 @@ class MarketContextEngine:
             order_flow=order_flow,
             trade_style=style,
             live_spread_pips=live_spread_pips,
-            candlestick_pattern=candlestick_pattern
+            candlestick_pattern=candlestick_pattern,
+            crypto_lead_lag=crypto_lead_lag
         )

@@ -266,6 +266,14 @@ class DecisionEngine:
         ):
             is_intraday = trade_style in ("SCALP", "DAY_TRADING")
 
+            # 0. Intermarket Crypto Lead-Lag Guard: Never buy ETH when ETH/BTC ratio is breaking down
+            eth_btc_trend = getattr(context, "crypto_lead_lag", {}).get("eth_btc_trend", "NEUTRAL") if hasattr(context, "crypto_lead_lag") else "NEUTRAL"
+            if is_crypto and "ETH" in sym_name and eth_btc_trend == "BEARISH":
+                if not authenticated_bull_reversal:
+                    if trend_score <= -15.0 or st.bias == "BEARISH" or primary_tf_bias == "BEARISH" or st.bos_type == "BEARISH":
+                        return "SELL"
+                    return "HOLD"
+
             # 1. Structural / Momentum Guard: If primary timeframe is breaking down with negative momentum, do NOT buy blindly!
             if (st.bias == "BEARISH" or st.bos_type == "BEARISH" or primary_tf_bias == "BEARISH") and (trend_score <= -10.0 or delta_score <= -20.0):
                 if (
@@ -779,7 +787,14 @@ class DecisionEngine:
                     mtf_counter_trend = True
         elif tentative_bias == "SELL":
             d1_veto = (d1_anchor_bias == "BULLISH" and ("SWING" in t_style_check or mom_ts >= 0.0))
-            if macro_bias == "BULLISH" or (context_bias == "BULLISH" and mom_ts >= 15.0) or d1_veto or mom_ts >= 15.0:
+            # On strong intraday momentum breakdown (Bearish BOS on execution timeframe, or trend_score <= -30),
+            # allow DAY_TRADING / SCALP sell even if lagging H4 hasn't flipped yet
+            has_intraday_breakdown = (
+                ("DAY" in t_style_check or "SCALP" in t_style_check)
+                and (getattr(context.structure, "bos_type", "") == "BEARISH" or getattr(context.structure, "choch_type", "") == "BEARISH" or mom_ts <= -30.0)
+                and context_bias in ("BEARISH", "NEUTRAL")
+            )
+            if (macro_bias == "BULLISH" and not has_intraday_breakdown) or (context_bias == "BULLISH" and mom_ts >= 15.0) or d1_veto or mom_ts >= 15.0:
                 if not is_validated_reversal:
                     mtf_counter_trend = True
 
@@ -937,16 +952,27 @@ class DecisionEngine:
             # Premature Entry Guard (SMC/ICT §4.1): In ranges or scalps, allow entry on sweep, discount/equilibrium, choch, breakout expansion, or candlestick pattern
             elif "SCALP" in t_style_check or "DAY" in t_style_check:
                 vol_state = getattr(context.volatility, "state", "NORMAL") if hasattr(context, "volatility") else "NORMAL"
-                is_breakout_expansion = (has_bos and (adx_val >= 22.0 or vol_state in ("EXPANSION", "EXTREME")))
+                is_breakout_expansion = (has_bos and (adx_val >= 20.0 or vol_state in ("EXPANSION", "EXTREME") or abs(ts_val) >= 25.0))
                 pa_info = getattr(context, "candlestick_pattern", {}) or {}
                 has_pa = bool(pa_info.get("pattern_detected", False) and pa_info.get("bias") == tentative_bias)
 
+                # Intermarket Crypto Lead-Lag Guard (ETH/BTC relative strength):
+                eth_btc_trend = getattr(context, "crypto_lead_lag", {}).get("eth_btc_trend", "NEUTRAL") if hasattr(context, "crypto_lead_lag") else "NEUTRAL"
+                if "ETH" in sym_name and tentative_bias == "BUY" and eth_btc_trend == "BEARISH":
+                    # Strictly prohibit buying ETH when ETH/BTC is falling unless extreme reversal at deep discount
+                    if not (has_choch and has_sweep and st_zone == "DISCOUNT" and ai_score >= 85.0):
+                        crypto_macro_trend_valid = False
+
                 if tentative_bias == "BUY" and not (has_sweep or st_zone in ("DISCOUNT", "EQUILIBRIUM") or has_choch or is_breakout_expansion or has_pa):
                     crypto_macro_trend_valid = False
-                elif tentative_bias == "SELL" and not (has_sweep or st_zone in ("PREMIUM", "EQUILIBRIUM") or has_choch or is_breakout_expansion or has_pa):
+                elif tentative_bias == "SELL" and not (has_sweep or st_zone in ("PREMIUM", "EQUILIBRIUM") or has_choch or is_breakout_expansion or has_pa or ts_val <= -30.0):
                     crypto_macro_trend_valid = False
             elif tentative_bias == "BUY":
-                if regime.primary_regime in (MarketRegime.STRONG_TREND_BEAR, MarketRegime.TREND_BEAR) or ts_val <= -15.0:
+                eth_btc_trend = getattr(context, "crypto_lead_lag", {}).get("eth_btc_trend", "NEUTRAL") if hasattr(context, "crypto_lead_lag") else "NEUTRAL"
+                if "ETH" in sym_name and eth_btc_trend == "BEARISH":
+                    if not (has_choch and has_sweep and st_zone == "DISCOUNT" and ai_score >= 85.0):
+                        crypto_macro_trend_valid = False
+                elif regime.primary_regime in (MarketRegime.STRONG_TREND_BEAR, MarketRegime.TREND_BEAR) or ts_val <= -15.0:
                     has_reversal = bool(has_choch and has_sweep)
                     if not (has_reversal and ai_score >= 82.0 and calibrated_win_p >= 0.65):
                         crypto_macro_trend_valid = False

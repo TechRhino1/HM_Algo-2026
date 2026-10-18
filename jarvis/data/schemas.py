@@ -196,6 +196,7 @@ class MarketContext:
     # size. `None` means the feed carried no spread column (or it was unusable).
     live_spread_pips: Optional[float] = None
     candlestick_pattern: Dict[str, Any] = field(default_factory=dict)
+    crypto_lead_lag: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class RegimeOutput:
