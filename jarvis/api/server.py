@@ -435,6 +435,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 "/api/radar", "/api/market-status", "/api/news", "/api/history",
                 "/api/tunnel_info", "/api/pending_orders", "/api/risk_status",
                 "/api/risk/portfolio-heat",
+                "/api/intelligence/auto-selection", "/api/intelligence/reliability", "/api/intelligence/meta",
                 "/api/intelligence/missed-trades", "/api/intelligence/calibration", "/api/intelligence/symbol-profiles",
                 "/api/stream/telemetry", "/api/auth/me", "/api/auth/verify",
                 # Probes: no session, and no reliance on the loopback bypass.

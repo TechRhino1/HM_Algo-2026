@@ -405,6 +405,15 @@
       loadChart();
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resizeChart);
     }
+    /* The Context panel is a tab of the sidebar now, not a pane of its own.
+       On the phone the Ticket pane is that panel with the Context tab
+       selected; leaving for the Watchlist pane hands the tab back so the
+       pane button and the content always agree. */
+    if (pane === 'ticket') {
+      setSideTab('context');
+    } else if (pane === 'watchlist' && state.sideTab === 'context') {
+      setSideTab('watch');
+    }
   }
 
   /* Hash deep links: /#symbols, /#analyst, /#news, ... switch the active
@@ -739,6 +748,14 @@
         setText($('selection-tier'), '—');
         var reason = (res.data && (res.data.error || res.data.status)) ||
                      res.error || ('HTTP ' + res.status);
+        if (res.status === 401 || (typeof reason === 'string' && reason.indexOf('Authentication required') !== -1)) {
+          host.innerHTML = '';
+          var wrap = document.createElement('div');
+          wrap.className = 'tt-state tt-state--auth';
+          wrap.innerHTML = '<span class="tt-state__title">Authentication Required</span><span style="font-size:11px;color:var(--hm-text-muted);margin:4px 0 8px;">Sign in to view live AI candidate selections.</span><button type="button" class="tt-btn tt-btn--primary tt-btn--sm" style="font-size:11px;" onclick="window.HM_AUTH && window.HM_AUTH.openLoginModal ? window.HM_AUTH.openLoginModal(\'Please sign in to unlock AI auto-selection\') : null">Sign In ➔</button>';
+          host.appendChild(wrap);
+          return;
+        }
         // A 503 here means the engine is not attached — an honest, expected state.
         setState(host, res.status === 503 ? 'stale' : 'error',
           res.status === 503 ? 'Selection engine not attached' : 'Selection unavailable',
@@ -3037,9 +3054,9 @@
     }
   }
 
-  /* ── Context strip beside the ticket ────────────────────────────────── */
-  /* The analyst and news views keep their own tabs. This strip shows a compact
-     read of each next to the ticket; it renders from the same `state` the full
+  /* ── Context tab of the sidebar (was: strip beside the ticket) ──────── */
+  /* The analyst and news views keep their own tabs. This pane shows a compact
+     read of each next to the chart; it renders from the same `state` the full
      panels use, so the two can never disagree, and it writes to its own
      containers so no element id is shared with them. */
   function setContext(tab) {
@@ -3058,13 +3075,14 @@
   }
 
   /* ── Sidebar panels ─────────────────────────────────────────────────── */
-  /* Watchlist, AI selection and Scanner radar used to stack and split the
-     sidebar's leftover height (the two lists were flex: 1 1 0 each), so on
-     shorter windows every section was cut. They are one segmented switch
-     now: whichever panel is selected owns the full area under the tabs, in
-     the same pattern as the Context panel. */
+  /* Watchlist, AI selection, Scanner radar and Context used to stack and
+     split the sidebar's leftover height (the two lists were flex: 1 1 0
+     each), so on shorter windows every section was cut. They are one
+     segmented switch now: whichever panel is selected owns the full area
+     under the tabs. Context moved in most recently - it was a column of its
+     own on the right, which squeezed the chart between two panels. */
   function setSideTab(tab) {
-    if (['watch', 'selection', 'radar'].indexOf(tab) === -1) tab = 'watch';
+    if (['watch', 'selection', 'radar', 'context'].indexOf(tab) === -1) tab = 'watch';
     state.sideTab = tab;
     Array.prototype.forEach.call(document.querySelectorAll('[data-side]'), function (btn) {
       btn.setAttribute('aria-pressed', String(btn.getAttribute('data-side') === tab));
@@ -3072,12 +3090,21 @@
     var panes = {
       watch: $('side-pane-watch'),
       selection: $('side-pane-selection'),
-      radar: $('side-pane-radar')
+      radar: $('side-pane-radar'),
+      context: $('side-pane-context')
     };
     Object.keys(panes).forEach(function (k) {
       if (panes[k]) panes[k].hidden = (k !== tab);
     });
     if (tab === 'radar') renderRadar();
+    /* The reasoning text is written on symbol change and on every telemetry
+       poll, so it is usually current; re-render on arrival anyway so opening
+       the tab always shows a fresh read with no wait for the next poll. */
+    if (tab === 'context') {
+      renderReasoning();
+      renderContextAnalyst();
+      renderContextNews();
+    }
   }
 
   function renderContextAnalyst() {
