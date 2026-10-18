@@ -1205,20 +1205,17 @@
   }
 }
 
-/* Tablet: a 3-pane Trade will not fit in 900-1279px, so the ticket drops
-   beneath the chart. Both rows are FRACTIONS rather than `auto`: with
-   `auto` the ticket's own content height (measured at 1246px) would exceed
-   the shell, the 1fr row would collapse to 0 and the chart would vanish
-   entirely. Fractions guarantee each row a share and each pane scrolls
-   inside it, so nothing is cut off and nothing is starved.
-   Every other view keeps its template - the columns simply get narrower,
-   which is the point of naming the areas. */
+/* Tablet: a 3-pane Trade will not fit in 900-1279px, so Trade is two
+   columns - sidebar and chart - and each pane scrolls inside its own cell.
+   The Context panel that used to drop beneath the chart in a second row is
+   a sidebar tab now, so the chart row owns the full height. Every other
+   view keeps its template - the columns simply get narrower, which is the
+   point of naming the areas. */
 @media (min-width: 900px) and (max-width: 1279px) {
   #view-trade.tt-view[data-active="true"] {
     grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1.7fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
-  #view-trade .tt-panel--ticket { grid-column: 1 / -1; }
   .tt-da__cols { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -1264,12 +1261,13 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  /* The Ticket pane is the watchlist panel with its Context tab selected
+     (setPane in dashboard.js reconciles the two) - the context content used
+     to be a panel of its own with a third grid slot; it is a sidebar tab
+     now, so the pane shows the sidebar panel instead of a separate one. */
   .tt-app[data-pane="chart"] .tt-panel--watchlist,
-  .tt-app[data-pane="chart"] .tt-panel--ticket,
   .tt-app[data-pane="watchlist"] .tt-panel--chart,
-  .tt-app[data-pane="watchlist"] .tt-panel--ticket,
-  .tt-app[data-pane="ticket"] .tt-panel--chart,
-  .tt-app[data-pane="ticket"] .tt-panel--watchlist { display: none; }
+  .tt-app[data-pane="ticket"] .tt-panel--chart { display: none; }
 
   .tt-pane-bar { display: flex; }
   .tt-rail { padding: 0 var(--hm-space-2); gap: var(--hm-space-2); }
@@ -1903,21 +1901,11 @@
   color: var(--hm-accent);
 }
 
-/* Order ticket: the form takes what it needs and the reasoning fills whatever
-   is left.
-
-   The form is NOT negotiable. The panel stacks the order form and the context
-   strip, whose natural heights sum to far more than the panel holds. Letting
-   them flex-compete squashed the FORM to 252px of its 526px, which cut the
-   BUY/SELL row in half and pushed the volume / stop-loss / take-profit fields
-   entirely out of sight: the primary action of the whole app, behind a 252px
-   scroll box. Each region now keeps its natural height and the PANEL scrolls
-   as one column, so the form is whole at rest and the context strip is a
-   scroll below it. */
-.tt-panel--ticket { overflow-y: auto; }
-.tt-panel--ticket > .tt-panel__body { flex: 0 0 auto; }
-.tt-panel--ticket > .tt-panel__body--flush { flex: 0 0 auto; max-height: 32%; }
-.tt-panel--ticket > #ctx-body { flex: 0 0 auto; }
+/* The `.tt-panel--ticket` rules that used to govern the old right-hand
+   column (form keeps natural height, panel scrolls as one column) are gone
+   with the column itself: the context content is the Context tab of the
+   sidebar panel now (see `.tt-side-pane` in theme_bugatti.css). The order
+   ticket drawer has its own rules there too (`.tt-order-drawer-left`). */
 
 /* Trade history: the filter toolbar is a fixed strip and the table takes the
    rest. `.tt-panel__body` is `flex: 1 1 auto` with `min-height: 0`, so with two

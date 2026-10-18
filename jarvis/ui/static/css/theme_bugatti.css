@@ -1737,10 +1737,13 @@ button.bugatti-dropdown__item:focus {
   overflow: hidden !important;
 }
 
-/* Explicit desktop columns for the 3-pane cockpit. Scoped to >=1025px: on the
-   phone single-column Trade and the 600-1024px two-column split these would
-   force an implicit 3rd track and pull the ticket back to column 3, breaking
-   both responsive templates (theme_terminal.css:1236 phone, :1212 tablet). */
+/* Explicit desktop columns for the 2-pane cockpit: sidebar + chart. The
+   Context panel used to be a third track on the right; it is a tab of the
+   sidebar now, so the chart stretches from the sidebar to the right edge at
+   every desktop width. Scoped to >=1025px: on the phone single-column Trade
+   and the 600-1024px two-column split these would force implicit tracks and
+   break both responsive templates (theme_terminal.css:1236 phone, :1216
+   tablet). The sidebar caps grew a little to carry four tabs comfortably. */
 @media (min-width: 1025px) {
   #view-trade > .tt-panel--watchlist {
     grid-column: 1 !important;
@@ -1748,32 +1751,23 @@ button.bugatti-dropdown__item:focus {
   #view-trade > .tt-panel--chart {
     grid-column: 2 !important;
   }
-  #view-trade > #ticket-context-panel {
-    grid-column: 3 !important;
+  #view-trade.tt-view[data-active="true"] {
+    grid-template-columns: minmax(320px, 400px) minmax(0, 1fr) !important;
+    gap: 12px !important;
   }
 }
 
 @media (min-width: 1360px) {
   #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(320px, 390px) minmax(0, 1fr) minmax(340px, 430px) !important;
+    grid-template-columns: minmax(340px, 420px) minmax(0, 1fr) !important;
     gap: 14px !important;
   }
 }
 
 @media (min-width: 1680px) {
   #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(350px, 430px) minmax(0, 1fr) minmax(360px, 460px) !important;
+    grid-template-columns: minmax(360px, 450px) minmax(0, 1fr) !important;
     gap: 16px !important;
-  }
-}
-
-/* Narrow DESKTOP only. Previously min-width:900px, which forced the 3-column
-   cockpit over the 600-1024px tablet two-column split (ios_mobile.css:778 and
-   theme_terminal.css:1212) and over the phone single column. */
-@media (min-width: 1025px) and (max-width: 1359px) {
-  #view-trade.tt-view[data-active="true"] {
-    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) minmax(310px, 380px) !important;
-    gap: 12px !important;
   }
 }
 
@@ -3629,12 +3623,13 @@ button.bugatti-dropdown__item:focus {
   #pos-table th.tt-pos-actions-col, #pos-table td.tt-pos-actions { padding-right: 10px !important; }
 }
 
-/* ═══ Sidebar panels: Watchlist / AI Selection / Scanner as tabs ═════════
-   The three sections used to stack and split the sidebar's leftover height
+/* ═══ Sidebar panels: Watchlist / AI Selection / Scanner / Context ═══════
+   The sections used to stack and split the sidebar's leftover height
    (theme_terminal.css pinned both list bodies to flex: 1 1 0), so on any
    laptop-height window each one got cut and the watchlist starved. They are
-   one segmented switch now, in the same pattern as the Context panel: the
-   selected panel owns the full area under the tab strip. */
+   one segmented switch now: the selected panel owns the full area under the
+   tab strip. Context joined them last - it was a column of its own on the
+   right, which left the chart squeezed between two panels. */
 .tt-panel--watchlist > .tt-panel__head--seg {
   padding-top: 4px;
   padding-bottom: 4px;
@@ -3657,8 +3652,23 @@ button.bugatti-dropdown__item:focus {
 .tt-seg--sidebar .tt-panel__count {
   padding: 0 6px;
 }
+/* Four tabs in a ~370px strip. Pin the label scale at desktop widths so a
+   larger root font (the user's browser text size) cannot inflate the labels
+   into each other; zoom and DPI still scale the whole strip together. */
+@media (min-width: 1025px) {
+  .tt-seg--sidebar .tt-seg__btn { font-size: 11px; padding: 0 7px; }
+  .tt-seg--sidebar .tt-panel__count { font-size: 10px; padding: 0 5px; }
+}
+@media (min-width: 1025px) and (max-width: 1359px) {
+  .tt-seg--sidebar .tt-seg__btn { font-size: 10px; padding: 0 5px; }
+  .tt-seg--sidebar .tt-panel__count { font-size: 9px; padding: 0 4px; }
+}
 @media (max-width: 599px) {
-  .tt-seg--sidebar .tt-seg__btn { padding: 0 6px; gap: 4px; letter-spacing: 0; }
+  /* Four tabs do not fit one 360-430px row: two per row, evenly. The button
+     starting the second row loses its left divider. */
+  .tt-seg--sidebar { flex-wrap: wrap; }
+  .tt-seg--sidebar .tt-seg__btn { flex: 1 1 calc(50% - 1px); padding: 0 6px; gap: 4px; letter-spacing: 0; }
+  .tt-seg--sidebar .tt-seg__btn:nth-child(3) { border-left: 0; }
   .tt-seg--sidebar .tt-panel__count { padding: 0 4px; }
 }
 /* Tablet keeps the sidebar as a narrow column (~200px) - three tabs never
@@ -3676,11 +3686,28 @@ button.bugatti-dropdown__item:focus {
 .tt-side-pane__bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--hm-space-2);
+  row-gap: 4px;
   padding: 6px var(--hm-space-4);
   border-bottom: 1px solid var(--hm-border-subtle);
 }
 .tt-side-pane__bar .tt-select--compact { margin-left: 0; }
+/* The Context pane's tier chip and its WHY/ANALYST/NEWS switch share one
+   bar. In the narrow phone/tablet sidebar (150-210px inner) three long words
+   beside the chip cannot fit: on touch widths the switch takes its own full
+   row and switches to the same tight label scale as the sidebar tabs, so
+   none of the three labels can clip into its neighbour. */
+@media (max-width: 1024px) {
+  .tt-side-pane__bar .tt-seg { flex: 1 1 100%; max-width: 100%; }
+  .tt-side-pane__bar .tt-seg__btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 4px;
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+}
 @media (min-width: 1025px) {
   /* A primary switch, not a secondary filter - give it real height. */
   .tt-seg--sidebar .tt-seg__btn { height: 32px; }
@@ -3699,7 +3726,8 @@ button.bugatti-dropdown__item:focus {
      so it needs its own fill-and-scroll rule. */
   #side-pane-watch > .tt-panel__body--flush { flex: 1 1 auto; min-height: 0; }
   #selection-body,
-  #radar-body {
+  #radar-body,
+  #ctx-body {
     flex: 1 1 auto;
     min-height: 0;
   }

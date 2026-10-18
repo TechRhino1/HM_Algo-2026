@@ -420,7 +420,8 @@
      view; an empty hash (the Cockpit tab) means the trade view. The phone
      tab bar and More sheet link by hash. */
   function viewFromHash() {
-    var h = (window.location.hash || '').replace(/^#/, '');
+    var loc = window.location || {};
+    var h = (loc.hash || '').replace(/^#/, '');
     return VIEWS.indexOf(h) !== -1 ? h : null;
   }
 
@@ -769,54 +770,217 @@
 
   function renderSelection() {
     var host = $('selection-body');
+    if (!host) return;
     var data = state.selection || {};
     var decisions = data.decisions || [];
     var tradeable = decisions.filter(function (d) { return d.is_tradeable; });
+    var arbiterBest = data.arbiter_best || null;
+    var candidates = data.candidates || [];
 
-    setText($('selection-count'), String(tradeable.length));
-    var best = tradeable[0];
-    setText($('selection-tier'), best ? (best.confidence_tier || '—') : 'none');
-    var tierEl = $('selection-tier');
-    if (tierEl) {
-      var t = best ? String(best.confidence_tier || '').toLowerCase() : 'none';
-      tierEl.className = 'tt-chip tt-chip--' + (['high', 'medium', 'low'].indexOf(t) >= 0 ? t : 'none');
+    if (tradeable.length) {
+      setText($('selection-count'), String(tradeable.length));
+      var best = tradeable[0];
+      setText($('selection-tier'), best ? (best.confidence_tier || '—') : 'none');
+      var tierEl = $('selection-tier');
+      if (tierEl) {
+        var t = best ? String(best.confidence_tier || '').toLowerCase() : 'none';
+        tierEl.className = 'tt-chip tt-chip--' + (['high', 'medium', 'low'].indexOf(t) >= 0 ? t : 'none');
+      }
+
+      host.removeAttribute('data-state');
+      host.innerHTML = '';
+      tradeable.slice(0, 8).forEach(function (d) {
+        var card = document.createElement('div');
+        card.className = 'tt-pad';
+        card.style.borderBottom = '1px solid var(--hm-border-subtle)';
+        card.style.cursor = 'pointer';
+
+        var dirCls = String(d.direction).toUpperCase() === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
+        var tier = String(d.confidence_tier || '').toLowerCase();
+        var tierCls = ['high', 'medium', 'low'].indexOf(tier) >= 0 ? tier : 'none';
+
+        card.innerHTML =
+          '<div class="tt-row">' +
+            '<span class="tt-symbol">' + esc(d.symbol) + '</span>' +
+            '<span class="tt-dir ' + dirCls + '">' + esc(d.direction) + '</span>' +
+            '<span class="tt-chip tt-chip--' + tierCls + '">' + esc(d.confidence_tier || '—') + '</span>' +
+            '<span class="tt-rail__spacer"></span>' +
+            '<span class="tt-num">' + num(d.consensus_score, 1) + '</span>' +
+          '</div>' +
+          '<div class="tt-row" style="margin-top:4px">' +
+            '<span class="tt-hint">' + esc(d.rationale || '') + '</span>' +
+          '</div>';
+
+        card.addEventListener('click', function () { selectSymbol(d.symbol); });
+        host.appendChild(card);
+      });
+      return;
     }
 
-    if (!tradeable.length) {
+    // When unanimous multi-style agreement is not reached, check for Arbiter opportunities
+    var actionableCandidates = candidates.filter(function (c) {
+      return c && (c.is_actionable || (c.utility_score && c.utility_score > 0));
+    });
+
+    var hasOpportunities = Boolean(arbiterBest || actionableCandidates.length || decisions.length);
+
+    if (!hasOpportunities) {
+      setText($('selection-count'), '0');
+      setText($('selection-tier'), 'none');
+      var tierElEmpty = $('selection-tier');
+      if (tierElEmpty) tierElEmpty.className = 'tt-chip tt-chip--none';
+
       setState(host, 'empty', 'No consensus setup',
-        decisions.length
-          ? decisions.length + ' symbol(s) evaluated, none reached cross-style agreement.'
-          : 'No candidates were produced by the scan.');
+        'No candidates were produced by the scan.');
       return;
+    }
+
+    var activeCount = actionableCandidates.length || (arbiterBest ? 1 : 0) || decisions.length;
+    setText($('selection-count'), String(activeCount));
+
+    var topGrade = arbiterBest ? (arbiterBest.setup_grade || arbiterBest.confidence_tier || 'GRADE A') : 'NONE';
+    setText($('selection-tier'), topGrade);
+    var tierElArb = $('selection-tier');
+    if (tierElArb) {
+      var tg = String(topGrade).toLowerCase();
+      var chipCls = 'none';
+      if (tg.indexOf('a+') >= 0 || tg.indexOf('high') >= 0) chipCls = 'high';
+      else if (tg.indexOf('a') >= 0 || tg.indexOf('medium') >= 0) chipCls = 'medium';
+      else if (tg.indexOf('b') >= 0 || tg.indexOf('low') >= 0) chipCls = 'low';
+      tierElArb.className = 'tt-chip tt-chip--' + chipCls;
     }
 
     host.removeAttribute('data-state');
     host.innerHTML = '';
-    tradeable.slice(0, 8).forEach(function (d) {
-      var card = document.createElement('div');
-      card.className = 'tt-pad';
-      card.style.borderBottom = '1px solid var(--hm-border-subtle)';
-      card.style.cursor = 'pointer';
 
-      var dirCls = String(d.direction).toUpperCase() === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
-      var tier = String(d.confidence_tier || '').toLowerCase();
-      var tierCls = ['high', 'medium', 'low'].indexOf(tier) >= 0 ? tier : 'none';
+    // 1. Featured Top Arbiter Selection
+    if (arbiterBest) {
+      var arbCard = document.createElement('div');
+      arbCard.className = 'tt-pad';
+      arbCard.style.borderBottom = '1px solid var(--hm-border-subtle)';
+      arbCard.style.cursor = 'pointer';
+      arbCard.style.background = 'rgba(0, 210, 255, 0.04)';
 
-      card.innerHTML =
-        '<div class="tt-row">' +
-          '<span class="tt-symbol">' + esc(d.symbol) + '</span>' +
-          '<span class="tt-dir ' + dirCls + '">' + esc(d.direction) + '</span>' +
-          '<span class="tt-chip tt-chip--' + tierCls + '">' + esc(d.confidence_tier || '—') + '</span>' +
+      var arbDir = String(arbiterBest.bias || arbiterBest.direction || '').toUpperCase();
+      var arbDirCls = arbDir === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
+      var arbGrade = esc(arbiterBest.setup_grade || 'GRADE A');
+      var arbStyle = esc(arbiterBest.trade_style || 'SWING');
+      var arbEv = num(arbiterBest.expected_value, 2);
+      var arbRr = num(arbiterBest.risk_reward_ratio, 1);
+      var arbWin = num(arbiterBest.win_prob, 0);
+
+      var rationaleText = '';
+      if (arbiterBest.confluence_factors && arbiterBest.confluence_factors.length) {
+        rationaleText = arbiterBest.confluence_factors[0];
+      } else if (arbiterBest.risk_factors && arbiterBest.risk_factors.length) {
+        rationaleText = arbiterBest.risk_factors[0];
+      }
+
+      arbCard.innerHTML =
+        '<div class="tt-row" style="margin-bottom:3px;">' +
+          '<span style="font-size:10px;font-weight:700;color:var(--hm-accent,#00d2ff);letter-spacing:0.04em;">★ TOP ARBITER OPPORTUNITY</span>' +
           '<span class="tt-rail__spacer"></span>' +
-          '<span class="tt-num">' + num(d.consensus_score, 1) + '</span>' +
+          '<span class="tt-chip tt-chip--high" style="font-size:10px;">' + arbGrade + '</span>' +
         '</div>' +
-        '<div class="tt-row" style="margin-top:4px">' +
-          '<span class="tt-hint">' + esc(d.rationale || '') + '</span>' +
+        '<div class="tt-row">' +
+          '<span class="tt-symbol">' + esc(arbiterBest.symbol) + '</span>' +
+          '<span class="tt-dir ' + arbDirCls + '">' + arbDir + '</span>' +
+          '<span class="tt-chip tt-chip--muted" style="font-size:10px;">' + arbStyle + '</span>' +
+          '<span class="tt-rail__spacer"></span>' +
+          '<span class="tt-num" style="color:var(--hm-accent,#00d2ff);font-weight:600;">Util ' + num(arbiterBest.utility_score, 2) + '</span>' +
+        '</div>' +
+        '<div class="tt-row" style="margin-top:3px;font-size:11px;color:var(--hm-text-subtle);">' +
+          '<span>Entry: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(arbiterBest.entry_price, 2) + '</b></span>' +
+          '<span style="margin:0 4px;opacity:0.4;">|</span>' +
+          '<span>SL: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(arbiterBest.stop_loss, 2) + '</b></span>' +
+          '<span style="margin:0 4px;opacity:0.4;">|</span>' +
+          '<span>TP: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(arbiterBest.take_profit, 2) + '</b></span>' +
+          '<span class="tt-rail__spacer"></span>' +
+          '<span>R:R <b style="color:var(--hm-text);">' + arbRr + ':1</b> | EV <b style="color:var(--hm-text);">+' + arbEv + 'R</b></span>' +
+        '</div>' +
+        (rationaleText ? (
+          '<div class="tt-row" style="margin-top:4px;">' +
+            '<span class="tt-hint" style="font-size:11px;">' + esc(rationaleText) + '</span>' +
+          '</div>'
+        ) : '');
+
+      arbCard.addEventListener('click', function () { selectSymbol(arbiterBest.symbol); });
+      host.appendChild(arbCard);
+    }
+
+    // 2. Render other actionable candidates or evaluated decisions
+    var renderedItems = 0;
+    var seenKeys = {};
+    if (arbiterBest) {
+      seenKeys[arbiterBest.symbol + '_' + (arbiterBest.trade_style || '')] = true;
+    }
+
+    actionableCandidates.forEach(function (c) {
+      if (renderedItems >= 6) return;
+      var key = c.symbol + '_' + (c.trade_style || '');
+      if (seenKeys[key]) return;
+      seenKeys[key] = true;
+
+      var cCard = document.createElement('div');
+      cCard.className = 'tt-pad';
+      cCard.style.borderBottom = '1px solid var(--hm-border-subtle)';
+      cCard.style.cursor = 'pointer';
+
+      var cDir = String(c.bias || c.direction || '').toUpperCase();
+      var cDirCls = cDir === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
+      var cGrade = c.setup_grade || 'CANDIDATE';
+
+      cCard.innerHTML =
+        '<div class="tt-row">' +
+          '<span class="tt-symbol">' + esc(c.symbol) + '</span>' +
+          '<span class="tt-dir ' + cDirCls + '">' + cDir + '</span>' +
+          '<span class="tt-chip tt-chip--muted" style="font-size:10px;">' + esc(c.trade_style || '') + '</span>' +
+          '<span class="tt-chip tt-chip--none" style="font-size:10px;">' + esc(cGrade) + '</span>' +
+          '<span class="tt-rail__spacer"></span>' +
+          '<span class="tt-num">Util ' + num(c.utility_score, 2) + '</span>' +
+        '</div>' +
+        '<div class="tt-row" style="margin-top:3px;font-size:11px;color:var(--hm-text-subtle);">' +
+          '<span>Entry: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(c.entry_price, 2) + '</b></span>' +
+          '<span style="margin:0 4px;opacity:0.4;">|</span>' +
+          '<span>SL: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(c.stop_loss, 2) + '</b></span>' +
+          '<span style="margin:0 4px;opacity:0.4;">|</span>' +
+          '<span>TP: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(c.take_profit, 2) + '</b></span>' +
+          '<span class="tt-rail__spacer"></span>' +
+          '<span>R:R ' + num(c.risk_reward_ratio, 1) + ':1 | Win ' + num(c.win_prob, 0) + '%</span>' +
         '</div>';
 
-      card.addEventListener('click', function () { selectSymbol(d.symbol); });
-      host.appendChild(card);
+      cCard.addEventListener('click', function () { selectSymbol(c.symbol); });
+      host.appendChild(cCard);
+      renderedItems++;
     });
+
+    // If no candidate was rendered, show the consensus decisions with their split vote rationale
+    if (!arbiterBest && renderedItems === 0 && decisions.length) {
+      decisions.slice(0, 6).forEach(function (d) {
+        var dCard = document.createElement('div');
+        dCard.className = 'tt-pad';
+        dCard.style.borderBottom = '1px solid var(--hm-border-subtle)';
+        dCard.style.cursor = 'pointer';
+
+        var dDir = String(d.direction).toUpperCase();
+        var dDirCls = dDir === 'BUY' ? 'tt-dir--buy' : (dDir === 'SELL' ? 'tt-dir--sell' : 'tt-dir--flat');
+
+        dCard.innerHTML =
+          '<div class="tt-row">' +
+            '<span class="tt-symbol">' + esc(d.symbol) + '</span>' +
+            '<span class="tt-dir ' + dDirCls + '">' + esc(d.direction || 'PENDING') + '</span>' +
+            '<span class="tt-chip tt-chip--none">' + esc(d.confidence_tier || 'NONE') + '</span>' +
+            '<span class="tt-rail__spacer"></span>' +
+            '<span class="tt-num">' + num(d.consensus_score, 1) + ' / 100</span>' +
+          '</div>' +
+          '<div class="tt-row" style="margin-top:4px">' +
+            '<span class="tt-hint">' + esc(d.rationale || 'Split consensus across styles') + '</span>' +
+          '</div>';
+
+        dCard.addEventListener('click', function () { selectSymbol(d.symbol); });
+        host.appendChild(dCard);
+      });
+    }
   }
 
   /* ── Scanner radar ────────────────────────────────────────────────────── */

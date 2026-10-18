@@ -31,7 +31,7 @@ from jarvis.intelligence.honest_base_rates import (
 )
 from jarvis.learning.online_ml_predictor import OnlineMLPredictor
 from jarvis.market.news import GLOBAL_NEWS_ENGINE
-from jarvis.data.symbol_registry import resolve as resolve_symbol
+from jarvis.data.symbol_registry import resolve as resolve_symbol, is_crypto as check_is_crypto
 from jarvis.risk.account_tier import is_micro_account, get_effective_min_ev
 from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config
 
@@ -180,6 +180,7 @@ class DecisionEngine:
         sym_name = str(getattr(context, "symbol", "")).upper()
         is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name)
         is_index_asset = any(k in sym_name for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ30", "DJI", "DOW", "GER40", "UK100"])
+        is_crypto = any(c in sym_name for c in ("BTC", "ETH", "SOL")) or (check_is_crypto(sym_name) if sym_name else False)
 
         if "SCALP" in style_upper:
             htf_bias = mtf_align.get("H1", mtf_align.get("M15", "NEUTRAL"))

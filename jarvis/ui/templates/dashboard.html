@@ -272,7 +272,7 @@
 <nav class="tt-pane-bar" aria-label="Pane selector">
   <button class="tt-pane-bar__btn" data-pane-btn="watchlist" aria-selected="true">Watchlist</button>
   <button class="tt-pane-bar__btn" data-pane-btn="chart" aria-selected="false">Chart</button>
-  <button class="tt-pane-bar__btn" data-pane-btn="ticket" aria-selected="false">Ticket</button>
+          <button class="tt-pane-bar__btn" data-pane-btn="ticket" aria-selected="false">Context</button>
 </nav>
 
 <!-- ═══ Quick actions + primary CTA (phone only) ═══════════════════════
@@ -416,8 +416,11 @@
       </div>
     </aside>
 
-    <!-- Watchlist / AI auto-selection / Scanner radar. One segmented switch
-         gives each panel the full sidebar height instead of stacking. -->
+    <!-- Watchlist / AI auto-selection / Scanner radar / Context. One segmented
+         switch gives each panel the full sidebar height instead of stacking.
+         Context (the engine's reasoning reads) used to be a column of its own
+         on the right; it is a tab here now, so the chart owns the full width
+         from the sidebar to the right edge. -->
     <div class="tt-panel tt-panel--watchlist">
       <div class="tt-panel__head tt-panel__head--seg">
         <div class="tt-seg tt-seg--sidebar" role="group" aria-label="Sidebar panels">
@@ -430,6 +433,8 @@
           <button class="tt-seg__btn" id="side-btn-radar" type="button"
                   data-side="radar" aria-pressed="false">Scanner
             <span class="tt-panel__count" id="radar-count">0</span></button>
+          <button class="tt-seg__btn" id="side-btn-context" type="button"
+                  data-side="context" aria-pressed="false">Context</button>
         </div>
       </div>
 
@@ -497,6 +502,31 @@
           </select>
         </div>
         <div class="tt-panel__body" id="radar-body" data-state="loading"></div>
+      </div>
+
+      <!-- Context: the engine's reasoning, the analyst read and the news that
+           moved the symbol. This was a separate column on the right; it is a
+           tab of this panel now so the chart extends to the right edge at
+           every width. dashboard.js keeps writing the same element ids it
+           always has - none of its logic changed for the move. -->
+      <div class="tt-side-pane" id="side-pane-context" role="tabpanel" aria-label="Context" hidden>
+        <div class="tt-side-pane__bar">
+          <span class="tt-chip tt-chip--none" id="reason-tier">—</span>
+          <span class="tt-panel__spacer"></span>
+          <div class="tt-seg" role="group" aria-label="Context source">
+            <button class="tt-seg__btn" id="ctx-btn-why" type="button"
+                    data-ctx="why" aria-pressed="true">Why</button>
+            <button class="tt-seg__btn" id="ctx-btn-analyst" type="button"
+                    data-ctx="analyst" aria-pressed="false">Analyst</button>
+            <button class="tt-seg__btn" id="ctx-btn-news" type="button"
+                    data-ctx="news" aria-pressed="false">News</button>
+          </div>
+        </div>
+        <div class="tt-panel__body" id="ctx-body">
+          <div id="reason-body" data-state="loading"></div>
+          <div id="ctx-analyst" data-state="loading" hidden></div>
+          <div id="ctx-news" data-state="loading" hidden></div>
+        </div>
       </div>
     </div>
 
@@ -645,27 +675,6 @@
       </div>
     </div>
 
-    <!-- Context column (Right-Hand Side) -->
-    <div class="tt-panel tt-panel--ticket" id="ticket-context-panel">
-      <div class="tt-panel__head">
-        <h2 class="tt-panel__title">Context</h2>
-        <span class="tt-chip tt-chip--none" id="reason-tier">—</span>
-        <span class="tt-panel__spacer"></span>
-        <div class="tt-seg" role="group" aria-label="Context source">
-          <button class="tt-seg__btn" id="ctx-btn-why" type="button"
-                  data-ctx="why" aria-pressed="true">Why</button>
-          <button class="tt-seg__btn" id="ctx-btn-analyst" type="button"
-                  data-ctx="analyst" aria-pressed="false">Analyst</button>
-          <button class="tt-seg__btn" id="ctx-btn-news" type="button"
-                  data-ctx="news" aria-pressed="false">News</button>
-        </div>
-      </div>
-      <div class="tt-panel__body" id="ctx-body">
-        <div id="reason-body" data-state="loading"></div>
-        <div id="ctx-analyst" data-state="loading" hidden></div>
-        <div id="ctx-news" data-state="loading" hidden></div>
-      </div>
-    </div>
   </section>
 
   <!-- ── News ───────────────────────────────────────────────────────── -->
@@ -1489,7 +1498,7 @@
     <div class="tt-drawer__group tt-drawer__only-trade" role="group" aria-labelledby="drawer-sec-panes">
       <button type="button" class="tt-drawer__item" data-pane-btn="watchlist" aria-selected="true"><span class="tt-drawer__ico" aria-hidden="true">☰</span>Watchlist</button>
       <button type="button" class="tt-drawer__item" data-pane-btn="chart"><span class="tt-drawer__ico" aria-hidden="true">◧</span>Chart</button>
-      <button type="button" class="tt-drawer__item" data-pane-btn="ticket"><span class="tt-drawer__ico" aria-hidden="true">⇥</span>Ticket</button>
+      <button type="button" class="tt-drawer__item" data-pane-btn="ticket"><span class="tt-drawer__ico" aria-hidden="true">⇥</span>Context</button>
     </div>
 
     <p class="tt-drawer__section" id="drawer-sec-markets">Desks &amp; Markets</p>

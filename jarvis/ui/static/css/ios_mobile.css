@@ -578,7 +578,7 @@
      light push-in so the change of context is legible. */
   .tt-app[data-pane="watchlist"] .tt-panel--watchlist,
   .tt-app[data-pane="chart"] .tt-panel--chart,
-  .tt-app[data-pane="ticket"] .tt-panel--ticket {
+  .tt-app[data-pane="ticket"] .tt-panel--watchlist {
     animation: hmPaneIn 0.22s var(--ios-ease);
   }
   @keyframes hmPaneIn {
@@ -917,22 +917,23 @@
      Flatten control, and Refresh lives on the watchlist header. */
   .tt-qbar { display: none; }
 
-  /* Split view: all three Trade panes are on screen at once. Belt-and-braces
+  /* Split view: both Trade panes are on screen at once. Belt-and-braces
      against any future single-pane rule that matches [data-pane] without a
      width guard — the tablet must never hide a pane the sidebar implies. */
   .tt-app[data-pane] .tt-panel--watchlist,
-  .tt-app[data-pane] .tt-panel--chart,
-  .tt-app[data-pane] .tt-panel--ticket { display: flex; }
+  .tt-app[data-pane] .tt-panel--chart { display: flex; }
 
   /* Narrow tablets get an explicit two-column split for Trade instead of the
      single-column phone stacking. The watchlist yields at this width: at
      768px the old 280px cap left the chart only ~240px, which buried the
-     NATIVE/TRADINGVIEW switch and the level tags under each other. */
+     NATIVE/TRADINGVIEW switch and the level tags under each other. The
+     Context panel that used to span a second row beneath the chart is a
+     sidebar tab now, so the split is a single row and the chart keeps the
+     height. */
   #view-trade.tt-view[data-active="true"] {
     grid-template-columns: minmax(180px, 236px) minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1.6fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
-  #view-trade .tt-panel--ticket { grid-column: 1 / -1; }
 
   /* Drawer is phone-only chrome; the sidebar already shows everything. */
   .tt-drawer-trigger { display: none; }
@@ -957,7 +958,7 @@
   .tt-view[data-active="true"],
   .tt-app[data-pane="watchlist"] .tt-panel--watchlist,
   .tt-app[data-pane="chart"] .tt-panel--chart,
-  .tt-app[data-pane="ticket"] .tt-panel--ticket {
+  .tt-app[data-pane="ticket"] .tt-panel--watchlist {
     transition: none !important;
     animation: none !important;
   }
