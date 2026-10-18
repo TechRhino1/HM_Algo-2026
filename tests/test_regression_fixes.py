@@ -564,7 +564,12 @@ class TestRegressionFixes(unittest.TestCase):
             orch, "_first_untrusted_frame", return_value=(None, None, 0.0)
         ), patch.object(
             orch, "_first_unusable_frame", return_value=(None, None)
-        ):
+        ), patch(
+            "jarvis.application.orchestrator.datetime"
+        ) as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 10, 15, 14, 0, 0, tzinfo=timezone.utc)
+            mock_dt.fromtimestamp = datetime.fromtimestamp
+            mock_dt.timezone = timezone
             res = orch.run_cycle_for_symbol("XAUUSD")
         self.assertEqual(res.get("execution", {}).get("status"), "FILLED")
 

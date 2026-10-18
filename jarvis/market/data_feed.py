@@ -259,8 +259,12 @@ class DataFeedEngine:
     @classmethod
     def get_mt5_fetch_lock(cls):
         if cls._mt5_fetch_lock is None:
-            from jarvis.execution.mt5_client import MT5Client
-            cls._mt5_fetch_lock = MT5Client._shared_lock
+            try:
+                from jarvis.execution.mt5_client import MT5Client
+                cls._mt5_fetch_lock = MT5Client._shared_lock
+            except Exception:
+                import threading
+                cls._mt5_fetch_lock = threading.RLock()
         return cls._mt5_fetch_lock
 
     def __init__(self, mt5_client: Any = None, timeout_sec: float = 3.0):
@@ -686,5 +690,11 @@ class DataFeedEngine:
             "close": closes,
             "volume": volumes
         })
+
+
+try:
+    DataFeedEngine.get_mt5_fetch_lock()
+except Exception:
+    pass
 
 

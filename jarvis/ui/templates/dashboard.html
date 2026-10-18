@@ -440,45 +440,59 @@
         </table>
       </div>
 
-      <div class="tt-panel__head">
-        <h2 class="tt-panel__title">AI selection</h2>
-        <span class="tt-panel__count" id="selection-count">0</span>
-        <span class="tt-panel__spacer"></span>
-        <span class="tt-chip tt-chip--none" id="selection-tier">—</span>
+      <div class="tt-panel__head tt-panel__head--seg">
+        <div class="tt-seg tt-seg--sidebar" role="group" aria-label="Sidebar panels">
+          <button class="tt-seg__btn" id="side-btn-selection" type="button"
+                  data-side="selection" aria-pressed="true">AI Selection
+            <span class="tt-panel__count" id="selection-count">0</span></button>
+          <button class="tt-seg__btn" id="side-btn-radar" type="button"
+                  data-side="radar" aria-pressed="false">Scanner
+            <span class="tt-panel__count" id="radar-count">0</span></button>
+        </div>
       </div>
-      <div class="tt-panel__body" id="selection-body" data-state="loading"></div>
+
+      <div class="tt-side-pane" id="side-pane-selection" role="tabpanel" aria-label="AI selection">
+        <div class="tt-side-pane__bar">
+          <span class="tt-hint">Cross-style consensus picks</span>
+          <span class="tt-panel__spacer"></span>
+          <span class="tt-chip tt-chip--none" id="selection-tier">—</span>
+        </div>
+        <div class="tt-panel__body" id="selection-body" data-state="loading"></div>
+      </div>
 
       <!-- Scanner radar. Rows come from the orchestrator's ranked candidate
-           list (telemetry radar_opportunities) — the same source the legacy
-           terminal's radar used. -->
-      <div class="tt-panel__head">
-        <h2 class="tt-panel__title">Scanner radar</h2>
-        <span class="tt-panel__count" id="radar-count">0</span>
-        <span class="tt-panel__spacer"></span>
-        <label class="tt-sr-only" for="radar-filter">Filter by trading style</label>
-        <select class="tt-select tt-select--compact" id="radar-filter">
-          <option value="ALL">All styles</option>
-          <option value="SWING">Swing</option>
-          <option value="DAY_TRADING">Day</option>
-          <option value="SCALP">Scalp</option>
-        </select>
-      </div>
-      <div class="tactical-radar-widget">
-        <div class="radar-sweep-screen" aria-hidden="true">
-          <div class="radar-sweep-beam"></div>
-          <div class="radar-blip blip-1"></div>
-          <div class="radar-blip blip-2"></div>
-          <div class="radar-crosshair"></div>
-        </div>
-        <div class="radar-info">
-          <div class="radar-info-title">
-            <span>TACTICAL RADAR</span>
-            <span class="radar-info-status">SWEEP ACTIVE</span>
+           list (telemetry radar_opportunities) - the same source the legacy
+           terminal's radar used. Tabbed beside the AI selection so each list
+           owns the full pane instead of splitting one box. -->
+      <div class="tt-side-pane" id="side-pane-radar" role="tabpanel" aria-label="Scanner radar" hidden>
+        <div class="tactical-radar-widget">
+          <div class="radar-sweep-screen" aria-hidden="true">
+            <div class="radar-sweep-beam"></div>
+            <div class="radar-blip blip-1"></div>
+            <div class="radar-blip blip-2"></div>
+            <div class="radar-crosshair"></div>
           </div>
-          <div class="radar-info-sub">Continuous Opportunity Scan · 8 Pairs</div>
+          <div class="radar-info">
+            <div class="radar-info-title">
+              <span>TACTICAL RADAR</span>
+              <span class="radar-info-status">SWEEP ACTIVE</span>
+            </div>
+            <div class="radar-info-sub">Continuous Opportunity Scan · 8 Pairs</div>
+          </div>
         </div>
+        <div class="tt-side-pane__bar">
+          <span class="tt-hint">Ranked breakout candidates</span>
+          <span class="tt-panel__spacer"></span>
+          <label class="tt-sr-only" for="radar-filter">Filter by trading style</label>
+          <select class="tt-select tt-select--compact" id="radar-filter">
+            <option value="ALL">All styles</option>
+            <option value="SWING">Swing</option>
+            <option value="DAY_TRADING">Day</option>
+            <option value="SCALP">Scalp</option>
+          </select>
+        </div>
+        <div class="tt-panel__body" id="radar-body" data-state="loading"></div>
       </div>
-      <div class="tt-panel__body" id="radar-body" data-state="loading"></div>
     </div>
 
     <!-- Chart + positions. The chart carries the instrument's support and

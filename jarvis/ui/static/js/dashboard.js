@@ -3057,6 +3057,24 @@
     if (tab === 'news') renderContextNews();
   }
 
+  /* ── Sidebar panels beside the watchlist ────────────────────────────── */
+  /* AI selection and Scanner radar used to stack under the watchlist and
+     split the leftover height (flex: 1 1 0 each), so on shorter windows both
+     lists were cut in half. They are tabs now: one pane owns the full area
+     under the watchlist, in the same pattern as the Context panel. */
+  function setSideTab(tab) {
+    if (['selection', 'radar'].indexOf(tab) === -1) tab = 'selection';
+    state.sideTab = tab;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-side]'), function (btn) {
+      btn.setAttribute('aria-pressed', String(btn.getAttribute('data-side') === tab));
+    });
+    var panes = { selection: $('side-pane-selection'), radar: $('side-pane-radar') };
+    Object.keys(panes).forEach(function (k) {
+      if (panes[k]) panes[k].hidden = (k !== tab);
+    });
+    if (tab === 'radar') renderRadar();
+  }
+
   function renderContextAnalyst() {
     var host = $('ctx-analyst');
     if (!host || host.hidden) return;
@@ -6522,6 +6540,10 @@
 
     Array.prototype.forEach.call(document.querySelectorAll('[data-ctx]'), function (btn) {
       btn.addEventListener('click', function () { setContext(btn.getAttribute('data-ctx')); });
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll('[data-side]'), function (btn) {
+      btn.addEventListener('click', function () { setSideTab(btn.getAttribute('data-side')); });
     });
 
     var btnToggleTicket = $('btn-toggle-ticket');

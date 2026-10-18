@@ -69,7 +69,7 @@ class ExitPolicy:
     trail_activation_r: float = DEFAULT_TRAIL_ACTIVATION_R
     # Milestone ratchets: (favorable R threshold, R level to lock in)
     milestones: List[tuple] = field(
-        default_factory=lambda: [(1.5, 0.25), (2.0, 0.60), (2.8, 1.25), (3.8, 2.25), (5.0, 3.50)]
+        default_factory=lambda: [(1.0, -0.35), (1.5, 0.25), (2.0, 0.60), (2.8, 1.25), (3.8, 2.25), (5.0, 3.50)]
     )
     digits: int = 5
     pip_size: float = 0.0001

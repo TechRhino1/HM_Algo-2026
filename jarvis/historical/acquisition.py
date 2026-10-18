@@ -97,7 +97,7 @@ class AcquisitionEngine:
         }
 
         if MT5_AVAILABLE:
-            with DataFeedEngine._mt5_fetch_lock:
+            with DataFeedEngine.get_mt5_fetch_lock():
                 s_info = mt5.symbol_info(resolved)
                 if s_info:
                     specs["digits"] = getattr(s_info, "digits", 5)
@@ -224,7 +224,7 @@ class AcquisitionEngine:
             )
             return self._generate_calibrated_rates(symbol, timeframe, start_dt, end_dt)
 
-        with DataFeedEngine._mt5_fetch_lock:
+        with DataFeedEngine.get_mt5_fetch_lock():
             # Ensure symbol selected in market watch
             mt5.symbol_select(resolved, True)
             

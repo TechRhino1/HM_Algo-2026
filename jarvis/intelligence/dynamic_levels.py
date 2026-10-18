@@ -361,6 +361,8 @@ class DynamicRiskAndLevelsEngine:
             sl_dist = max(sl_dist, min_sl_dist)
             if is_gold:
                 sl_dist = min(sl_dist, 12.0 + spread_dist)
+            elif is_silver:
+                sl_dist = min(sl_dist, 0.85 + spread_dist)
             elif is_crypto:
                 if "ETH" in sym_name and "ETHBTC" not in sym_name:
                     max_eth_sl = 18.0 if "SCALP" in style.upper() else (28.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 38.0)
@@ -603,6 +605,8 @@ class DynamicRiskAndLevelsEngine:
             sl_dist = max(sl_dist, min_sl_dist)
             if is_gold:
                 sl_dist = min(sl_dist, 12.0 + spread_dist)
+            elif is_silver:
+                sl_dist = min(sl_dist, 0.85 + spread_dist)
             elif is_crypto:
                 if "ETH" in sym_name and "ETHBTC" not in sym_name:
                     max_eth_sl = 18.0 if "SCALP" in style.upper() else (28.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 38.0)

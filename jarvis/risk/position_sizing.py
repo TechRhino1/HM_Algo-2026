@@ -181,7 +181,7 @@ class PositionSizer:
             elif account_balance < 2500.0:
                 tier_cap = 3.5
             else:
-                tier_cap = 2.0 * effective_risk_pct  # large accounts: strict
+                tier_cap = max(risk_pct, 2.0 * effective_risk_pct)  # standard accounts: up to base risk ceiling
 
             # For micro accounts (< $1000), minimum broker lot (0.01) on Gold or Crypto
             # forces an absolute dollar risk dictated by market volatility.
@@ -198,17 +198,20 @@ class PositionSizer:
             # For very small accounts, enforce a calibrated dollar floor:
             # - Accounts < $500: max $12.00 risk on Gold/Crypto, $8.00 on FX
             # - Accounts $500-$1000: max $18.00 risk on Gold/Crypto, $12.00 on FX
+            # For standard accounts ($1000+), minimum broker lot is acceptable whenever
+            # the forced risk does not exceed the configured base risk ceiling.
             dollar_floor_ok = (
                 (actual_risk_dollars <= 12.0 and 150.0 <= account_balance < 500.0 and (is_gold_asset or is_crypto_asset))
                 or (actual_risk_dollars <= 18.0 and 500.0 <= account_balance < 1000.0 and (is_gold_asset or is_crypto_asset))
                 or (actual_risk_dollars <= 8.0 and 150.0 <= account_balance < 500.0)
                 or (actual_risk_dollars <= 12.0 and 500.0 <= account_balance < 1000.0)
+                or (account_balance >= 1000.0 and (actual_risk_pct <= max(risk_pct, 1.0) or actual_risk_dollars <= max(50.0, account_balance * (risk_pct / 100.0))))
             )
 
             if is_micro_account and account_balance >= 100.0:
                 max_acceptable_risk_pct = max(tier_cap, 2.0 * effective_risk_pct)
             else:
-                max_acceptable_risk_pct = 2.0 * effective_risk_pct
+                max_acceptable_risk_pct = max(tier_cap, max(risk_pct, 2.0 * effective_risk_pct))
             if actual_risk_pct > max_acceptable_risk_pct and not dollar_floor_ok:
                 logger.error(
                     f"REJECTED [{sym_key}]: Minimum lot size ({min_vol}) would force "

@@ -3452,13 +3452,59 @@ button.bugatti-dropdown__item:focus {
   #watch-table .tt-num { font-size: 11px !important; }
   #watch-table .tt-chip { font-size: 10px !important; padding: 1px 5px !important; }
   #watch-table .tt-dir { font-size: 10px !important; padding: 1px 4px !important; }
-  /* The AI-selection body is a flex item in the watchlist column and shrank
-     below its own content on shorter windows, cutting its state box in half
-     (58px of a 136px box at 1366x768). Keep it at its content height and
-     trim the generously padded state box, so the radar rows below keep a
-     usable strip on short screens. */
-  #selection-body { flex: 0 0 auto; padding-top: 6px; padding-bottom: 6px; }
-  #selection-body .tt-state { min-height: 0; padding: 8px 16px; }
+}
+
+/* ═══ Sidebar panels: AI Selection + Scanner as tabs ═════════════════════
+   The two panels used to stack beneath the watchlist and split the leftover
+   height evenly (theme_terminal.css pinned both bodies to flex: 1 1 0), so
+   on any laptop-height window each list got cut in half and the watchlist
+   itself starved. They are one tabbed pane now, in the same segmented-button
+   pattern as the Context panel: a full-width AI Selection / Scanner switch,
+   one pane owning the whole area under the watchlist table. */
+.tt-panel--watchlist > .tt-panel__head--seg {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.tt-seg--sidebar {
+  display: flex;
+  width: 100%;
+}
+.tt-seg--sidebar .tt-seg__btn {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.tt-seg--sidebar .tt-panel__count {
+  padding: 0 6px;
+}
+.tt-side-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 150px;
+  overflow: hidden;
+}
+.tt-side-pane[hidden] { display: none; }
+.tt-side-pane__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--hm-space-2);
+  padding: 6px var(--hm-space-4);
+  border-bottom: 1px solid var(--hm-border-subtle);
+}
+.tt-side-pane__bar .tt-select--compact { margin-left: 0; }
+/* The pane owns the space; the body just fills it and scrolls. */
+#selection-body,
+#radar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* The radar sweep banner is decoration - on short laptop windows the list it
+   sits above matters more. */
+@media (min-width: 1025px) and (max-height: 720px) {
+  #side-pane-radar .tactical-radar-widget { display: none; }
 }
 
 /* ═══ Laptop-width navbar (1025-1700px) ══════════════════════════════════

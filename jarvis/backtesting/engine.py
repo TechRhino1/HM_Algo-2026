@@ -388,6 +388,7 @@ class BacktestEngine:
                         "risk_dist": open_trade.get("risk_dist", 0.0),
                         "lots": open_trade.get("initial_lots", open_trade["lots"]),
                         "pnl": round(pnl_net, 2), "result": f"STAGNATION_TIME_STOP_{stag_limit}BAR",
+                        "exit_reason": f"STAGNATION_TIME_STOP_{stag_limit}BAR",
                         "strategy": open_trade["strategy"], "regime": open_trade["regime"],
                         "score": open_trade["score"],
                         "planned_rr": open_trade.get("planned_rr", 0.0),
@@ -410,6 +411,7 @@ class BacktestEngine:
                 if "exit_policy" not in open_trade:
                     open_trade["exit_policy"] = ExitPolicy.for_symbol(symbol, spec)
 
+                bar_start_sl = float(open_trade["sl"])
                 price_for_exit = float(current_bar["close"])
                 # Favourable excursion measured on the excursion high/low, but the
                 # stop arithmetic must reference a *tradable* price. Using the bar
@@ -485,8 +487,8 @@ class BacktestEngine:
                     _rd = float(open_trade["risk_dist"])
                     _dir = 1.0 if open_trade["type"] == "BUY" else -1.0
                     _r_now = float(open_trade["mfe"]) / _rd
-                    _stop_hit = ((low <= open_trade["sl"]) if open_trade["type"] == "BUY"
-                                 else (high >= open_trade["sl"]))
+                    _stop_hit = ((low <= bar_start_sl) if open_trade["type"] == "BUY"
+                                 else (high >= bar_start_sl))
                     if not _stop_hit:
                         for _lg in _legs:
                             if _lg["done"] or _lg["r"] is None:
@@ -517,41 +519,46 @@ class BacktestEngine:
                 # Stage 4: Check SL/TP exit for remaining position
                 if not closed:
                     if open_trade["type"] == "BUY":
-                        sl_hit = low <= open_trade["sl"]
+                        sl_hit = low <= bar_start_sl
                         tp_hit = (open_trade["tp"] is not None) and (high >= open_trade["tp"])
                         if sl_hit and tp_hit:
-                            # Conservative intrabar ordering (matches trade_simulator):
-                            # the stop resting at the start of the bar is tested first,
-                            # so a bar that spans both is booked as a stop-out loss.
-                            # Resolving it as a TP on the open-price heuristic inflated
-                            # win rate exactly where the target lives.
-                            exit_price = open_trade["sl"] - actual_slippage_delta
-                            result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
-                            closed = True
-                        elif sl_hit:
-                            exit_price = open_trade["sl"] - actual_slippage_delta
+                            # Conservative intrabar ordering: resting stop tested first
+                            exit_price = bar_start_sl - actual_slippage_delta
                             result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
                             closed = True
                         elif tp_hit:
                             exit_price = open_trade["tp"]
                             result = "TP"
+                            closed = True
+                        elif sl_hit:
+                            exit_price = bar_start_sl - actual_slippage_delta
+                            result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
+                            closed = True
+                        elif price_for_exit <= open_trade["sl"]:
+                            # Closed below newly ratcheted stop on this bar's close
+                            exit_price = price_for_exit - actual_slippage_delta
+                            result = "BE/TRAIL_SL"
                             closed = True
                     elif open_trade["type"] == "SELL":
                         spread_delta = spread_pips * spec.pip_size
-                        sl_hit = (high + spread_delta) >= open_trade["sl"]
+                        sl_hit = (high + spread_delta) >= bar_start_sl
                         tp_hit = (open_trade["tp"] is not None) and ((low + spread_delta) <= open_trade["tp"])
                         if sl_hit and tp_hit:
-                            # Conservative intrabar ordering (matches trade_simulator).
-                            exit_price = open_trade["sl"] + actual_slippage_delta
-                            result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
-                            closed = True
-                        elif sl_hit:
-                            exit_price = open_trade["sl"] + actual_slippage_delta
+                            exit_price = bar_start_sl + actual_slippage_delta
                             result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
                             closed = True
                         elif tp_hit:
                             exit_price = open_trade["tp"]
                             result = "TP"
+                            closed = True
+                        elif sl_hit:
+                            exit_price = bar_start_sl + actual_slippage_delta
+                            result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
+                            closed = True
+                        elif (price_for_exit + spread_delta) >= open_trade["sl"]:
+                            # Closed above newly ratcheted stop on this bar's close
+                            exit_price = price_for_exit + spread_delta + actual_slippage_delta
+                            result = "BE/TRAIL_SL"
                             closed = True
 
                 if closed:
@@ -580,6 +587,7 @@ class BacktestEngine:
                         "lots": open_trade.get("initial_lots", open_trade["lots"]),
                         "pnl": round(pnl_net, 2),
                         "result": result,
+                        "exit_reason": result,
                         "strategy": open_trade["strategy"],
                         "regime": open_trade["regime"],
                         "score": open_trade["score"],
@@ -779,14 +787,13 @@ class BacktestEngine:
                         
                         if dollar_risk_per_lot > 0:
                             raw_lots = planned_risk_dollars / dollar_risk_per_lot
-                            lots = min(auth_res["lots"], round(raw_lots, 2))
+                            calced_lots = round(raw_lots, 2)
+                            if calced_lots < sym_info["volume_min"] and auth_res.get("lots", 0.0) >= sym_info["volume_min"]:
+                                # RiskEngine authorized the trade at minimum lot based on its adaptive tier/dollar-floor logic
+                                lots = sym_info["volume_min"]
+                            else:
+                                lots = min(auth_res["lots"], calced_lots)
                             if lots < sym_info["volume_min"]:
-                                # The planned risk cannot be expressed at the
-                                # minimum lot. The floor used to be applied
-                                # AFTER the risk cap, so the trade silently
-                                # opened at up to 2x the intended risk (and up
-                                # to 10x once MT5 re-quantizes to the broker's
-                                # real minimum) with no check at all.
                                 skipped_min_lot += 1
                                 continue
                         else:

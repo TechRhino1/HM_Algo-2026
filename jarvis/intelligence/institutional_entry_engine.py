@@ -426,19 +426,21 @@ class InstitutionalEntryEngine:
 
         # 5. Structural SL: Outer D1/H4 structural swing boundary +/- (1.0x spread + buffer)
         sym_name = str(context.symbol).upper()
-        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name) or (getattr(spec, "asset_class", "").upper() == "COMMODITY") or ("WTI" in sym_name) or ("OIL" in sym_name)
+        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name)
+        is_silver = ("XAG" in sym_name) or ("SILVER" in sym_name)
+        is_oil = ("WTI" in sym_name) or ("OIL" in sym_name)
         is_crypto = getattr(spec, "is_crypto", False) or (getattr(spec, "asset_class", "").upper() == "CRYPTO") or ("BTC" in sym_name) or ("ETH" in sym_name) or ("SOL" in sym_name)
         is_index = ("US500" in sym_name) or ("NAS100" in sym_name) or ("US30" in sym_name) or (getattr(spec, "asset_class", "").upper() == "INDEX")
-        is_forex = (getattr(spec, "asset_class", "").upper() == "FOREX") and not (is_gold or is_crypto or is_index)
+        is_forex = (getattr(spec, "asset_class", "").upper() == "FOREX") and not (is_gold or is_silver or is_oil or is_crypto or is_index)
 
         h1_atr = context.volatility.atr if (hasattr(context, "volatility") and context.volatility.atr > 0) else (d1_atr / 4.0)
-        sl_buffer = spread_dist + ((0.30 * h1_atr) if is_gold else (0.40 * d1_atr))
-        min_sl_floor = self._calculate_structural_sl_floor(context, d1_atr if not is_gold else h1_atr, spread_dist, trade_style="SWING")
+        sl_buffer = spread_dist + ((0.25 * h1_atr) if (is_gold or is_silver) else (0.40 * d1_atr))
+        min_sl_floor = self._calculate_structural_sl_floor(context, h1_atr if (is_gold or is_silver) else d1_atr, spread_dist, trade_style="SWING")
         if bias == "BUY":
             outer_swing = range_low
             struct_sl = round(outer_swing - sl_buffer, digits)
             if struct_sl >= entry_price:
-                sl_dist = ((1.20 * h1_atr) if is_gold else (1.20 * d1_atr)) + spread_dist
+                sl_dist = ((1.20 * h1_atr) if (is_gold or is_silver) else (1.20 * d1_atr)) + spread_dist
             else:
                 sl_dist = entry_price - struct_sl
             sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
@@ -448,7 +450,7 @@ class InstitutionalEntryEngine:
             outer_swing = range_high
             struct_sl = round(outer_swing + sl_buffer, digits)
             if struct_sl <= entry_price:
-                sl_dist = ((1.20 * h1_atr) if is_gold else (1.20 * d1_atr)) + spread_dist
+                sl_dist = ((1.20 * h1_atr) if (is_gold or is_silver) else (1.20 * d1_atr)) + spread_dist
             else:
                 sl_dist = struct_sl - entry_price
             sl_dist = max(sl_dist, pip_size * 5, min_sl_floor)
@@ -457,7 +459,11 @@ class InstitutionalEntryEngine:
 
         # Asset-Class Structural Bounds
         if is_gold:
-            max_risk_cap = min(max(20.0, 1.60 * h1_atr), 35.0)
+            max_risk_cap = min(max(6.0, 1.20 * h1_atr), 12.0)
+        elif is_silver:
+            max_risk_cap = min(max(0.35, 1.20 * h1_atr), 0.75)
+        elif is_oil:
+            max_risk_cap = min(max(0.60, 1.20 * h1_atr), 1.80)
         elif is_index:
             max_risk_cap = 1.15 * d1_atr
         elif is_forex:

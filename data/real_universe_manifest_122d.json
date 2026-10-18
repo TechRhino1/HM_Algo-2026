@@ -1,0 +1,79 @@
+{
+  "days": 122,
+  "count": 2,
+  "datasets": [
+    {
+      "symbol": "US500",
+      "requested_symbol": "US500",
+      "broker_symbol": "US500Cash#",
+      "timeframe": "H1",
+      "days": 122,
+      "rows": 1990,
+      "start": "2026-06-17 23:00:00+00:00",
+      "end": "2026-10-16 23:00:00+00:00",
+      "span_days": 121.0,
+      "full_window": true,
+      "provenance": "MT5_TERMINAL_REAL",
+      "synthetic": false,
+      "quality": {
+        "ok": true,
+        "rows": 1990,
+        "weekend_bars": 0,
+        "nonuniform_gaps": 87,
+        "zero_spread_rows": 0,
+        "issues": []
+      },
+      "meta": {
+        "name": "US500",
+        "broker_symbol": "US500Cash#",
+        "digits": 2,
+        "point": 0.01,
+        "pip_size": 0.01,
+        "tick_value": 0.01,
+        "contract_size": 1.0,
+        "category": "INDEX",
+        "typical_spread_pips": 65.0,
+        "min_lot": 0.1,
+        "lot_step": 0.1
+      },
+      "fetched_at": "2026-10-17T22:43:15.214148+00:00"
+    },
+    {
+      "symbol": "WTI",
+      "requested_symbol": "WTI",
+      "broker_symbol": "OILCash#",
+      "timeframe": "H1",
+      "days": 122,
+      "rows": 1992,
+      "start": "2026-06-17 23:00:00+00:00",
+      "end": "2026-10-16 23:00:00+00:00",
+      "span_days": 121.0,
+      "full_window": true,
+      "provenance": "MT5_TERMINAL_REAL",
+      "synthetic": false,
+      "quality": {
+        "ok": true,
+        "rows": 1992,
+        "weekend_bars": 0,
+        "nonuniform_gaps": 87,
+        "zero_spread_rows": 0,
+        "issues": []
+      },
+      "meta": {
+        "name": "WTI",
+        "broker_symbol": "OILCash#",
+        "digits": 2,
+        "point": 0.01,
+        "pip_size": 0.01,
+        "tick_value": 1.0,
+        "contract_size": 100.0,
+        "category": "ENERGY",
+        "typical_spread_pips": 14.000000000000002,
+        "min_lot": 0.01,
+        "lot_step": 0.01
+      },
+      "fetched_at": "2026-10-17T22:43:15.246919+00:00"
+    }
+  ],
+  "failures": []
+}
