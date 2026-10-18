@@ -3454,13 +3454,12 @@ button.bugatti-dropdown__item:focus {
   #watch-table .tt-dir { font-size: 10px !important; padding: 1px 4px !important; }
 }
 
-/* ═══ Sidebar panels: AI Selection + Scanner as tabs ═════════════════════
-   The two panels used to stack beneath the watchlist and split the leftover
-   height evenly (theme_terminal.css pinned both bodies to flex: 1 1 0), so
-   on any laptop-height window each list got cut in half and the watchlist
-   itself starved. They are one tabbed pane now, in the same segmented-button
-   pattern as the Context panel: a full-width AI Selection / Scanner switch,
-   one pane owning the whole area under the watchlist table. */
+/* ═══ Sidebar panels: Watchlist / AI Selection / Scanner as tabs ═════════
+   The three sections used to stack and split the sidebar's leftover height
+   (theme_terminal.css pinned both list bodies to flex: 1 1 0), so on any
+   laptop-height window each one got cut and the watchlist starved. They are
+   one segmented switch now, in the same pattern as the Context panel: the
+   selected panel owns the full area under the tab strip. */
 .tt-panel--watchlist > .tt-panel__head--seg {
   padding-top: 4px;
   padding-bottom: 4px;
@@ -3471,21 +3470,33 @@ button.bugatti-dropdown__item:focus {
 }
 .tt-seg--sidebar .tt-seg__btn {
   flex: 1 1 0;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
+  padding: 0 8px;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 .tt-seg--sidebar .tt-panel__count {
   padding: 0 6px;
 }
-.tt-side-pane {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 0;
-  min-height: 150px;
-  overflow: hidden;
+@media (max-width: 599px) {
+  .tt-seg--sidebar .tt-seg__btn { padding: 0 6px; gap: 4px; letter-spacing: 0; }
+  .tt-seg--sidebar .tt-panel__count { padding: 0 4px; }
 }
+/* Tablet keeps the sidebar as a narrow column (~200px) - three tabs never
+   fit on one line there, so they stack as a small menu. */
+@media (min-width: 600px) and (max-width: 1024px) {
+  .tt-seg--sidebar { flex-direction: column; }
+  .tt-seg--sidebar .tt-seg__btn { height: 34px; }
+  .tt-seg--sidebar .tt-seg__btn + .tt-seg__btn {
+    border-left: 0;
+    border-top: 1px solid var(--hm-border);
+  }
+}
+.tt-side-pane { display: block; }
 .tt-side-pane[hidden] { display: none; }
 .tt-side-pane__bar {
   display: flex;
@@ -3495,11 +3506,28 @@ button.bugatti-dropdown__item:focus {
   border-bottom: 1px solid var(--hm-border-subtle);
 }
 .tt-side-pane__bar .tt-select--compact { margin-left: 0; }
-/* The pane owns the space; the body just fills it and scrolls. */
-#selection-body,
-#radar-body {
-  flex: 1 1 auto;
-  min-height: 0;
+@media (min-width: 1025px) {
+  /* A primary switch, not a secondary filter - give it real height. */
+  .tt-seg--sidebar .tt-seg__btn { height: 32px; }
+  /* Definite-height column: the active pane takes everything left under the
+     tabs, its body scrolls inside. Below 1025px the panel flows by content
+     (table cards on phone/tablet), so the panes stay plain blocks there. */
+  .tt-side-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-height: 150px;
+    overflow: hidden;
+  }
+  .tt-side-pane[hidden] { display: none; }
+  /* The watch pane's flushed body is no longer a direct child of the panel,
+     so it needs its own fill-and-scroll rule. */
+  #side-pane-watch > .tt-panel__body--flush { flex: 1 1 auto; min-height: 0; }
+  #selection-body,
+  #radar-body {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
 }
 /* The radar sweep banner is decoration - on short laptop windows the list it
    sits above matters more. */

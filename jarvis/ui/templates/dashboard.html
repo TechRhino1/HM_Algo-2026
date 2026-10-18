@@ -416,34 +416,16 @@
       </div>
     </aside>
 
-    <!-- Watchlist + AI auto-selection -->
+    <!-- Watchlist / AI auto-selection / Scanner radar. One segmented switch
+         gives each panel the full sidebar height instead of stacking. -->
     <div class="tt-panel tt-panel--watchlist">
-      <div class="tt-panel__head">
-        <h2 class="tt-panel__title">Watchlist</h2>
-        <span class="tt-panel__count" id="watch-count">0</span>
-        <span class="tt-panel__spacer"></span>
-        <button class="tt-btn tt-btn--sm" id="watch-refresh" title="Refresh watchlist">Refresh</button>
-      </div>
-      <div class="tt-panel__body tt-panel__body--flush">
-        <table class="tt-table" id="watch-table">
-          <thead>
-            <tr>
-              <th scope="col">Symbol</th>
-              <th scope="col">Bias</th>
-              <th scope="col" class="tt-num">Conf</th>
-              <th scope="col" class="tt-num">Entry</th>
-              <th scope="col" class="tt-num">R:R</th>
-              <th scope="col">Session</th>
-            </tr>
-          </thead>
-          <tbody id="watch-body" data-state="loading"></tbody>
-        </table>
-      </div>
-
       <div class="tt-panel__head tt-panel__head--seg">
         <div class="tt-seg tt-seg--sidebar" role="group" aria-label="Sidebar panels">
+          <button class="tt-seg__btn" id="side-btn-watch" type="button"
+                  data-side="watch" aria-pressed="true">Watchlist
+            <span class="tt-panel__count" id="watch-count">0</span></button>
           <button class="tt-seg__btn" id="side-btn-selection" type="button"
-                  data-side="selection" aria-pressed="true">AI Selection
+                  data-side="selection" aria-pressed="false">AI Selection
             <span class="tt-panel__count" id="selection-count">0</span></button>
           <button class="tt-seg__btn" id="side-btn-radar" type="button"
                   data-side="radar" aria-pressed="false">Scanner
@@ -451,7 +433,30 @@
         </div>
       </div>
 
-      <div class="tt-side-pane" id="side-pane-selection" role="tabpanel" aria-label="AI selection">
+      <div class="tt-side-pane" id="side-pane-watch" role="tabpanel" aria-label="Watchlist">
+        <div class="tt-side-pane__bar">
+          <span class="tt-hint">Live quotes and engine bias</span>
+          <span class="tt-panel__spacer"></span>
+          <button class="tt-btn tt-btn--sm" id="watch-refresh" title="Refresh watchlist" aria-label="Refresh watchlist">Refresh</button>
+        </div>
+        <div class="tt-panel__body tt-panel__body--flush">
+          <table class="tt-table" id="watch-table">
+            <thead>
+              <tr>
+                <th scope="col">Symbol</th>
+                <th scope="col">Bias</th>
+                <th scope="col" class="tt-num">Conf</th>
+                <th scope="col" class="tt-num">Entry</th>
+                <th scope="col" class="tt-num">R:R</th>
+                <th scope="col">Session</th>
+              </tr>
+            </thead>
+            <tbody id="watch-body" data-state="loading"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="tt-side-pane" id="side-pane-selection" role="tabpanel" aria-label="AI selection" hidden>
         <div class="tt-side-pane__bar">
           <span class="tt-hint">Cross-style consensus picks</span>
           <span class="tt-panel__spacer"></span>

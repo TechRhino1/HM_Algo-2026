@@ -3057,18 +3057,23 @@
     if (tab === 'news') renderContextNews();
   }
 
-  /* ── Sidebar panels beside the watchlist ────────────────────────────── */
-  /* AI selection and Scanner radar used to stack under the watchlist and
-     split the leftover height (flex: 1 1 0 each), so on shorter windows both
-     lists were cut in half. They are tabs now: one pane owns the full area
-     under the watchlist, in the same pattern as the Context panel. */
+  /* ── Sidebar panels ─────────────────────────────────────────────────── */
+  /* Watchlist, AI selection and Scanner radar used to stack and split the
+     sidebar's leftover height (the two lists were flex: 1 1 0 each), so on
+     shorter windows every section was cut. They are one segmented switch
+     now: whichever panel is selected owns the full area under the tabs, in
+     the same pattern as the Context panel. */
   function setSideTab(tab) {
-    if (['selection', 'radar'].indexOf(tab) === -1) tab = 'selection';
+    if (['watch', 'selection', 'radar'].indexOf(tab) === -1) tab = 'watch';
     state.sideTab = tab;
     Array.prototype.forEach.call(document.querySelectorAll('[data-side]'), function (btn) {
       btn.setAttribute('aria-pressed', String(btn.getAttribute('data-side') === tab));
     });
-    var panes = { selection: $('side-pane-selection'), radar: $('side-pane-radar') };
+    var panes = {
+      watch: $('side-pane-watch'),
+      selection: $('side-pane-selection'),
+      radar: $('side-pane-radar')
+    };
     Object.keys(panes).forEach(function (k) {
       if (panes[k]) panes[k].hidden = (k !== tab);
     });

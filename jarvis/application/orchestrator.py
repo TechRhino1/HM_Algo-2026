@@ -1312,6 +1312,15 @@ class JarvisOrchestrator:
         """
         active_styles = list(styles) if styles else ["SWING", "DAY_TRADING", "SCALP"]
         active_symbols = list(symbols) if symbols else list(self.symbols)
+
+        # On weekend market close (Friday 21:00 UTC to Sunday ~21:00 UTC), traditional
+        # markets (Forex, Metals, Indices, Oil) are shut. Only scan crypto to avoid
+        # hammering MT5 with dead socket calls that stall the worker pool.
+        from jarvis.market.data_feed import _is_weekend_gap
+        from jarvis.data.symbol_registry import is_crypto
+        if _is_weekend_gap(time.time()):
+            active_symbols = [s for s in active_symbols if is_crypto(s)]
+
         tasks = [(sym, style) for style in active_styles for sym in active_symbols]
         raw_results: List[Tuple[str, str, Dict[str, Any]]] = []
 
@@ -1325,13 +1334,17 @@ class JarvisOrchestrator:
             _executor.submit(self.run_cycle_for_symbol, sym, style, dry_run): (sym, style)
             for sym, style in tasks
         }
-        for fut in as_completed(future_to_task):
-            sym, style = future_to_task[fut]
-            try:
-                res = fut.result()
-                raw_results.append((sym, style, res))
-            except Exception as e:
-                logger.error(f"Parallel scan error for {sym} ({style}): {e}", exc_info=True)
+        try:
+            from concurrent.futures import TimeoutError as FuturesTimeoutError
+            for fut in as_completed(future_to_task, timeout=15.0):
+                sym, style = future_to_task[fut]
+                try:
+                    res = fut.result(timeout=1.0)
+                    raw_results.append((sym, style, res))
+                except Exception as e:
+                    logger.error(f"Parallel scan error for {sym} ({style}): {e}", exc_info=True)
+        except Exception as e:
+            logger.warning(f"Parallel scan sweep completed with partial results: {e}")
 
         # 1. Evaluate every opportunity through the Universal Opportunity Arbiter
         candidates = []

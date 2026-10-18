@@ -65,14 +65,14 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         canonical="BTCUSD",
         asset_class="CRYPTO",
         strategy_weights={
-            "TREND_FOLLOWING": 2.8,            # Prioritize institutional trend continuation
-            "TREND_PULLBACK": 2.6,             # Deep pullbacks into discount/premium OTE
-            "BREAKOUT_EXPANSION": 2.2,         # Volumetric expansion breakouts
-            "CHOCH_STRUCTURAL_REVERSAL": 1.8,  # Confirmed structural shifts only
-            "RANGE_MEAN_REVERSION": 1.2,       # Demote range fades on macro trending crypto
+            "TREND_PULLBACK": 3.5,             # Deep pullbacks into discount/premium OTE
+            "CHOCH_STRUCTURAL_REVERSAL": 3.0,  # Confirmed structural shifts only
+            "TREND_FOLLOWING": 2.5,            # Institutional trend continuation
+            "RANGE_MEAN_REVERSION": 1.5,       # Demote range fades on macro trending crypto
             "LIQUIDITY_SWEEP_REVERSAL": 0.5,   # Avoid counter-trend sweep fades in crypto
+            "BREAKOUT_EXPANSION": 0.0,         # Ban false breakout traps in crypto
         },
-        banned_strategies=[],
+        banned_strategies=["BREAKOUT_EXPANSION"],
         sl_atr_multiplier=1.50,                # Calibrated for local structural execution
         min_target_rr=2.0,
         asym_rr=3.5,
