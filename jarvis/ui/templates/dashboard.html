@@ -117,15 +117,11 @@
     <span class="tt-drawer-trigger__bars" aria-hidden="true"></span>
   </button>
 
-  <!-- Primary Bugatti Navigation: Minimal & Clean without duplicates -->
+  <!-- Primary navigation: two consolidated menus, nothing else. The individual
+       desk links (Cockpit, Symbol Control, News, Analyst, ...) all live inside
+       the Desks menu, and the market surfaces inside Markets, so the rail
+       stays calm and every destination is one hover away. -->
   <nav class="tt-tabs bugatti-nav-links" role="tablist" aria-label="Primary navigation">
-    <a href="/" class="tt-tab bugatti-desk-link active" title="Cockpit Master Desk" data-view-btn="trade">
-      <span>⚡ Cockpit</span>
-    </a>
-    <button type="button" class="tt-tab bugatti-desk-link" data-view-btn="symbols" title="Master Trader AI Symbol Control Center">
-      <span>🎯 Symbol Control</span>
-      <span class="tt-badge" id="nav-active-symbols-count">Active</span>
-    </button>
 
     <!-- Consolidated Markets Dropdown -->
     <div class="tt-dropdown bugatti-dropdown" data-dropdown>
@@ -161,8 +157,12 @@
       <nav class="tt-dropdown__panel tt-dropdown__panel--left bugatti-dropdown__menu" id="desks-menu"
            data-dropdown-panel hidden aria-label="Intelligence Desks">
         <div class="bugatti-dropdown__header">INTELLIGENCE DESKS</div>
+        <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="trade">
+          <span>⚡ Cockpit</span>
+        </button>
         <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="symbols">
           <span>🎯 Symbol Control Center</span>
+          <span class="tt-badge" id="nav-active-symbols-count">—</span>
         </button>
         <button type="button" class="bugatti-dropdown__item nav-view-item" data-view-btn="news">
           <span>📰 News Sentinel</span>

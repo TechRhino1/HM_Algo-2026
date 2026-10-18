@@ -249,6 +249,50 @@ async function main() {
             }
           }
 
+          // ---- Panel content containment (dashboard chart panel) ---------------
+          // The chart panel is a fixed-height app-shell cell. The chart body
+          // carried a fixed 400-460px height, so on 600-800px-tall desktop
+          // windows the positions footer was pushed clean out of the panel
+          // (clipped away by the panel's overflow:hidden) and the canvas
+          // x-axis was sliced off at the panel edge. Nothing measured this.
+          out.chartPanel = null;
+          {
+            const panel = document.querySelector('.tt-panel--chart');
+            const pr = panel && panel.getBoundingClientRect();
+            if (panel && pr.width > 0 && pr.height > 0) {
+              const oc = getComputedStyle(panel).overflowY;
+              const over = panel.scrollHeight - panel.clientHeight;
+              const problems = [];
+              /* A panel that is allowed to scroll (short-window fallback) can
+                 hold more than its box; a clipped panel is the defect. */
+              if (oc !== 'auto' && oc !== 'scroll' && over > 2) {
+                problems.push('panel content overflows ' + over + 'px into overflow:hidden');
+              }
+              if (over > 2) panel.scrollTop = over;   // reachable via scroll
+              const body = panel.querySelector('.tt-chart__body');
+              const footer = panel.querySelector('.tt-panel__body--flush');
+              const cv = panel.querySelector('.tt-chart canvas');
+              if (body && cv) {
+                const br = body.getBoundingClientRect();
+                const cr = cv.getBoundingClientRect();
+                if (cr.bottom > br.bottom + 1) {
+                  problems.push('chart canvas x-axis clipped (canvas ' +
+                    Math.round(cr.bottom) + ' > body ' + Math.round(br.bottom) + ')');
+                }
+              }
+              if (footer) {
+                const fr = footer.getBoundingClientRect();
+                if (fr.bottom > pr.bottom + 1 || fr.top < pr.top - 1) {
+                  problems.push('positions footer outside panel [' +
+                    Math.round(fr.top) + ',' + Math.round(fr.bottom) + '] vs [' +
+                    Math.round(pr.top) + ',' + Math.round(pr.bottom) + ']');
+                }
+              }
+              panel.scrollTop = 0;
+              out.chartPanel = problems;
+            }
+          }
+
           // Tap targets: only on a coarse pointer, and only real controls.
           const coarse = window.matchMedia('(pointer: coarse)').matches;
           if (coarse) {
@@ -480,6 +524,15 @@ async function main() {
           ok(`${label}: chrome bar contains its children`,
             probe.barOverflow.length === 0,
             probe.barOverflow.slice(0, 3).join(', '));
+        }
+
+        // 3d. The chart panel must hold its own content: chart canvas inside
+        //     the chart body, positions footer inside the panel (probe note
+        //     above: the fixed chart height pushed the footer out entirely).
+        if (probe.chartPanel) {
+          ok(`${label}: chart panel holds its content`,
+            probe.chartPanel.length === 0,
+            probe.chartPanel.slice(0, 3).join(', '));
         }
 
         // 4. App shell integrity + silent clipping (dashboard only).

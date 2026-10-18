@@ -674,7 +674,10 @@ body {
   align-items: center;
   gap: 4px;
   position: relative;
-  min-width: 58px;
+  /* Labels ("QUALITY GATE", "HRP SIZING") are wider than a fixed 58px step
+     once the root font grows; steps widen with the fonts so neighbouring
+     labels can never overlap. */
+  min-width: max(58px, 4.7em);
 }
 
 .lifecycle-step__node {
@@ -1070,7 +1073,7 @@ select::-ms-expand,
     gap: 2px;
   }
   .lifecycle-step {
-    min-width: 44px;
+    min-width: max(44px, 4.7em);
   }
   .lifecycle-step__label {
     font-size: 0.5rem;
@@ -1115,24 +1118,171 @@ select::-ms-expand,
   min-height: 280px !important;
 }
 
-/* The fixed chart heights are a desktop idiom. Scoped to >=1025px so the phone
-   and tablet layouts can let the chart flex-fill its panel (theme_terminal.css
-   `.tt-panel--chart > .tt-chart__body { flex: 1 1 auto; min-height: 0 }` and the
-   ios_mobile phone body rules). Breakpoints now follow the canonical scale
-   (tablet 600-1024, desktop >=1025) instead of Bootstrap's 575.98/991.98, which
-   straddled the phone/tablet boundary. A 280px floor is kept everywhere so a
-   lazy or empty chart body can never collapse to nothing. */
+/* The chart body flex-fills its panel on desktop (theme_terminal.css
+   `.tt-panel--chart > .tt-chart__body { flex: 1 1 auto; min-height: 0 }`).
+   It used to be pinned to height: 460px / min-height: 400px, which together
+   with the wrapping head (138px) and the positions footer is taller than the
+   whole panel on 600-800px-tall windows: the footer was pushed out of the
+   panel and the canvas x-axis was clipped at the panel edge - the fixed
+   number ignored how much space was actually left. The body now grows into
+   the leftover space and shrinks down to a readable floor instead. */
 @media (min-width: 1025px) {
   .tt-chart__body {
-    min-height: 400px !important;
-    height: 460px !important;
+    height: auto !important;
+    min-height: 240px !important;
+  }
+  /* The positions head text is pinned in px because the rem sizes grow with
+     a large browser/OS font scale (root 20px+) until the tabs overflow the
+     head and strike through the total and Flatten all. */
+  .tt-panel__head--pos .tt-panel__title {
+    font-size: 12px !important;
+  }
+  .tt-panel__head--pos .tt-pos-tab {
+    font-size: 12px !important;
+    padding: 4px 9px !important;
+  }
+  .tt-panel__head--pos .tt-pos-tab__count {
+    font-size: 10px !important;
+  }
+  .tt-panel__head--pos .tt-pos-total {
+    font-size: 11px !important;
+  }
+  .tt-panel__head--pos .tt-btn--sm {
+    font-size: 11px !important;
+  }
+}
+
+/* Full-width desktop columns (>=1241px): the positions head fits one row of
+   ~450px and must not wrap into a second 48px row that steals space from the
+   chart. Below this width the centre column is too narrow, so the head is
+   left free to wrap rather than letting the tabs strike through the total
+   and Flatten all. */
+@media (min-width: 1241px) {
+  .tt-panel__head--pos {
+    flex-wrap: nowrap !important;
+  }
+  .tt-panel__head--pos .tt-pos-tabs {
+    flex-wrap: nowrap;
+  }
+}
+
+/* Narrow desktop widths (a 1025-1240px center column leaves ~490px): the
+   full-size row is ~30px too wide, and the shrinkable tabs container used to
+   collapse to 8px with the tabs striking through the total and Flatten all.
+   Tighter px type keeps the single row honest instead. */
+@media (min-width: 1025px) and (max-width: 1240px) {
+  .tt-panel__head--pos .tt-pos-tab {
+    font-size: 11px !important;
+    padding: 3px 6px !important;
+  }
+  .tt-panel__head--pos .tt-pos-tab__count {
+    font-size: 9px !important;
+    padding: 1px 5px !important;
+    min-width: 18px !important;
+  }
+  .tt-panel__head--pos .tt-panel__title {
+    font-size: 11px !important;
+  }
+  .tt-panel__head--pos .tt-pos-total {
+    font-size: 10px !important;
+  }
+  .tt-panel__head--pos .tt-btn--sm {
+    font-size: 10px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
   }
 }
 
 @media (min-width: 1400px) {
   .tt-chart__body {
-    min-height: 480px !important;
-    height: 540px !important;
+    min-height: 280px !important;
+  }
+}
+
+/* The lifecycle strip is status chrome, not data: it must never be the item
+   flexbox squeezes when a short window runs out of vertical room (it used to
+   collapse to a dots-only sliver with its labels clipped). The chart body
+   below it owns the shrinking, down to its floor. */
+.lifecycle-stepper {
+  flex-shrink: 0 !important;
+}
+
+/* The canvas host must follow the body exactly. It used to carry its own
+   min-height: 240px (theme_terminal.css `.tt-chart`), which silently
+   overflowed a shorter chart body and clipped the canvas x-axis inside the
+   body's overflow: hidden. The floors now live on `.tt-chart__body` only. */
+.tt-chart {
+  min-height: 0 !important;
+}
+
+/* The positions footer is the flexible item when the panel runs short. It was
+   flex: 0 0 auto (theme_terminal.css), so its rows could never yield: with
+   ten rows loaded (the loading state, or a user with several open trades)
+   the panel pushed 105px+ past its box and overflow: hidden sliced the
+   bottom rows away. Now it shrinks to a header + one visible row and scrolls
+   internally; the chart keeps its floor. */
+.tt-panel--chart > .tt-panel__body--flush {
+  flex: 0 1 auto;
+  min-height: 44px;
+}
+
+/* Tablet trade view (600-1024): the chart panel is a fixed cell in the view
+   grid, but the tablet ergonomics stack its heads with 44px touch targets
+   (~470px of chrome), which cannot fit the cell alongside the chart floor.
+   The panel scrolls - the touch idiom - instead of silently clipping the
+   chart and the positions table. The legend chips duplicate the levels drawn
+   on the chart, so they fold away (the desktop rule below does the same). */
+@media (min-width: 600px) and (max-width: 1024px) {
+  .tt-panel--chart {
+    overflow-y: auto !important;
+  }
+  .tt-panel--chart #chart-legend {
+    display: none !important;
+  }
+}
+
+/* Short desktop windows: compact the chart chrome so the chart and the
+   positions footer both stay inside the panel. The legend chips (R1/R2/S1/S2)
+   are the tallest non-essential row - the same levels are drawn on the chart
+   itself - so they fold away first. */
+@media (min-width: 1025px) and (max-height: 760px) {
+  #chart-legend {
+    display: none !important;
+  }
+  .tt-panel__head--chart {
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+  }
+  .lifecycle-stepper {
+    padding: 6px 12px !important;
+    margin-bottom: 4px !important;
+  }
+}
+
+@media (min-width: 1025px) and (max-height: 680px) {
+  .tt-chart__body {
+    min-height: 190px !important;
+  }
+}
+
+/* Shortest supported desktop windows (a 1366x768 laptop with browser chrome
+   leaves ~614px of viewport; larger OS/browser font scales leave less). The
+   chart keeps a 175px floor and the panel becomes scrollable as the final
+   fallback - the footer stays reachable instead of being clipped away. */
+@media (min-width: 1025px) and (max-height: 660px) {
+  .tt-chart__body {
+    min-height: 175px !important;
+  }
+  .tt-panel--chart {
+    overflow-y: auto !important;
+  }
+  /* The panel scrolls here, so the footer must NOT flex-shrink: a shrunken
+     footer showed the header plus a half-row, which reads as a broken table.
+     It keeps head + one complete row (+ the horizontal scrollbar) and the
+     panel scroll reveals the rest. */
+  .tt-panel--chart > .tt-panel__body--flush {
+    flex-shrink: 0 !important;
+    min-height: 76px !important;
   }
 }
 
@@ -1256,6 +1406,16 @@ select::-ms-expand,
 }
 
 .bugatti-dropdown__item.active {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.35), rgba(0, 240, 255, 0.2)) !important;
+  border-color: var(--bugatti-blue) !important;
+  font-weight: 600;
+}
+
+/* Desk links moved into the Desks menu are stateful view switches; setView()
+   marks the current one with aria-selected, so the open menu shows where the
+   operator already is. */
+.bugatti-dropdown__item[aria-selected="true"] {
   color: #ffffff !important;
   background: linear-gradient(135deg, rgba(0, 102, 255, 0.35), rgba(0, 240, 255, 0.2)) !important;
   border-color: var(--bugatti-blue) !important;
@@ -3452,6 +3612,21 @@ button.bugatti-dropdown__item:focus {
   #watch-table .tt-num { font-size: 11px !important; }
   #watch-table .tt-chip { font-size: 10px !important; padding: 1px 5px !important; }
   #watch-table .tt-dir { font-size: 10px !important; padding: 1px 4px !important; }
+}
+
+/* ═══ Positions table: the same px doctrine as the watchlist ═════════════
+   The base cells are 0.8125rem with 6px 10px padding, so a browser root of
+   20px turns every cell into 16px+ of text: the table demands ~860px inside
+   a ~490px panel, the P&L and Actions columns scroll out of sight, and a
+   squat chart panel cuts the row itself. px columns keep the density stable
+   at every font scale; zoom/DPI still scale the whole surface together. */
+@media (min-width: 1025px) {
+  #pos-table th { padding: 4px 7px !important; font-size: 10px !important; }
+  #pos-table td { padding: 4px 7px !important; font-size: 11px !important; }
+  #pos-table th.tt-num { font-size: 10px !important; }
+  #pos-table td.tt-num { font-size: 11px !important; }
+  #pos-table th:first-child, #pos-table td:first-child { padding-left: 10px !important; }
+  #pos-table th.tt-pos-actions-col, #pos-table td.tt-pos-actions { padding-right: 10px !important; }
 }
 
 /* ═══ Sidebar panels: Watchlist / AI Selection / Scanner as tabs ═════════
