@@ -8,11 +8,22 @@
     "allowed_symbols": [
       "BTCUSD",
       "ETHUSD",
+      "SOLUSD",
+      "XAUUSD",
+      "XAGUSD",
+      "WTI",
       "EURUSD",
       "GBPUSD",
       "USDJPY",
-      "XAGUSD",
-      "XAUUSD"
+      "AUDUSD",
+      "USDCAD",
+      "USDCHF",
+      "NZDUSD",
+      "US30",
+      "NAS100",
+      "US500",
+      "GER40",
+      "UK100"
     ]
   },
   "risk": {
