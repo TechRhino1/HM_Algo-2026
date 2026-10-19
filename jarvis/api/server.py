@@ -437,6 +437,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 "/api/risk/portfolio-heat",
                 "/api/intelligence/auto-selection", "/api/intelligence/reliability", "/api/intelligence/meta",
                 "/api/intelligence/missed-trades", "/api/intelligence/calibration", "/api/intelligence/symbol-profiles",
+                "/api/symbols/intelligence",
                 "/api/stream/telemetry", "/api/auth/me", "/api/auth/verify",
                 # Probes: no session, and no reliance on the loopback bypass.
                 "/health", "/ready"
@@ -900,6 +901,15 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                         dec_obj = latest_decisions.get(sym_name)
 
                         current_price = float(radar_item.get("current_price") or 0.0)
+                        if current_price <= 0 and hasattr(self, "mt5_client") and self.mt5_client:
+                            try:
+                                resolved = self.mt5_client.resolve_symbol_name(sym_name)
+                                import MetaTrader5 as mt5
+                                t = mt5.symbol_info_tick(resolved)
+                                if t and getattr(t, "bid", 0.0) > 0:
+                                    current_price = float(t.bid)
+                            except Exception:
+                                pass
                         bid = current_price
                         ask = round(current_price + (spread_pips * pip_size), digits) if current_price > 0 else 0.0
 

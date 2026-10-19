@@ -3638,6 +3638,65 @@ button.bugatti-dropdown__item:focus {
   .hm-sheet__item--active { color: var(--bugatti-blue); }
 
   body.hm-sheet-open { overflow: hidden; }
+
+  /* Symbol Control Center mobile adaptations */
+  .symbols-deck-container {
+    padding: 8px 10px;
+    gap: 12px;
+  }
+  .symbols-hud-bar {
+    padding: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .symbols-hud-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .symbols-metric-chip {
+    min-width: 0;
+    padding: 6px 10px;
+  }
+  .symbols-toolbar {
+    padding: 10px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .symbols-filter-pills {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sym-filter-pill {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .symbols-actions-group {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .symbols-search-wrap {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .symbols-search-input {
+    width: 100%;
+    min-width: 0;
+  }
+  .sym-batch-btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .symbols-grid-container {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
 }
 
 @media (max-width: 599px) and (prefers-reduced-motion: reduce) {

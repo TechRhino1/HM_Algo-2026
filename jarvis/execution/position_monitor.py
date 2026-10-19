@@ -355,11 +355,11 @@ class PositionMonitorEngine:
                         # Invalidation 1: Price has dumped below stop loss before order filled
                         if sl_price > 0 and c_price <= sl_price:
                             cancel_reason = f"Structural invalidation: price ({c_price:.4f}) dropped below SL ({sl_price:.4f})"
-                        # Invalidation 2: Price ran away to target or > 1.5 ATR without filling limit
+                        # Invalidation 2: Price ran away to target or > 85% of target after placement without filling limit
                         elif tp_price > 0 and c_price >= tp_price:
                             cancel_reason = f"Runaway target reached without fill ({c_price:.4f} >= TP {tp_price:.4f})"
-                        elif (c_price - open_price) >= (1.5 * atr):
-                            cancel_reason = f"Runaway excursion (+{c_price - open_price:.4f} >= 1.5 ATR)"
+                        elif tp_price > 0 and tp_price > open_price and c_price >= (open_price + 0.85 * (tp_price - open_price)) and age > 60.0:
+                            cancel_reason = f"Runaway target 85% reached without fill ({c_price:.4f} near TP {tp_price:.4f})"
                         # Invalidation 3: Bearish structure shift or severe adverse momentum
                         elif (getattr(st, "choch", False) and getattr(st, "bias", "") == "BEARISH") or trend_score <= -30.0:
                             cancel_reason = f"Adverse market structure shift (choch_bear, trend_score={trend_score:.1f})"
@@ -368,11 +368,11 @@ class PositionMonitorEngine:
                         # Invalidation 1: Price has spiked above stop loss before order filled
                         if sl_price > 0 and c_price >= sl_price:
                             cancel_reason = f"Structural invalidation: price ({c_price:.4f}) surged above SL ({sl_price:.4f})"
-                        # Invalidation 2: Price ran away to target or > 1.5 ATR without filling limit
+                        # Invalidation 2: Price ran away to target or > 85% of target after placement without filling limit
                         elif tp_price > 0 and c_price <= tp_price:
                             cancel_reason = f"Runaway target reached without fill ({c_price:.4f} <= TP {tp_price:.4f})"
-                        elif (open_price - c_price) >= (1.5 * atr):
-                            cancel_reason = f"Runaway excursion (-{open_price - c_price:.4f} >= 1.5 ATR)"
+                        elif tp_price > 0 and tp_price < open_price and c_price <= (open_price - 0.85 * (open_price - tp_price)) and age > 60.0:
+                            cancel_reason = f"Runaway target 85% reached without fill ({c_price:.4f} near TP {tp_price:.4f})"
                         # Invalidation 3: Bullish structure shift or severe adverse momentum
                         elif (getattr(st, "choch", False) and getattr(st, "bias", "") == "BULLISH") or trend_score >= 30.0:
                             cancel_reason = f"Adverse market structure shift (choch_bull, trend_score={trend_score:.1f})"

@@ -354,9 +354,9 @@ Respond ONLY with a valid JSON object matching this schema:
                 else:
                     sym_directives[sym] = SymbolDirective(
                         symbol=sym,
-                        status="PAUSED",
-                        preferred_strategy="NONE",
-                        reason="Off-hours Asian session or Rollover window. Gold entries paused.",
+                        status="THROTTLED",
+                        preferred_strategy="RANGE_MEAN_REVERSION",
+                        reason="Off-hours Asian session or Rollover window. Gold entries throttled with reduced risk.",
                     )
             elif is_crypto:
                 if 12 <= hour <= 20:
@@ -374,20 +374,29 @@ Respond ONLY with a valid JSON object matching this schema:
                         reason="Normal crypto session. Requiring discount/premium pullback before entry.",
                     )
             else:
-                # Forex Majors (EURUSD, GBPUSD)
-                if 7 <= hour <= 16:
+                # Forex Majors, Indices, Commodities
+                is_asian_native = any(c in canonical for c in ("JPY", "AUD", "NZD"))
+                is_index = any(c in canonical for c in ("US30", "NAS100", "US500", "GER40", "UK100"))
+                if is_asian_native and (0 <= hour <= 9):
                     sym_directives[sym] = SymbolDirective(
                         symbol=sym,
                         status="ENABLED",
-                        preferred_strategy="LIQUIDITY_SWEEP_REVERSAL" if hour <= 9 else "TREND_PULLBACK",
-                        reason="London/NY overlap killzone. Asian range sweeps and trend expansions active.",
+                        preferred_strategy="LIQUIDITY_SWEEP_REVERSAL" if hour <= 4 else "TREND_PULLBACK",
+                        reason="Tokyo/Sydney session open for Asia-Pacific currency. Active institutional order flow.",
+                    )
+                elif 7 <= hour <= 21:
+                    sym_directives[sym] = SymbolDirective(
+                        symbol=sym,
+                        status="ENABLED",
+                        preferred_strategy="LIQUIDITY_SWEEP_REVERSAL" if hour <= 9 else ("BREAKOUT_EXPANSION" if is_index and 13 <= hour <= 17 else "TREND_PULLBACK"),
+                        reason="London/NY overlap killzone. High volume and institutional expansion active.",
                     )
                 else:
                     sym_directives[sym] = SymbolDirective(
                         symbol=sym,
-                        status="PAUSED",
-                        preferred_strategy="NONE",
-                        reason="Outside London/NY killzone. Forex entries paused to avoid chop.",
+                        status="THROTTLED",
+                        preferred_strategy="RANGE_MEAN_REVERSION",
+                        reason="Off-peak session. Throttled risk to avoid low-liquidity chop.",
                     )
 
         # Micro-account hard constraint

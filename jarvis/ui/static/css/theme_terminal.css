@@ -1254,7 +1254,8 @@
   #view-analyst.tt-view[data-active="true"],
   #view-markets.tt-view[data-active="true"],
   #view-analytics.tt-view[data-active="true"],
-  #view-backtest.tt-view[data-active="true"] {
+  #view-backtest.tt-view[data-active="true"],
+  #view-symbols.tt-view[data-active="true"] {
     display: block;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -1262,10 +1263,13 @@
   }
 
   /* The Ticket pane is the watchlist panel with its Context tab selected
-     (setPane in dashboard.js reconciles the two) - the context content used
-     to be a panel of its own with a third grid slot; it is a sidebar tab
-     now, so the pane shows the sidebar panel instead of a separate one. */
+     and the AI Selection pane is the same panel with its selection tab
+     selected (setPane in dashboard.js reconciles the two) - the context
+     content used to be a panel of its own with a third grid slot; it is a
+     sidebar tab now, so the pane shows the sidebar panel instead of a
+     separate one. */
   .tt-app[data-pane="chart"] .tt-panel--watchlist,
+  .tt-app[data-pane="selection"] .tt-panel--chart,
   .tt-app[data-pane="watchlist"] .tt-panel--chart,
   .tt-app[data-pane="ticket"] .tt-panel--chart { display: none; }
 
@@ -1808,12 +1812,17 @@
 }
 .tt-table--positions tbody td { height: var(--tt-row-h); }
 .tt-table--positions .tt-pos-pnl { font-weight: var(--hm-weight-semibold); }
-.tt-table--positions th.tt-pos-actions-col,
-.tt-table--positions td.tt-pos-actions {
-  text-align: right;
-  padding-left: var(--hm-space-3);
-  white-space: nowrap;
-  width: 1%;
+/* Actions column table-cell styling — DESKTOP ONLY; the width:1% shrink
+   idiom assumes table layout and collapses the cell to its padding in the
+   <=1024px stacked-card rows (label + button would overlap). */
+@media (min-width: 1025px) {
+  .tt-table--positions th.tt-pos-actions-col,
+  .tt-table--positions td.tt-pos-actions {
+    text-align: right;
+    padding-left: var(--hm-space-3);
+    white-space: nowrap;
+    width: 1%;
+  }
 }
 .tt-pos-actions { text-align: right; }
 

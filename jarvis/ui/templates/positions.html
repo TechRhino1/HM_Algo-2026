@@ -15,6 +15,8 @@
 <link rel="stylesheet" href="/static/css/hm_ui.css">
 <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
 <link rel="stylesheet" href="/static/css/theme_bugatti.css">
+<!-- Mobile v3 "Aurora" iOS design system (small screens only; loaded last) -->
+<link rel="stylesheet" href="/static/css/hm_ios_v3.css?v=20261019_v5">
 <style>
   .positions-container {
     max-width: 1720px;
@@ -267,7 +269,7 @@
         <span class="tt-num" id="pos-hist-range">0–0</span>
         <span class="tt-muted">of</span>
         <span class="tt-num" id="pos-hist-total">0</span>
-        <span class="tt-muted">closed trades</span>
+        <span class="tt-muted">closed trades today</span>
       </div>
       <div class="pos-hist-pagination__controls">
         <label class="tt-muted" for="pos-hist-page-size" style="font-size:0.75rem;">Rows:</label>
@@ -319,7 +321,8 @@
 <script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
 <script src="/static/js/auth.js"></script>
 <script src="/static/js/hm_ui.js"></script>
-<script src="/static/js/positions.js"></script>
-<script src="/static/js/hm_mobile_nav.js?v=20261017_v1"></script>
+<script src="/static/js/positions.js?v=20261019_v4"></script>
+<script src="/static/js/hm_mobile_nav.js?v=20261019_v3"></script>
+<script src="/static/js/hm_mobile_ux.js?v=20261019_v3"></script>
 </body>
 </html>

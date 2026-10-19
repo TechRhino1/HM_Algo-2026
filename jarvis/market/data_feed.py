@@ -166,14 +166,13 @@ def classify_bar_freshness(
     effective_age = age
     moment = datetime.fromtimestamp(now, tz=timezone.utc)
     tf_upper = str(timeframe or "").upper()
-    if tf_upper in ("D1", "H4"):
-        # If today is Monday (weekday == 0) or Sunday post-open (weekday == 6):
-        # Subtract the 48-hour weekend market closure (172,800s) when spanning the weekend.
-        if moment.weekday() == 0 or (moment.weekday() == 6 and moment.hour >= 21):
+    if moment.weekday() == 0 or (moment.weekday() == 6 and moment.hour >= 21):
+        if age >= 172800.0 or tf_upper in ("D1", "H4"):
             effective_age = max(0.0, age - 172800.0)
 
     tol = _FRESH_BAR_TOLERANCE_LIVE if include_current_bar else _FRESH_BAR_TOLERANCE_CLOSED
-    if effective_age <= bar_sec * tol:
+    tol_threshold = max(bar_sec * tol, 360.0) if tf_upper == "M1" else (bar_sec * tol)
+    if effective_age <= tol_threshold:
         return FRESH, age
     if _is_weekend_gap(now):
         return MARKET_CLOSED, age

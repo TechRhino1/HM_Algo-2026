@@ -107,12 +107,41 @@
       });
   }
 
-  /* ── Fetch History ─────────────────────────────────────────────────── */
+  /* ── Fetch History ───────────────────────────────────────────────────
+     The History tab answers "what did I trade today?" — not a 60-day dump.
+     `days=2` keeps the server window wider than a day so midnight/timezone
+     skew can never drop a live trade; the local-date filter trims it back
+     to the current day. */
+  function parseTradeStamp(stamp) {
+    if (stamp == null || stamp === '') return null;
+    if (typeof stamp === 'number') return new Date(stamp < 1e12 ? stamp * 1000 : stamp);
+    var d = new Date(String(stamp).replace(' ', 'T'));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function isTodayTrade(t) {
+    var d = parseTradeStamp(t.closed_at || t.timestamp || '');
+    if (!d) return false;
+    var now = new Date();
+    return d.getFullYear() === now.getFullYear() &&
+           d.getMonth() === now.getMonth() &&
+           d.getDate() === now.getDate();
+  }
+
+  /* Rendered in the browser's local time so what the row says matches what
+     the today-filter counted (server stamps carry a UTC offset). */
+  function fmtTradeTime(d) {
+    if (!d) return '—';
+    var p = function (n) { return ('0' + n).slice(-2); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+           ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
   function loadHistory() {
-    fetch('/api/history?limit=1000')
+    fetch('/api/history?limit=1000&days=2')
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        state.historyTrades = Array.isArray(data) ? data : [];
+        state.historyTrades = (Array.isArray(data) ? data : []).filter(isTodayTrade);
         if (state.tab === 'history') renderHistoryTable();
         updateTabBadges();
       })
@@ -255,7 +284,7 @@
 
     if (!total) {
       if (histPag) histPag.hidden = true;
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:36px; color:var(--machined-silver);">No closed trade history available</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:36px; color:var(--machined-silver);">No closed trades today</td></tr>';
       return;
     }
 
@@ -295,7 +324,7 @@
       var pnl = Number(t.realized_pnl || t.profit || 0);
       var pnlCls = pnl > 0 ? 'tt-up' : (pnl < 0 ? 'tt-down' : '');
       var stamp = t.closed_at || t.timestamp || '';
-      var when = stamp ? String(stamp).replace('T', ' ').replace(/\.\d+.*$/, '').slice(0, 16) : '—';
+      var when = fmtTradeTime(parseTradeStamp(stamp));
 
       return '<tr>' +
         '<td><span class="tt-symbol">' + esc(sym) + '</span></td>' +
@@ -559,9 +588,53 @@
     }
   }
 
+  /* ── Mobile card labels ────────────────────────────────────────────────
+     Mirrors the dashboard card engine: a 9-column book table is unreadable
+     on a phone, so each <th> label travels onto its <td> as `data-label`
+     and `table[data-hm-cards]` CSS restyles every row as a labelled
+     key/value card. Purely presentational; the observer re-stamps after
+     every render. */
+  function labelTable(table) {
+    if (!table) return;
+    var headRow = table.querySelector('thead tr');
+    if (!headRow) return;
+    var heads = headRow.querySelectorAll('th');
+    var labels = [];
+    for (var i = 0; i < heads.length; i++) {
+      labels.push(String(heads[i].textContent || '').trim());
+    }
+    if (!labels.length) return;
+
+    var rows = table.querySelectorAll('tbody tr');
+    for (var r = 0; r < rows.length; r++) {
+      var cells = rows[r].querySelectorAll('td');
+      for (var c = 0; c < cells.length; c++) {
+        var td = cells[c];
+        if (labels[c] && td.getAttribute('data-label') !== labels[c]) {
+          td.setAttribute('data-label', labels[c]);
+        }
+        if (c === 0 && !td.hasAttribute('data-primary')) {
+          td.setAttribute('data-primary', 'true');
+        }
+      }
+    }
+  }
+
+  function enhanceTables() {
+    var t = $('positions-live-table');
+    if (!t) return;
+    labelTable(t);
+    if (!t.getAttribute('data-hm-cards')) {
+      if (!t.querySelector('thead tr > th')) return;
+      t.setAttribute('data-hm-cards', 'true');
+      new MutationObserver(function () { labelTable(t); }).observe(t, { childList: true, subtree: true });
+    }
+  }
+
   /* ── Init ──────────────────────────────────────────────────────────── */
   document.addEventListener('DOMContentLoaded', function () {
     wireEvents();
+    enhanceTables();
     loadTelemetry();
     loadHistory();
     loadPending();

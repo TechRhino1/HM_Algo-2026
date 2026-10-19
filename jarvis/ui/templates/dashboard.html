@@ -11,12 +11,14 @@
 <link rel="stylesheet" href="/static/css/bootstrap.min.css">
 <!-- Base token set. The theme below consumes these and defines no duplicates. -->
 <link rel="stylesheet" href="/static/css/hm_ui.css">
-<link rel="stylesheet" href="/static/css/theme_terminal.css">
+<link rel="stylesheet" href="/static/css/theme_terminal.css?v=20261019_v6">
 <link rel="stylesheet" href="/static/css/auth.css">
 <!-- iOS design language for phones (≤599px) and tablets (600-1024px). -->
-<link rel="stylesheet" href="/static/css/ios_mobile.css">
+<link rel="stylesheet" href="/static/css/ios_mobile.css?v=20261019_v5">
 <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
 <link rel="stylesheet" href="/static/css/theme_bugatti.css">
+<!-- Mobile v3 "Aurora" iOS design system (small screens only; loaded last) -->
+<link rel="stylesheet" href="/static/css/hm_ios_v3.css?v=20261019_v5">
 
 <!--
   DYNAMIC-DATA CONTRACT
@@ -272,7 +274,8 @@
 <nav class="tt-pane-bar" aria-label="Pane selector">
   <button class="tt-pane-bar__btn" data-pane-btn="watchlist" aria-selected="true">Watchlist</button>
   <button class="tt-pane-bar__btn" data-pane-btn="chart" aria-selected="false">Chart</button>
-          <button class="tt-pane-bar__btn" data-pane-btn="ticket" aria-selected="false">Context</button>
+  <button class="tt-pane-bar__btn" data-pane-btn="selection" aria-selected="false">AI Selection</button>
+  <button class="tt-pane-bar__btn" data-pane-btn="ticket" aria-selected="false">Context</button>
 </nav>
 
 <!-- ═══ Quick actions + primary CTA (phone only) ═══════════════════════
@@ -1498,6 +1501,7 @@
     <div class="tt-drawer__group tt-drawer__only-trade" role="group" aria-labelledby="drawer-sec-panes">
       <button type="button" class="tt-drawer__item" data-pane-btn="watchlist" aria-selected="true"><span class="tt-drawer__ico" aria-hidden="true">☰</span>Watchlist</button>
       <button type="button" class="tt-drawer__item" data-pane-btn="chart"><span class="tt-drawer__ico" aria-hidden="true">◧</span>Chart</button>
+      <button type="button" class="tt-drawer__item" data-pane-btn="selection"><span class="tt-drawer__ico" aria-hidden="true">✦</span>AI Selection</button>
       <button type="button" class="tt-drawer__item" data-pane-btn="ticket"><span class="tt-drawer__ico" aria-hidden="true">⇥</span>Context</button>
     </div>
 
@@ -1566,7 +1570,8 @@
 <script src="/static/js/vendor/lightweight-charts.standalone.production.js"></script>
 <script src="/static/js/hm_ui.js"></script>
 <script src="/static/js/auth.js"></script>
-<script src="/static/js/dashboard.js"></script>
-<script src="/static/js/hm_mobile_nav.js?v=20261017_v1"></script>
+<script src="/static/js/dashboard.js?v=20261019_v5"></script>
+<script src="/static/js/hm_mobile_nav.js?v=20261019_v3"></script>
+<script src="/static/js/hm_mobile_ux.js?v=20261019_v3"></script>
 </body>
 </html>

@@ -27,12 +27,20 @@
   var mq = window.matchMedia(PHONE);
   var isDashboard = document.body.classList.contains('tt-app');
 
+  /* SF-style stroke icons; the sheet keeps its emoji tiles (they read as
+     iOS Settings rows). Each SVG is presentational inside an aria-labelled
+     tab, so it is hidden from assistive tech. */
   var TABS = [
-    { id: 'cockpit',   ico: '⚡', label: 'Cockpit',   href: '/' },
-    { id: 'symbols',   ico: '🎯', label: 'Symbols',   href: '/#symbols' },
-    { id: 'markets',   ico: '🌐', label: 'Markets',   href: '/stocks' },
-    { id: 'positions', ico: '📊', label: 'Positions', href: '/positions' },
-    { id: 'more',      ico: '⋯', label: 'More',      more: true }
+    { id: 'cockpit', label: 'Cockpit', href: '/',
+      svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2.5 5.5 13.5h5l-1 8 7.5-11h-5l1-8Z"/></svg>' },
+    { id: 'symbols', label: 'Symbols', href: '/#symbols',
+      svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.2"/></svg>' },
+    { id: 'markets', label: 'Markets', href: '/stocks',
+      svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M4 12h16"/><path d="M12 4c2.4 2.4 3.6 5 3.6 8S14.4 17.6 12 20c-2.4-2.4-3.6-5-3.6-8S9.6 6.4 12 4Z"/></svg>' },
+    { id: 'positions', label: 'Positions', href: '/positions',
+      svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 20V11"/><path d="M12 20V4.5"/><path d="M18.5 20v-6.5"/></svg>' },
+    { id: 'more', label: 'More', more: true,
+      svg: '<svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor;stroke:none"><circle cx="5.2" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.8" cy="12" r="1.5"/></svg>' }
   ];
 
   var SHEET_GROUPS = [
@@ -115,7 +123,7 @@
       var ico = document.createElement('span');
       ico.className = 'hm-tabbar__ico';
       ico.setAttribute('aria-hidden', 'true');
-      ico.textContent = t.ico;
+      ico.innerHTML = t.svg;
 
       var label = document.createElement('span');
       label.className = 'hm-tabbar__label';

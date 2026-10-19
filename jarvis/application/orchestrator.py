@@ -806,22 +806,11 @@ class JarvisOrchestrator:
                     "unusable_data": True,
                 }
         # 1d. LLM Master Governor Symbol Directive Check
+        gov_sym_dir = None
         if hasattr(self, "llm_controller"):
             try:
                 gov_directives = self.llm_controller.get_latest_directives()
-                sym_dir = gov_directives.symbol_directives.get(symbol)
-                if sym_dir and sym_dir.status == "PAUSED":
-                    logger.debug(f"[{symbol}] Entry paused by LLM Governor ({sym_dir.reason}).")
-                    return {
-                        "symbol": symbol,
-                        "trade_style": active_trade_style,
-                        "decision": None,
-                        "context": None,
-                        "authorized": False,
-                        "auth_reason": f"LLM_GOVERNOR_PAUSED: {sym_dir.reason}",
-                        "dry_run": bool(dry_run),
-                        "execution": None,
-                    }
+                gov_sym_dir = gov_directives.symbol_directives.get(symbol)
             except Exception as e:
                 logger.debug(f"LLM Governor check failed: {e}")
 
@@ -1021,7 +1010,8 @@ class JarvisOrchestrator:
 
         # Asian Pre-Market Blackout Rule (00:00 to 06:00 UTC) & Rollover Spread Window (21:00 to 23:00 UTC)
         now_utc_hour = datetime.now(timezone.utc).hour
-        is_asian_blackout = (0 <= now_utc_hour < 6) and not is_crypto(symbol)
+        is_asian_pair = any(c in str(symbol).upper() for c in ("JPY", "AUD", "NZD"))
+        is_asian_blackout = (0 <= now_utc_hour < 6) and not is_crypto(symbol) and not is_asian_pair
         is_rollover_blackout = (21 <= now_utc_hour <= 23) and not is_crypto(symbol)
         is_session_blackout = is_asian_blackout or is_rollover_blackout
 
@@ -1153,6 +1143,10 @@ class JarvisOrchestrator:
             decision.execution_authorized = False
             _reason = "ROLLOVER_BLACKOUT: Broker spread expansion window active (21:00-23:00 UTC)." if is_rollover_blackout else "ASIAN_SESSION_BLACKOUT: Low liquidity chop protection active (00:00-06:00 UTC)."
             auth_res = {"authorized": False, "reason": _reason}
+        elif gov_sym_dir and gov_sym_dir.status == "PAUSED" and wants_entry:
+            decision.decision = "WAIT"
+            decision.execution_authorized = False
+            auth_res = {"authorized": False, "reason": f"LLM_GOVERNOR_PAUSED: {gov_sym_dir.reason}"}
         elif auth_res.get("authorized"):
             # Apply LLM Governor dynamic risk multiplier
             if hasattr(self, "llm_controller"):

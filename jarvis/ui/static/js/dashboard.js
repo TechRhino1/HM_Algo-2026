@@ -32,6 +32,7 @@
   /* ── Configuration ────────────────────────────────────────────────────── */
   var POLL = {
     telemetry: 3000,
+    symbols: 4000,
     jobs: 4000,
     chart: 20000,
     analytics: 20000,
@@ -51,7 +52,7 @@
   };
 
   var VIEWS = ['trade', 'symbols', 'news', 'analyst', 'markets', 'analytics', 'backtest'];
-  var PANES = ['watchlist', 'chart', 'ticket'];
+  var PANES = ['watchlist', 'chart', 'selection', 'ticket'];
 
   var state = {
     view: 'trade',
@@ -379,6 +380,16 @@
     var lt = $('ios-largetitle');
     if (lt) lt.textContent = view.charAt(0).toUpperCase() + view.slice(1);
 
+    try {
+      var targetHash = view === 'trade' ? '' : '#' + view;
+      if (window.location.hash !== targetHash) {
+        if (window.history && window.history.replaceState) {
+          window.history.replaceState(null, '', (window.location.pathname || '/') + targetHash);
+          window.dispatchEvent(new Event('hashchange'));
+        }
+      }
+    } catch (e) {}
+
     if (view === 'symbols') { loadSymbolsIntelligence(); }
     if (view === 'analytics') { loadAnalytics(); }
     if (view === 'backtest') { loadBacktestMeta(); loadJobs(); }
@@ -405,13 +416,15 @@
       loadChart();
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resizeChart);
     }
-    /* The Context panel is a tab of the sidebar now, not a pane of its own.
-       On the phone the Ticket pane is that panel with the Context tab
-       selected; leaving for the Watchlist pane hands the tab back so the
-       pane button and the content always agree. */
+    /* The Context panel and the AI selection are tabs of the sidebar now, not
+       panes of their own. On the phone their pane buttons select that tab on
+       the one sidebar panel, and leaving for another pane hands the tab back
+       so the pane button and the content always agree. */
     if (pane === 'ticket') {
       setSideTab('context');
-    } else if (pane === 'watchlist' && state.sideTab === 'context') {
+    } else if (pane === 'selection') {
+      setSideTab('selection');
+    } else if (pane === 'watchlist' && state.sideTab !== 'watch') {
       setSideTab('watch');
     }
   }
@@ -438,8 +451,13 @@
       if (!phone.matches || ev.touches.length !== 1 || state.view !== 'trade') return;
       var t = ev.touches[0];
       var target = t.target;
+      /* .hm-swipeable rows own their horizontal gesture (swipe-to-close),
+         so a sideways drag there must not also flip the pane. */
       if (target && target.closest &&
-          target.closest('canvas, .tv-lightweight-charts, input, textarea, select, [data-no-swipe]')) return;
+          target.closest('canvas, .tv-lightweight-charts, input, textarea, select, [data-no-swipe], .hm-swipeable')) return;
+      /* Touches starting on the right border belong to the Tools drawer's
+         edge-swipe; they must not also flip the pane. */
+      if (t.clientX > window.innerWidth - 26) return;
       sx = t.clientX;
       sy = t.clientY;
       live = true;
@@ -2991,6 +3009,9 @@
   function setSideTab(tab) {
     if (['watch', 'selection', 'radar', 'context'].indexOf(tab) === -1) tab = 'watch';
     state.sideTab = tab;
+    /* Phones mirror the active side pane on <body> so the Tools drawer and
+       the list back-bar can react without reaching into state. */
+    document.body.setAttribute('data-side', tab);
     Array.prototype.forEach.call(document.querySelectorAll('[data-side]'), function (btn) {
       btn.setAttribute('aria-pressed', String(btn.getAttribute('data-side') === tab));
     });
@@ -5325,7 +5346,10 @@
     return apiGet('/api/symbols/intelligence', TIMEOUT.normal).then(function (res) {
       if (!res.ok || !res.data) {
         if (!state.symbolsData || !state.symbolsData.length) {
-          grid.innerHTML = '<div class="symbols-error-state"><span>⚠️ Failed to load Symbol Intelligence</span></div>';
+          var errMsg = (res.status === 401)
+            ? '🔒 Authentication Required — Sign in to inspect universe intelligence'
+            : ('⚠️ Unable to load Symbol Intelligence' + (res.error ? ' (' + res.error + ')' : ''));
+          grid.innerHTML = '<div class="symbols-error-state"><span>' + esc(errMsg) + '</span><button type="button" class="tt-btn tt-btn--sm" onclick="window.HM_SYMBOLS_RELOAD ? window.HM_SYMBOLS_RELOAD() : location.reload()">Retry ↻</button></div>';
         }
         return;
       }
@@ -5335,6 +5359,7 @@
       renderSymbolsGrid();
     });
   }
+  window.HM_SYMBOLS_RELOAD = loadSymbolsIntelligence;
 
   function updateSymbolsHUD(data) {
     var activeEl = $('sym-hud-active');
@@ -5348,10 +5373,22 @@
     if (navBadge) navBadge.textContent = activeCount + ' Active';
 
     var primeCount = 0;
+    var openCount = 0;
     (data.symbols || []).forEach(function (s) {
       if (s.grade === 'A+' || s.grade === 'A') primeCount++;
+      if (s.is_open) openCount++;
     });
     if (primeEl) primeEl.textContent = primeCount + ' Setups';
+
+    var sessionEl = $('sym-hud-session');
+    if (sessionEl) sessionEl.textContent = openCount + ' / ' + totalUniverse + ' OPEN';
+
+    var heatEl = $('sym-hud-heat');
+    if (heatEl) {
+      var posCount = (state.positions || []).length;
+      heatEl.textContent = posCount > 0 ? (posCount + ' TRADES') : 'OPTIMAL';
+      heatEl.style.color = posCount >= 3 ? 'var(--amber-signal, #f59e0b)' : 'var(--emerald-edge, #10b981)';
+    }
 
     // Update counts on filter pills
     var counts = { ALL: 0, COMMODITY: 0, FOREX: 0, CRYPTO: 0, INDEX: 0 };
@@ -5453,7 +5490,10 @@
 
     return apiPost('/api/action/toggle_symbol', { symbol: sym, enabled: newState }, TIMEOUT.normal).then(function (res) {
       if (!res.ok || !res.data || res.data.status !== 'SUCCESS') {
-        toast('Failed to toggle ' + sym, 'error');
+        var err = (res.status === 401 || (res.data && res.data.status === 'UNAUTHORIZED'))
+          ? 'Sign in required to change symbol configuration'
+          : ((res.data && res.data.error) || 'Failed to toggle ' + sym);
+        toast(err, 'error');
         loadSymbolsIntelligence();
         return;
       }
@@ -5466,7 +5506,10 @@
     var payload = { action: action, asset_class: assetClass || 'ALL' };
     return apiPost('/api/action/batch_symbols', payload, TIMEOUT.normal).then(function (res) {
       if (!res.ok || !res.data || res.data.status !== 'SUCCESS') {
-        toast('Batch operation failed', 'error');
+        var err = (res.status === 401 || (res.data && res.data.status === 'UNAUTHORIZED'))
+          ? 'Sign in required to modify trading universe'
+          : ((res.data && res.data.error) || 'Batch operation failed');
+        toast(err, 'error');
         return;
       }
       toast('Universe updated (' + (res.data.active_count || 0) + ' active)', 'success');
@@ -5533,12 +5576,9 @@
         if (tradeBtn) {
           var tSym = tradeBtn.getAttribute('data-trade-sym');
           if (tSym) {
-            state.symbol = tSym;
             setView('trade');
             setPane('ticket');
-            var ticketSym = $('ticket-symbol');
-            if (ticketSym) ticketSym.value = tSym;
-            loadChart();
+            selectSymbol(tSym);
           }
           return;
         }
@@ -6085,6 +6125,7 @@
       };
     }
     tick(loadTelemetry, POLL.telemetry)();
+    tick(function () { if (state.view === 'symbols') loadSymbolsIntelligence(); }, POLL.symbols)();
     tick(function () { if (state.view === 'trade') loadChart(); }, POLL.chart)();
     tick(function () { if (state.view === 'analytics') loadReliability(); }, POLL.analytics)();
     // The calendar is slow-moving; it only needs refetching every couple of
@@ -6290,8 +6331,17 @@
           var f = $('flatten-all');
           if (f) f.click();
         } else if (action === 'quick-trade') {
-          var pane = btn.getAttribute('data-pane');
-          if (pane && typeof setPane === 'function') setPane(pane);
+          /* On a phone "New order" is the order form itself: the Speed
+             Cockpit drawer presented as an iOS bottom sheet (hm_ios_v3.css
+             re-skins it below 600px). Wider screens keep the pane switch. */
+          var phone = window.matchMedia && window.matchMedia('(max-width: 599px)').matches;
+          if (phone) {
+            toggleOrderTicket(true);
+            if (window.HMHaptic) window.HMHaptic.light();
+          } else {
+            var pane = btn.getAttribute('data-pane');
+            if (pane && typeof setPane === 'function') setPane(pane);
+          }
         }
       });
     });

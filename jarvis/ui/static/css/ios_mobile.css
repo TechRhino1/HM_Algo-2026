@@ -577,6 +577,7 @@
   /* Pane swap (segment taps and horizontal swipes in dashboard.js) gets a
      light push-in so the change of context is legible. */
   .tt-app[data-pane="watchlist"] .tt-panel--watchlist,
+  .tt-app[data-pane="selection"] .tt-panel--watchlist,
   .tt-app[data-pane="chart"] .tt-panel--chart,
   .tt-app[data-pane="ticket"] .tt-panel--watchlist {
     animation: hmPaneIn 0.22s var(--ios-ease);
@@ -974,6 +975,7 @@
   .universal-auth-card,
   .tt-view[data-active="true"],
   .tt-app[data-pane="watchlist"] .tt-panel--watchlist,
+  .tt-app[data-pane="selection"] .tt-panel--watchlist,
   .tt-app[data-pane="chart"] .tt-panel--chart,
   .tt-app[data-pane="ticket"] .tt-panel--watchlist {
     transition: none !important;
