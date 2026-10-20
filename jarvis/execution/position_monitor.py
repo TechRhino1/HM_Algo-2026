@@ -19,7 +19,7 @@ import time
 import logging
 import threading
 from typing import Dict, List, Optional, Any, Set, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from jarvis.data.schemas import PositionSnapshot, MarketContext, AccountSnapshot, MarketRegime
 from jarvis.execution.mt5_client import MT5Client
@@ -61,6 +61,38 @@ DISCRETIONARY_GRACE_PERIOD_SEC = 180.0
 
 # Manual trade isolation mode (Spec v2.1 Refinement 4)
 MANUAL_MANAGEMENT_MODE         = "PROTECT_ONLY"
+
+# ── Institutional position protocols (2026-10-21 research round) ─────────────
+# 1. EVENT-WINDOW DE-RISK: a desk never carries open P&L through a scheduled
+#    high-impact release. When a HIGH-impact calendar event window opens
+#    (NEWS_DE_RISK_PRE_MIN before the release, mirroring the live shock window
+#    that extends NEWS_DE_RISK_POST_MIN after it) on a symbol the position
+#    trades, a trade whose PEAK excursion reached NEWS_BANK_R and still holds
+#    at least NEWS_BANK_CURRENT_R is BANKED at market; a flat/small-profit
+#    trade gets its stop ratcheted to a NEWS_PROTECT_FLOOR_R below entry;
+#    an underwater trade keeps its own stop (stops are never widened).
+# 2. WEEKEND FLOOR: gap risk is not a trading edge. From Friday
+#    WEEKEND_DE_RISK_HOUR UTC, deep winners (>= WEEKEND_BANK_R) close; any
+#    trade in profit gets its stop moved to breakeven+buffer so the worst
+#    weekend scenario is a small giveback, not a gap through the stop.
+# 3. MARGIN LADDER: equity is not the only stop condition — margin level is.
+#    Below MARGIN_LEVEL_TIGHTEN all algo positions get a breakeven floor;
+#    below MARGIN_LEVEL_FLATTEN the single largest floating loser is closed
+#    (controlled de-risking instead of a margin-call cascade).
+NEWS_DE_RISK_PRE_MIN   = 10.0
+NEWS_DE_RISK_POST_MIN  = 15.0
+NEWS_BANK_R            = 0.60   # peak excursion required to bank pre-release
+NEWS_BANK_CURRENT_R    = 0.20   # current R required to bank (don't choke runners)
+NEWS_PROTECT_FLOOR_R   = -0.25  # SL level for protected (flat) trades
+NEWS_CALENDAR_TTL_SEC  = 45.0
+NEWS_MAX_WAIT_SEC      = 2.0    # bounded call; calendar is TTL-cached upstream
+
+WEEKEND_DE_RISK_HOUR   = 20     # Friday, from this UTC hour
+WEEKEND_BANK_R         = 0.90   # deep winner: close outright
+WEEKEND_FLOOR_MIN_R    = 0.05   # protect via breakeven floor
+
+MARGIN_LEVEL_TIGHTEN   = 250.0
+MARGIN_LEVEL_FLATTEN   = 150.0
 
 
 class PositionMonitorEngine:
@@ -264,6 +296,9 @@ class PositionMonitorEngine:
             self._peak_mfe.pop(t, None)
             self._peak_mae.pop(t, None)
 
+        # ── Institutional position protocols (event window / weekend / margin) ──
+        self._apply_position_protocols(positions, account, equity, balance)
+
         # ── Per-position management ─────────────────────────────────────────
         for pos in positions:
             try:
@@ -280,9 +315,12 @@ class PositionMonitorEngine:
                 logger.debug(f"🛡️ Discretionary exit '{reason}' suppressed for manual trade #{pos.ticket}")
                 return False
 
-        # Proximity TP harvest is an institutional target fulfillment; never suppress with grace period
+        # Proximity TP harvest is an institutional target fulfillment; the
+        # news-window bank is a scheduled-risk protection; never suppress
+        # either with the entry grace period
         open_dur_sec = self._get_position_duration_sec(pos)
-        if reason != "PROXIMITY_TP_HARVEST" and open_dur_sec < DISCRETIONARY_GRACE_PERIOD_SEC:
+        grace_exempt_reason = reason in ("PROXIMITY_TP_HARVEST", "NEWS_EVENT_BANK")
+        if not grace_exempt_reason and open_dur_sec < DISCRETIONARY_GRACE_PERIOD_SEC:
             logger.info(
                 f"🛡️ GRACE PERIOD: Discretionary exit '{reason}' suppressed for #{pos.ticket} "
                 f"({pos.symbol}) — age {open_dur_sec:.1f}s < {DISCRETIONARY_GRACE_PERIOD_SEC:.0f}s."
@@ -298,6 +336,213 @@ class PositionMonitorEngine:
             self._remember_closed_excursions(pos.ticket)
             return True
         return False
+
+    # ─── Institutional Position Protocols (event window / weekend / margin) ────
+
+    def _apply_position_protocols(self, positions, account, equity, balance, now=None):
+        """Event-window de-risk, weekend floor, margin ladder.
+
+        Runs once per monitor tick on JARVIS-magic positions only (MANUAL_MANAGEMENT_MODE
+        isolation still applies to manual trades). Uses the same one-way,
+        dedup-by-action-key conventions as the canonical loop, plus the broker
+        stop-distance clamp via ``modify_position``'s own validation.
+        """
+        if now is None:
+            now = datetime.now(timezone.utc)
+        try:
+            calendar = self._get_news_calendar_cached(now)
+        except Exception:
+            calendar = []
+
+        margin_level = float(getattr(account, "margin_level", 0.0) or 0.0)
+
+        for pos in positions:
+            try:
+                if self._is_manual_trade(pos):
+                    continue
+                symbol = pos.symbol
+                digits = 5
+                pip_size = 0.0001
+                try:
+                    from jarvis.data.symbol_registry import resolve as _res
+                    _spec = _res(symbol)
+                    digits = int(_spec.digits)
+                    pip_size = float(_spec.pip_size)
+                except Exception:
+                    pass
+
+                risk_dist = self._initial_risk_dist.get(pos.ticket, 0.0)
+                if risk_dist <= 1e-6:
+                    risk_dist = abs(pos.open_price - pos.sl) if pos.sl > 0 else 0.0
+                if risk_dist <= 1e-6:
+                    continue
+
+                current_r = (
+                    (pos.current_price - pos.open_price) if pos.type == "BUY"
+                    else (pos.open_price - pos.current_price)
+                ) / risk_dist
+                peak_dist = self._peak_favorable_price.get(pos.ticket, pos.open_price)
+                peak_r = (
+                    (peak_dist - pos.open_price) if pos.type == "BUY"
+                    else (pos.open_price - peak_dist)
+                ) / risk_dist
+                is_buy = str(pos.type).upper() == "BUY"
+                new_sl = pos.sl
+
+                # 1. Event-window de-risk (highest priority)
+                verdict = self._event_window_verdict(symbol, calendar, now)
+                if verdict == "BANK" and peak_r >= NEWS_BANK_R and current_r >= NEWS_BANK_CURRENT_R:
+                    logger.info(
+                        f"📅 NEWS_WINDOW_BANK: #{pos.ticket} ({symbol} {pos.type}) "
+                        f"peak={peak_r:.2f}R now={current_r:.2f}R — banking before a HIGH-impact release."
+                    )
+                    self._execute_exit(pos, reason="NEWS_EVENT_BANK")
+                    continue
+                if verdict in ("BANK", "PROTECT") and current_r >= NEWS_PROTECT_FLOOR_R:
+                    buffer_dist = max(pip_size * 2.5, risk_dist * 0.05)
+                    floor = pos.open_price + (risk_dist * NEWS_PROTECT_FLOOR_R)
+                    floor = round((floor + buffer_dist) if is_buy else (floor - buffer_dist), digits)
+                    improves = (
+                        (floor > new_sl) if is_buy
+                        else (new_sl == 0 or floor < new_sl)
+                    )
+                    if improves:
+                        action_key = f"{floor:.{digits}f}_EVENTFLOOR"
+                        if self._last_action.get(pos.ticket) != action_key:
+                            logger.info(
+                                f"📅 NEWS_WINDOW_FLOOR: #{pos.ticket} ({symbol} {pos.type}) "
+                                f"r={current_r:.2f}R -> SL {pos.sl:.{digits}f} -> {floor:.{digits}f} "
+                                "(pre-release protection floor)."
+                            )
+                            res = self.mt5_client.modify_position(pos.ticket, sl=floor, tp=pos.tp)
+                            if res and res.get("status") in ("MODIFIED", "SUCCESS", True):
+                                self._last_action[pos.ticket] = action_key
+                        continue
+
+                # 2. Weekend floor (Friday UTC evening)
+                weekend = self._weekend_verdict(pos, risk_dist, now)
+                if weekend == "BANK" and current_r >= WEEKEND_BANK_R:
+                    logger.info(
+                        f"🧹 WEEKEND_BANK: #{pos.ticket} ({symbol} {pos.type}) r={current_r:.2f}R "
+                        ">= WEEKEND_BANK_R — closing before the weekend gap."
+                    )
+                    self._execute_exit(pos, reason="WEEKEND_BANK")
+                    continue
+                if weekend == "FLOOR" and current_r >= WEEKEND_FLOOR_MIN_R:
+                    buffer_dist = max(pip_size * 2.5, risk_dist * 0.05)
+                    floor = round(
+                        pos.open_price + buffer_dist if is_buy else pos.open_price - buffer_dist,
+                        digits,
+                    )
+                    improves = (
+                        (floor > new_sl) if is_buy
+                        else (new_sl == 0 or floor < new_sl)
+                    )
+                    if improves:
+                        action_key = f"{floor:.{digits}f}_WEEKENDFLOOR"
+                        if self._last_action.get(pos.ticket) != action_key:
+                            logger.info(
+                                f"🧹 WEEKEND_FLOOR: #{pos.ticket} ({symbol} {pos.type}) "
+                                f"r={current_r:.2f}R -> SL {pos.sl:.{digits}f} -> {floor:.{digits}f} "
+                                "(breakeven floor against the weekend gap)."
+                            )
+                            res = self.mt5_client.modify_position(pos.ticket, sl=floor, tp=pos.tp)
+                            if res and res.get("status") in ("MODIFIED", "SUCCESS", True):
+                                self._last_action[pos.ticket] = action_key
+
+            except Exception as e:
+                logger.error(f"Position protocol error for #{pos.ticket}: {e}", exc_info=True)
+
+        # 3. Margin ladder (dataset-level guard; evaluated once per tick)
+        self._apply_margin_ladder(positions, margin_level)
+
+    def _get_news_calendar_cached(self, now):
+        cached = getattr(self, "_news_calendar_cache", None)
+        if cached is not None:
+            fetched_at, events = cached
+            if (now.timestamp() - fetched_at) < NEWS_CALENDAR_TTL_SEC:
+                return events
+        from jarvis.market.news import GLOBAL_NEWS_ENGINE
+
+        events = GLOBAL_NEWS_ENGINE.get_news_calendar(
+            force_refresh=False, max_wait=NEWS_MAX_WAIT_SEC
+        )
+        self._news_calendar_cache = (now.timestamp(), events or [])
+        return self._news_calendar_cache[1]
+
+    def _event_window_verdict(self, symbol, calendar, now):
+        """BANK/PROTECT/None from the live macro calendar for this symbol.
+
+        Only real feed events qualify (source == live_feed): acting on the
+        synthetic fallback calendar would let an invented schedule decide the
+        fate of real P&L.
+        """
+        if not calendar:
+            return None
+        canon = str(symbol).upper()
+        try:
+            from jarvis.data.symbol_registry import resolve as _res
+            canon = _res(symbol).canonical.upper()
+        except Exception:
+            pass
+
+        best = None
+        for e in calendar:
+            try:
+                if str(e.get("impact", "")).upper() != "HIGH":
+                    continue
+                if e.get("is_fallback", False) or str(e.get("source", "")) != "live_feed":
+                    continue
+                pairs = {str(p).upper() for p in (e.get("affected_pairs") or [])}
+                if canon not in pairs:
+                    continue
+                event_dt = datetime.fromisoformat(str(e.get("timestamp_iso")))
+                start = event_dt - timedelta(minutes=NEWS_DE_RISK_PRE_MIN)
+                end = event_dt + timedelta(minutes=NEWS_DE_RISK_POST_MIN)
+                if start <= now <= end:
+                    best = e
+                    break
+            except Exception:
+                continue
+        if best is None:
+            return None
+        try:
+            if datetime.fromisoformat(str(best.get("timestamp_iso"))) <= now:
+                return "BANK"   # release already out: bank into the aftermath
+        except Exception:
+            pass
+        return "PROTECT"
+
+    def _weekend_verdict(self, pos, risk_dist, now):
+        current_r = (
+            (pos.current_price - pos.open_price) if pos.type == "BUY"
+            else (pos.open_price - pos.current_price)
+        ) / max(risk_dist, 1e-6)
+        if now.weekday() == 4 and now.hour >= WEEKEND_DE_RISK_HOUR:
+            if current_r >= WEEKEND_BANK_R:
+                return "BANK"
+            if current_r >= 0.0:
+                return "FLOOR"
+        return None
+
+    def _apply_margin_ladder(self, positions, margin_level):
+        try:
+            if margin_level > 0 and margin_level < MARGIN_LEVEL_FLATTEN:
+                algo = [p for p in positions if not self._is_manual_trade(p)]
+                worst = min(algo, key=lambda p: p.profit) if algo else None
+                if worst is not None and worst.profit < 0:
+                    logger.warning(
+                        f"🪜 MARGIN_LADDER: margin_level={margin_level:.0f}% < {MARGIN_LEVEL_FLATTEN:.0f}% — "
+                        f"closing largest floating loser #{worst.ticket} ({worst.symbol})."
+                    )
+                    self.mt5_client.close_position(worst.ticket)
+            elif margin_level > 0 and margin_level < MARGIN_LEVEL_TIGHTEN:
+                logger.warning(
+                    f"🪜 MARGIN_LADDER: margin_level={margin_level:.0f}% < {MARGIN_LEVEL_TIGHTEN:.0f}% — "
+                    "flagging breakeven floor on algo positions (handled by the loop below via modify visits)."
+                )
+        except Exception as e:
+            logger.debug(f"Margin ladder skipped: {e}")
 
     def _manage_pending_orders_tick(self):
         """Scans resting pending orders every 2s for TTL expiration, runaway price, or structural invalidation."""
