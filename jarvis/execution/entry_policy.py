@@ -43,18 +43,32 @@ from typing import Any, Dict, Tuple
 
 
 # Gates that protect capital. Always enforced, never calibrated away.
+#
+# 2026-10-20 addendum — the OOS ledger forced three gates out of the edge list:
+# two gold SELL LIMITs and one gold SELL fired between 09:15 and 10:08 UTC while
+# the XAUUSD profile window is (12, 16), because "Forex Prime Session" sat in
+# EDGE_GATES and the profile window was not represented here at all — the
+# calibrated path ignored the legacy verdict by design, so a hard session
+# failure could be traded through whenever the score cleared min_score. The
+# banned-strategy gate sat here too, which is how banned TREND_FOLLOWING /
+# RANGE_MEAN_REVERSION gold spends (Oct 13-16, -$55 / -$15) could fire with a
+# strong calibrated score. Session windows and banned-strategy lists are
+# profile-level law, not signal-quality bets: like drawdown protection, there
+# is no evidence set that could justify letting the score override them.
 CAPITAL_PROTECTION_GATES: Tuple[str, ...] = (
     "Market Session Open",
+    "Forex Prime Session",
+    "Gold Session Window",
     "Drawdown Safety Guard",
     "Margin Capacity Limit",
     "Spread Protection",
     "Directional Bias",
+    "Strategy Viable",
     "Valid Stop Loss Distance",
 )
 
 # Gates that are bets on signal quality. Superseded by the calibrated threshold.
 EDGE_GATES: Tuple[str, ...] = (
-    "Strategy Viable",
     "Risk/Reward >= 1.5",
     "Positive Expected Value",
     "AI Multi-Score Gate",
@@ -67,7 +81,6 @@ EDGE_GATES: Tuple[str, ...] = (
     "Macro MTF Alignment",
     "Trend Not Exhausted",
     "No Order Flow Absorption Trap",
-    "Forex Prime Session",
     "Gold Trend Following Alignment",
     "Crypto Macro Trend Filter",
     "Forex Breakout Guard",

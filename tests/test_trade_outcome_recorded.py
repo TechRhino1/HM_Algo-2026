@@ -252,7 +252,6 @@ class TestSyncRecordsTheExitPrice:
     """`sync_mt5_history` is the one writer that has the closing deal in hand."""
 
     def _run_sync(self, db, deals):
-        import sys
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -261,9 +260,8 @@ class TestSyncRecordsTheExitPrice:
             initialize=lambda **kw: True,
             history_deals_get=lambda *a, **k: list(deals),
         )
-        with patch.dict(sys.modules, {"MetaTrader5": fake}), \
-                patch("jarvis.data.database.broker_utc_offset", return_value=0):
-            db.sync_mt5_history(days=1)
+        with patch("jarvis.data.database.broker_utc_offset", return_value=0):
+            db.sync_mt5_history(days=1, mt5_module=fake)
 
     def test_a_matched_close_stores_the_deal_price(self, tmp_path):
         import time
@@ -324,7 +322,6 @@ class TestSyncDoesNotDestroyTheEntryTime:
     """
 
     def _run_sync(self, db, deals):
-        import sys
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -333,9 +330,8 @@ class TestSyncDoesNotDestroyTheEntryTime:
             initialize=lambda **kw: True,
             history_deals_get=lambda *a, **k: list(deals),
         )
-        with patch.dict(sys.modules, {"MetaTrader5": fake}), \
-                patch("jarvis.data.database.broker_utc_offset", return_value=0):
-            db.sync_mt5_history(days=1)
+        with patch("jarvis.data.database.broker_utc_offset", return_value=0):
+            db.sync_mt5_history(days=1, mt5_module=fake)
 
     def _deals(self):
         import time

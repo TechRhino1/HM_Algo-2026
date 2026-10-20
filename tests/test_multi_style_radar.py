@@ -26,6 +26,40 @@ class TestMultiStyleRadar(unittest.TestCase):
         self._freshness.start()
         self.addCleanup(self._freshness.stop)
 
+        # Same rationale, 2026-10-20: the profile session-window short-circuit
+        # drops a restricted symbol (XAUUSD 12-16 UTC) whenever the test runs
+        # outside that window, making the candidate count wall-clock dependent.
+        # Neutralise ONLY the window via dataclasses.replace (profiles are
+        # shared module singletons -- never mutate in place).
+        import dataclasses
+
+        from jarvis.intelligence import symbol_profile_config as _spc
+
+        real_gspc = _spc.get_symbol_profile_config
+
+        def _window_open(symbol):
+            prof = real_gspc(symbol)
+            if prof is not None and getattr(prof, "session_restriction", False):
+                prof = dataclasses.replace(prof, allowed_utc_hours=None)
+            return prof
+
+        self._profile = patch(
+            "jarvis.intelligence.symbol_profile_config.get_symbol_profile_config",
+            side_effect=_window_open,
+        )
+        self._profile.start()
+        self.addCleanup(self._profile.stop)
+
+        # Same wall-clock-fragility rationale: the 2026-10-20 daily entry cap
+        # reads the live demo ledger, so a symbol with >= 4 ledger rows today
+        # would return the cap refusal instead of radar candidates. Plumbing
+        # test -- count nothing.
+        self._cap = patch.object(
+            JarvisOrchestrator, "_count_entries_today", return_value=0
+        )
+        self._cap.start()
+        self.addCleanup(self._cap.stop)
+
         self.state_mgr = StateManager()
         self.orchestrator = JarvisOrchestrator(
             symbols=["XAUUSD", "EURUSD"],

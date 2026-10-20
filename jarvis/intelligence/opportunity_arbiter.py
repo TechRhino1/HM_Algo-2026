@@ -354,8 +354,10 @@ class UniversalOpportunityArbiter:
 
         # Multi-Timeframe Alignment Check: Penalize counter-macro trades
         mtf_data = getattr(context, "mtf_alignment", {}) if context else {}
+        is_counter_flush_kill = False
         if isinstance(mtf_data, dict):
             macro_d1 = str(mtf_data.get("D1", "")).upper()
+            macro_h1_bias = str(mtf_data.get("H1", "")).upper()
             macro_h4 = str(mtf_data.get("H4", "")).upper()
             m15_bias = str(mtf_data.get("M15", "")).upper()
             m5_bias = str(mtf_data.get("M5", "")).upper()
@@ -366,12 +368,40 @@ class UniversalOpportunityArbiter:
                 utility_score = round(utility_score * 0.65, 4)
 
             # Institutional Rule R2: Never short into active M15/M5 upward expansion or buy into active downward flush
+            counter_flush_active = False
             if bias == "SELL" and ("BULL" in m15_bias and "BULL" in m5_bias):
+                counter_flush_active = True
                 utility_score = round(utility_score * 0.45, 4)
                 logger.info(f"🛡️ Arbiter: Severely penalizing {symbol} SELL by 0.45x: M15 and M5 are actively BULLISH.")
             elif bias == "BUY" and ("BEAR" in m15_bias and "BEAR" in m5_bias):
+                counter_flush_active = True
                 utility_score = round(utility_score * 0.45, 4)
                 logger.info(f"🛡️ Arbiter: Severely penalizing {symbol} BUY by 0.45x: M15 and M5 are actively BEARISH.")
+
+            # 2026-10-20: for GOLD the counter-flush signature is disqualifying,
+            # not merely penalized. The ledger shows the losing gold bucket IS
+            # this trade: an entry against M15+M5 while H1 (or D1) runs the
+            # other way -- 2026-10-20 09:15 BUY at 4123.44 with M1..H1 all
+            # BEARISH (stopped -8.17), 01:01 SELL at 4127.14 (stopped -13.27),
+            # 06:24 SELL 4123.52 (stopped -10.17), the whole -$330 cluster of
+            # flush-fades. A ×0.45 utility discount still left such candidates
+            # grade-handed and actionable. Now: when the HTF stack confirms the
+            # flush (H1 or D1 agrees with M15/M5), a gold counter-flush
+            # candidate is regraded out of action entirely; without that HTF
+            # corroboration the fade stays a (penalized) mean-reversion bet.
+            if counter_flush_active and ("XAU" in symbol.upper() or "GOLD" in symbol.upper()):
+                stack_confirms = (
+                    ("BEAR" in macro_h1_bias and bias == "BUY")
+                    or ("BEAR" in macro_d1 and bias == "BUY")
+                    or ("BULL" in macro_h1_bias and bias == "SELL")
+                    or ("BULL" in macro_d1 and bias == "SELL")
+                )
+                if stack_confirms:
+                    is_counter_flush_kill = True
+                    logger.info(
+                        f"🛑 Arbiter: {symbol} {bias} candidate DISQUALIFIED — counter-flush into an "
+                        f"agreed HTF trend (D1={macro_d1 or 'NA'}, H1={macro_h1_bias or 'NA'}, M15={m15_bias}, M5={m5_bias})."
+                    )
 
         # Setup Grade Assignment:
         # GRADE A+ if Utility >= 1.80, Win Prob >= 70%, Confluence >= 75, EV >= 0.85R
@@ -410,7 +440,8 @@ class UniversalOpportunityArbiter:
             expected_value > 0 and
             gate_acceptable and
             setup_grade in ("GRADE A+", "GRADE A", "GRADE B") and
-            decision_val in ("EXECUTE", "READY", "WAIT")
+            decision_val in ("EXECUTE", "READY", "WAIT") and
+            not is_counter_flush_kill
         )
 
         risk_factors = getattr(decision_obj, "risk_factors", []) or []
@@ -453,15 +484,31 @@ class UniversalOpportunityArbiter:
         if not candidates:
             return None, []
 
+        # 2026-10-20 gold priority: actionable Grade A+/A candidates from
+        # premium-window profiles (XAUUSD) rank ahead of every other
+        # instrument's candidates. Within each priority group the order is
+        # still pure utility. A competing FX candidate with a higher raw
+        # utility can now lose the dispatch order to an elite gold setup —
+        # the user directive is that the always-on gold radar's best entry
+        # is taken first; risk controls (concurrent-exposure, reserved
+        # quota) still cap anything that would over-allocation-wise fire.
+        def _priority_bucket(c: CandidateOpportunity) -> int:
+            if (getattr(c, "is_actionable", False)
+                    and getattr(c, "setup_grade", "") in ("GRADE A+", "GRADE A")
+                    and ("XAU" in str(getattr(c, "symbol", "")).upper()
+                         or "GOLD" in str(getattr(c, "symbol", "")).upper())):
+                return 0
+            return 1
+
         ranked = sorted(
             candidates,
             key=lambda c: (
-                c.utility_score,
-                c.win_prob,
-                c.confluence_score,
-                c.expected_value
-            ),
-            reverse=True
+                _priority_bucket(c),
+                -c.utility_score,
+                -c.win_prob,
+                -c.confluence_score,
+                -c.expected_value
+            )
         )
 
         best_actionable = None

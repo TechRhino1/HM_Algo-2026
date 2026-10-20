@@ -289,7 +289,7 @@ class DynamicRiskAndLevelsEngine:
             # That is a directional asymmetry introduced by an inconsistency, not a
             # trading view, so BUY is widened to match SELL rather than the reverse.
             if style == "SCALP":
-                sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                sl_dist = min(1.10 * atr + spread_dist, max(0.65 * atr + spread_dist, struct_sl_dist * 0.60))
                 min_target_rr = 1.8
                 asym_rr = 2.5
             elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
@@ -329,22 +329,23 @@ class DynamicRiskAndLevelsEngine:
                     min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
                     asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
                 else:
-                    max_swing_sl = cfg.sl_atr_multiplier * atr
+                    max_swing_sl = max(cfg.sl_atr_multiplier * atr, 1.80 * atr)
                     min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
                     asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
 
                 if "ETHBTC" in sym_name:
-                    min_floor_sl = max(1.20 * atr + spread_dist, 0.00030)
+                    min_floor_sl = max(1.50 * atr + spread_dist, 0.00030)
                 else:
-                    min_floor_sl = max(1.20 * atr + spread_dist, 3.5 * spread_dist)
+                    min_floor_sl = max(1.50 * atr + spread_dist, 3.5 * spread_dist)
 
                 sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
 
-            # Floor is derived from current conditions: >=3.5x spread and >=1.20x ATR to protect against noise
+            # Floor is derived from current conditions: >=3.5x spread and style-scaled ATR to protect against noise
             if is_gold:
                 min_sl_dist = max(3.5 * spread_dist, 7.0, min(13.0, 0.75 * atr + spread_dist))
             else:
-                min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
+                atr_floor_mult = 0.60 if style == "SCALP" else (1.10 if style in ("DAY_TRADING", "DAY", "INTRADAY") else 1.55)
+                min_sl_dist = max(3.5 * spread_dist, atr_floor_mult * atr + spread_dist)
             if is_silver:
                 min_sl_dist = max(min_sl_dist, 0.35)
             elif is_oil:
@@ -537,7 +538,7 @@ class DynamicRiskAndLevelsEngine:
                 struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
 
             if style == "SCALP":
-                sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                sl_dist = min(1.10 * atr + spread_dist, max(0.65 * atr + spread_dist, struct_sl_dist * 0.60))
                 min_target_rr = 1.8
                 asym_rr = 2.5
             elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
@@ -577,22 +578,23 @@ class DynamicRiskAndLevelsEngine:
                     min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
                     asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
                 else:
-                    max_swing_sl = cfg.sl_atr_multiplier * atr
+                    max_swing_sl = max(cfg.sl_atr_multiplier * atr, 1.80 * atr)
                     min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
                     asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
 
                 if "ETHBTC" in sym_name:
-                    min_floor_sl = max(1.20 * atr + spread_dist, 0.00030)
+                    min_floor_sl = max(1.50 * atr + spread_dist, 0.00030)
                 else:
-                    min_floor_sl = max(1.20 * atr + spread_dist, 3.5 * spread_dist)
+                    min_floor_sl = max(1.50 * atr + spread_dist, 3.5 * spread_dist)
 
                 sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
 
-            # Floor is derived from current conditions: >=3.5x spread and >=1.20x ATR to protect against noise
+            # Floor is derived from current conditions: >=3.5x spread and style-scaled ATR to protect against noise
             if is_gold:
                 min_sl_dist = max(3.5 * spread_dist, 7.0, min(13.0, 0.75 * atr + spread_dist))
             else:
-                min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
+                atr_floor_mult = 0.60 if style == "SCALP" else (1.10 if style in ("DAY_TRADING", "DAY", "INTRADAY") else 1.55)
+                min_sl_dist = max(3.5 * spread_dist, atr_floor_mult * atr + spread_dist)
             if is_silver:
                 min_sl_dist = max(min_sl_dist, 0.35)
             elif is_oil:

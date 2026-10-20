@@ -659,6 +659,41 @@ class JarvisOrchestrator:
 
         return first_unusable_frame(mtf_data)
 
+    @staticmethod
+    def _count_entries_today(symbol: str) -> int:
+        """Rows written for this symbol since 00:00 UTC today, demo ledger basis.
+
+        Used by the daily entry cap. Read-only on the canonical trade DB; any
+        failure returns 0 (fails open — a counting outage must never freeze
+        the trading loop), which is safe because the cap then simply lets the
+        other governors work.
+        """
+        try:
+            from jarvis.data.database import TRADE_DB
+
+            path = getattr(TRADE_DB, "db_path", None)
+            if not path or path == ":memory:":
+                return 0
+            today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            patterns = [f"{today_prefix}%"]
+            import sqlite3 as _sq
+
+            conn = _sq.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+            try:
+                canon = str(symbol).upper().strip()
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM executed_trades "
+                    "WHERE ticket IS NOT NULL AND (symbol = ? OR symbol = ?) "
+                    "AND timestamp LIKE ?",
+                    (canon, str(_resolve_sym(symbol).canonical).upper(), patterns[0]),
+                ).fetchone()
+                return int(row[0]) if row else 0
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.debug(f"daily entry count unavailable for {symbol}: {e}")
+            return 0
+
     # ── Calibrated entry authority ──────────────────────────────────────────
     #
     # ``jarvis.execution.entry_policy`` implements the out-of-sample calibrated
@@ -724,6 +759,105 @@ class JarvisOrchestrator:
         can ask "what would you do right now?" without doing it.
         """
         active_trade_style = (trade_style or self.trade_style or "SWING").upper()
+
+        # 1a. Profile session window short-circuit (2026-10-20).
+        #
+        # Gold traded all day on 2026-10-20 because the pre-window cycles still
+        # ran the entire analytical pipeline and the entry policy overrode the
+        # failing window gate (fixed in entry_policy.py). This short-circuits
+        # the same waste from the other side: a symbol whose profile enforces a
+        # session window and nothing needs managing for it right now gets no
+        # context build, no analysts, no regime, no gate stack — none of which
+        # can change the answer. Open positions or resting pendings keep the
+        # full path so the in-line trailing block and the frozen-order cleanup
+        # still run.
+        _prof = None
+        _is_premium_profile = False
+        try:
+            from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config as _gspc
+            _prof = _gspc(symbol)
+            if _prof is not None:
+                _is_premium_profile = bool(getattr(_prof, "premium_window_exception", False))
+            if (_prof is not None and getattr(_prof, "session_restriction", False)
+                    and getattr(_prof, "allowed_utc_hours", None)):
+                _w_start, _w_end = _prof.allowed_utc_hours
+                _now_h = datetime.now(timezone.utc).hour
+                if not (_w_start <= _now_h < _w_end):
+                    # 2026-10-20 premium exception: profiles that opt into
+                    # premium_window_exception (gold) keep running the FULL
+                    # analytical pipeline on every cycle even when the session
+                    # window is closed. The off-window entry bar is enforced
+                    # downstream (decision-engine gate: blended score >= the
+                    # profile's premium floor), so the engine always has a
+                    # live radar on these symbols and an elite A+ setup is
+                    # never missed — while the ordinary off-hours chop is
+                    # still refused at the score gate, keeping the ledger
+                    # finding (off-window gold = bleed) intact.
+                    if not getattr(_prof, "premium_window_exception", False):
+                        _sym_positions = [
+                            p for p in self.state_manager.positions
+                            if symbol.upper() in str(p.symbol).upper()
+                            or ("XAUUSD" == symbol.upper() and "GOLD" in str(p.symbol).upper())
+                        ]
+                        _sym_pend = []
+                        try:
+                            for _o in (self.mt5_client.get_pending_orders() or []):
+                                if symbol.upper() in str(getattr(_o, "symbol", "")).upper():
+                                    _sym_pend.append(_o)
+                        except Exception:
+                            _sym_pend = []
+                        if not _sym_positions and not _sym_pend:
+                            DECISION_EVALUATIONS.inc(style=active_trade_style, outcome="refused")
+                            return {
+                                "symbol": symbol,
+                                "trade_style": active_trade_style,
+                                "decision": None,
+                                "context": None,
+                                "authorized": False,
+                                "auth_reason": f"PROFILE_SESSION_WINDOW: gold trades {_w_start:02d}:00-{_w_end:02d}:00 UTC only; window closed",
+                                "dry_run": bool(dry_run),
+                                "execution": None,
+                                "stale": False,
+                            }
+        except Exception:
+            pass
+
+        # 1b. Daily entry cap (2026-10-20 profitability audit): 83 gold trades
+        # in days on a micro account churned commission-free but spread-paying
+        # entries with -0.44R expectancy; institutional practice is 1-3 setups
+        # per session per instrument. Cap new entries per symbol per UTC day;
+        # position management and trailing are never touched by this.
+        #
+        # Premium-window profiles (XAUUSD) DEFER the pre-analysis bail: the
+        # user directive is "gold is always checked", and a silent refusal
+        # before the analysis ever runs is exactly the failure mode that
+        # convolved with the closed window to drain the ledger. For them the
+        # cap is enforced POST-analysis (below) — in-session entries still
+        # count, and only an off-window elite setup clears the bar.
+        try:
+            _daily_cap = int(getattr(SETTINGS.trading, "max_daily_entries_per_symbol", 4) or 4)
+            if _daily_cap > 0 and not _is_premium_profile:
+                _today_count = self._count_entries_today(symbol)
+                if _today_count >= _daily_cap:
+                    logger.debug(
+                        "DAILY_ENTRY_CAP: %s has %d entries today >= cap %d; analysis bailed early.",
+                        symbol, _today_count, _daily_cap,
+                    )
+                    DECISION_EVALUATIONS.inc(style=active_trade_style, outcome="refused")
+                    return {
+                        "symbol": symbol,
+                        "trade_style": active_trade_style,
+                        "decision": None,
+                        "context": None,
+                        "authorized": False,
+                        "auth_reason": f"DAILY_ENTRY_CAP: {_today_count} entries today >= cap {_daily_cap}",
+                        "dry_run": bool(dry_run),
+                        "execution": None,
+                        "stale": False,
+                    }
+        except Exception:
+            pass
+
         # 1. Fetch Multi-Timeframe Data based on trade_style
         mtf_data = self.data_feed.fetch_multi_timeframe(symbol, trade_style=active_trade_style)
 
@@ -1022,6 +1156,13 @@ class JarvisOrchestrator:
             for pos in active_sym_positions:
                 try:
                     manage_res = self.order_manager.manage_position(pos, context)
+                    if manage_res.get("should_close"):
+                        logger.info(
+                            f"⏰ TIME_STOP (inline trail): closing #{pos.ticket} "
+                            f"({pos.symbol} {pos.type}) — {manage_res.get('close_reason', '')}"
+                        )
+                        self.mt5_client.close_position(ticket=pos.ticket)
+                        continue
                     if manage_res.get("modified"):
                         self.mt5_client.modify_position(
                             ticket=pos.ticket,
@@ -1038,6 +1179,48 @@ class JarvisOrchestrator:
         # take some of those. Keying the in-process lock, the symbol limit, the
         # cooldown and the Asian blackout on the legacy verdict would skip all
         wants_entry = bool(auth_res.get("authorized"))
+
+        # Premium-profile deferred daily entry cap (2026-10-20): computed
+        # post-analysis so the always-on scan is never choked before it runs.
+        # In-window entries consume the cap normally; the only bypass is an
+        # off-window setup whose blended analyst score clears the profile's
+        # elite premium floor (88 for gold) — the user directive "a best
+        # entry detected off-session must be taken as priority".
+        _premium_offwindow_elite = False
+        _premium_cap_refused = False
+        if _is_premium_profile and wants_entry:
+            try:
+                _p_window = getattr(_prof, "allowed_utc_hours", None)
+                _p_floor = float(getattr(_prof, "premium_out_of_window_min_ai_score", 0.0) or 0.0)
+                _now_h = datetime.now(timezone.utc).hour
+                _in_window = bool(_p_window and _p_window[0] <= _now_h < _p_window[1])
+                _p_score = float(getattr(decision, "ai_score", 0.0) or 0.0)
+                # The single definition of an elite off-window setups used by
+                # both the cap bypass and the blackout bypass below: session
+                # closed, profile opted in, score above the premium floor.
+                _premium_offwindow_elite = (
+                    bool(_p_window)
+                    and not _in_window
+                    and _p_floor > 0.0
+                    and _p_score >= _p_floor
+                )
+                _post_cap = int(getattr(SETTINGS.trading, "max_daily_entries_per_symbol", 4) or 4)
+                if _post_cap > 0 and self._count_entries_today(symbol) >= _post_cap:
+                    if _premium_offwindow_elite:
+                        logger.info(
+                            "PREMIUM_CAP_BYPASS: %s off-window elite setup "
+                            "(ai_score %.1f >= floor %.1f) clears the daily entry cap.",
+                            symbol, _p_score, _p_floor,
+                        )
+                    else:
+                        _premium_cap_refused = True
+                        logger.info(
+                            "DAILY_ENTRY_CAP: %s has >= %d entries today; off-window "
+                            "entry needs an elite score (ai_score %.1f vs floor %.1f) to run.",
+                            symbol, _post_cap, _p_score, _p_floor,
+                        )
+            except Exception as _cap_exc:
+                logger.debug("premium cap gate failed open: %s", _cap_exc)
 
         # ── Institutional Stop-and-Reverse (SAR) / Position Flip Protocol ───────
         # When the AI resolves a high-conviction setup in the OPPOSITE direction of an active trade,
@@ -1119,6 +1302,17 @@ class JarvisOrchestrator:
                     cooldown_active = False
                     self._last_execution_time[canonical_sym] = 0.0
 
+        # Elite off-window setups bypass the coarse hour-based blackout veto
+        # (pure log marker here; the chain below excludes only the denial arm
+        # so the elite candidate keeps flowing into the full authorization
+        # stack — price-based spread/friction/risk gates still govern it).
+        if is_session_blackout and wants_entry and _premium_offwindow_elite:
+            logger.info(
+                "PREMIUM_BLACKOUT_BYPASS: %s elite off-window setup (ai_score %.1f) rides "
+                "through the session blackout; spread/friction/risk gates still govern it.",
+                symbol, float(getattr(decision, "ai_score", 0.0) or 0.0),
+            )
+
         if not is_exec_style_match:
             pass
         elif already_executing and wants_entry:
@@ -1138,11 +1332,18 @@ class JarvisOrchestrator:
             decision.decision = "WAIT"
             decision.execution_authorized = False
             auth_res = {"authorized": False, "reason": f"COOLDOWN_GUARD: {remaining}s remaining before next {canonical_sym} trade."}
-        elif is_session_blackout and wants_entry:
+        elif is_session_blackout and wants_entry and not _premium_offwindow_elite:
             decision.decision = "WAIT"
             decision.execution_authorized = False
             _reason = "ROLLOVER_BLACKOUT: Broker spread expansion window active (21:00-23:00 UTC)." if is_rollover_blackout else "ASIAN_SESSION_BLACKOUT: Low liquidity chop protection active (00:00-06:00 UTC)."
             auth_res = {"authorized": False, "reason": _reason}
+        elif _premium_cap_refused:
+            decision.decision = "WAIT"
+            decision.execution_authorized = False
+            auth_res = {
+                "authorized": False,
+                "reason": "DAILY_ENTRY_CAP: elite off-window premium standard not met and daily entry cap reached",
+            }
         elif gov_sym_dir and gov_sym_dir.status == "PAUSED" and wants_entry:
             decision.decision = "WAIT"
             decision.execution_authorized = False
@@ -1306,6 +1507,23 @@ class JarvisOrchestrator:
         """
         active_styles = list(styles) if styles else ["SWING", "DAY_TRADING", "SCALP"]
         active_symbols = list(symbols) if symbols else list(self.symbols)
+
+        # 2026-10-20 gold priority: premium-profile symbols (XAUUSD) are
+        # submitted FIRST on every sweep so their futures start evaluating
+        # before everything else — they are the freshest inputs into the
+        # arbiter by completion time, and an actionable gold candidate can
+        # never be blocked behind a slower FX sweep.
+        try:
+            from jarvis.intelligence.symbol_profile_config import SYMBOL_PROFILES as _SP
+            _premium_syms = tuple(
+                s for s in active_symbols
+                if getattr(_SP.get(s.upper(), None), "premium_window_exception", False)
+            )
+            if _premium_syms:
+                active_symbols = [s for s in active_symbols if s.upper() not in _premium_syms]
+                active_symbols = list(_premium_syms) + active_symbols
+        except Exception:
+            pass
 
         # On weekend market close (Friday 21:00 UTC to Sunday ~21:00 UTC), traditional
         # markets (Forex, Metals, Indices, Oil) are shut. Only scan crypto to avoid
@@ -1558,9 +1776,20 @@ class JarvisOrchestrator:
 
             try:
                 session = SessionEngine.get_current_session()
-                sleep_interval = 3.0 if session.is_prime_session else 15.0
+                # 2026-10-20 latency tuning: measured on this box the full
+                # 9-pipeline pass (3 symbols x 3 styles: context + regime +
+                # analyst cluster + dissector + gates) took ~1.3-3.5s while the
+                # loop slept only 3.0s in prime, so the engine was
+                # CPU-saturated nearly continuously and the API/fill paths
+                # starved (risk_status replies stretched into seconds).
+                # Entries are M5-bar-driven anyway, and position integrity is
+                # owned by the state synchroniser / position monitor threads,
+                # so a 10s prime cadence does not lose entries but cuts the
+                # decision-CPU duty by ~3x. Off-prime has no SCALP activity
+                # worth power-splitting; 20s keeps the radar informative.
+                sleep_interval = 10.0 if session.is_prime_session else 20.0
             except Exception:
-                sleep_interval = 5.0
+                sleep_interval = 12.0
             time.sleep(sleep_interval)
 
     def emergency_stop(self, reason: str = "OPERATOR_EMERGENCY_STOP: Trading manually halted by user", close_positions: bool = False) -> Dict[str, Any]:

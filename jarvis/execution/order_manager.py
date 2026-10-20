@@ -212,6 +212,7 @@ class OrderManager:
             partial_already_taken=False,
             be_already_locked=position.ticket in self._be_locked,
             struct_level=struct_level,
+            partial_executable=position.volume >= 0.02,
         )
 
         old_sl = position.sl
@@ -247,6 +248,11 @@ class OrderManager:
             "modified": modified,
             "new_sl": round(new_sl, policy.digits),
             "new_tp": round(new_tp, policy.digits),
+            # Time-stop close decisions are executed by the caller (the
+            # orchestrator's inline trailing block) because this manager only
+            # owns resting stop/TP modifications, not market closes.
+            "should_close": bool(dec.close_position),
+            "close_reason": dec.close_reason or "",
         }
 
     def forget_ticket(self, ticket: int) -> None:

@@ -732,7 +732,19 @@ class PositionMonitorEngine:
                 be_already_locked=pos.ticket in self._be_locked,
                 struct_level=struct_level,
                 regime=regime_str,
+                partial_executable=pos.volume >= 0.02,
+                hold_minutes=(open_dur_sec / 60.0) if open_dur_sec else None,
             )
+
+            if exit_dec.should_close:
+                _ts_r = favorable_dist / max(risk_dist, 1e-6)
+                logger.info(
+                    f"⏰ TIME_STOP: closing #{pos.ticket} ({symbol} {pos.type}) at market "
+                    f"(R={_ts_r:.2f}, age={open_dur_sec/60.0:.0f} min >= policy limit "
+                    f"{policy.time_stop_minutes:.0f} min). Reason: {exit_dec.close_reason}"
+                )
+                if self._execute_exit(pos, reason="TIME_STOP"):
+                    return
 
             if exit_dec.partial_close_pct > 0.0 and pos.ticket not in self._partially_closed_tickets:
                 # evaluate_exit signals *that* a partial is due; the actual lot

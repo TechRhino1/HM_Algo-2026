@@ -163,6 +163,172 @@ class TestOpportunityArbiter(unittest.TestCase):
         self.assertEqual(cand.setup_grade, "GRADE A+")
         self.assertTrue(cand.is_actionable)
 
+    def test_gold_counter_flush_buy_is_disqualified_not_paroled(self):
+        """2026-10-20 regression: the losing gold bucket IS the counter-flush entry.
+
+        At 09:15 UTC the scalp engine allowed a BUY with M1/H1/M15/M5 ALL
+        BEARISH in a TREND_BEAR regime; the arbiter's only response was a
+        0.45x utility discount, which left the candidate grade-handed and
+        actionable -- entry 4123.44, stopped -8.17 twenty-four minutes later
+        (journal row #1014, same 09:15 BUY at 4125.94 line in the engine
+        log). The same shape at 01:01 (-13.27) and 06:24 (-10.17). When
+        M15 AND M5 flush against the entry AND H1/D1 confirm it, a gold
+        candidate must be non-actionable outright; the soft discount stays
+        for every other asset and for the unconfirmed case.
+        """
+        ctx = MarketContext(
+            symbol="XAUUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=2400.0,
+            bid=2399.8,
+            ask=2400.2,
+            structure=StructureContext(
+                bias="BEARISH",
+                bos=False,
+                choch=False,
+                discount_premium_zone="DISCOUNT",
+                order_blocks=[],
+                fair_value_gaps=[]
+            ),
+            liquidity=LiquidityContext(
+                sweep_detected=False,
+                sweep_type="NONE"
+            ),
+            volatility=VolatilityContext(
+                atr=12.0,
+                current_spread_pips=1.5,
+                max_allowed_spread_pips=30.0,
+                bollinger_bandwidth=0.04,
+                state="COMPRESSION"
+            ),
+            momentum=MomentumContext(
+                rsi=34.0,
+                adx=28.0,
+                trend_score=-45,
+                divergence="NONE"
+            ),
+            session=SessionContext(
+                current_session="LONDON",
+                is_prime_session=True,
+                utc_hour=9
+            ),
+            vwap=2404.0,
+            mtf_confluence_score=20.0,
+            mtf_alignment={"H4": "NEUTRAL", "D1": "BEARISH", "H1": "BEARISH",
+                           "M15": "BEARISH", "M5": "BEARISH"}
+        )
+        decision = DecisionObject(
+            symbol="XAUUSD",
+            timestamp=datetime.now(timezone.utc),
+            regime=RegimeOutput(primary_regime=MarketRegime.TREND_BEAR,
+                                probabilities={"TREND_BEAR": 0.9}, confidence=0.9),
+            bias="BUY",
+            probabilities={"buy": 0.55, "sell": 0.45},
+            strategy="LIQUIDITY_SWEEP_REVERSAL",
+            entry_price=2400.0,
+            stop_loss=2386.0,
+            take_profit=2414.0,
+            risk_reward_ratio=1.0,
+            calculated_risk_percent=1.0,
+            expected_value=0.85,
+            model_confidence=0.55,
+            adversarial_penalty=18.0,
+            invalidation_levels=[],
+            bull_case=["sweep reclaim"],
+            bear_case=[],
+            risk_factors=[],
+            quality_gate=TradeQualityGateResult(passed=False, checks={}),
+            decision="WAIT",
+            master_confluence_score=30.0,
+            meta_label_prob=0.5
+        )
+        cand = self.arbiter.evaluate_opportunity(decision, ctx, trade_style="SCALP")
+        self.assertFalse(cand.is_actionable,
+                         "gold counter-flush with HTF agreement must not be actionable")
+
+    def test_gold_counter_flush_without_htf_agreement_stays_penalized(self):
+        """M15/M5 flush with NEUTRAL HTFs: penalized ×0.45, NOT disqualified.
+
+        The kill fires only when the HTF stack (H1 or D1) confirms the flush.
+        Without that agreement the fade is a legitimate (penalized)
+        mean-reversion bet and must stay grade-eligible.
+        """
+        ctx = MarketContext(
+            symbol="XAUUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=2400.0,
+            bid=2399.8,
+            ask=2400.2,
+            structure=StructureContext(
+                bias="BEARISH",
+                bos=False,
+                choch=False,
+                discount_premium_zone="DISCOUNT",
+                order_blocks=[],
+                fair_value_gaps=[]
+            ),
+            liquidity=LiquidityContext(
+                sweep_detected=False,
+                sweep_type="NONE"
+            ),
+            volatility=VolatilityContext(
+                atr=12.0,
+                current_spread_pips=1.5,
+                max_allowed_spread_pips=30.0,
+                bollinger_bandwidth=0.04,
+                state="COMPRESSION"
+            ),
+            momentum=MomentumContext(
+                rsi=34.0,
+                adx=28.0,
+                trend_score=-45,
+                divergence="NONE"
+            ),
+            session=SessionContext(
+                current_session="LONDON",
+                is_prime_session=True,
+                utc_hour=9
+            ),
+            vwap=2404.0,
+            mtf_confluence_score=40.0,
+            mtf_alignment={"H4": "NEUTRAL", "D1": "NEUTRAL", "H1": "NEUTRAL",
+                           "M15": "BEARISH", "M5": "BEARISH"}
+        )
+        decision = DecisionObject(
+            symbol="XAUUSD",
+            timestamp=datetime.now(timezone.utc),
+            regime=RegimeOutput(primary_regime=MarketRegime.RANGE,
+                                probabilities={"RANGE": 0.8}, confidence=0.7),
+            bias="BUY",
+            probabilities={"buy": 0.60, "sell": 0.40},
+            strategy="LIQUIDITY_SWEEP_REVERSAL",
+            entry_price=2400.0,
+            stop_loss=2391.0,
+            take_profit=2413.0,
+            risk_reward_ratio=1.44,
+            calculated_risk_percent=1.0,
+            expected_value=0.85,
+            model_confidence=0.66,
+            adversarial_penalty=5.0,
+            invalidation_levels=[],
+            bull_case=["range fade"],
+            bear_case=[],
+            risk_factors=[],
+            quality_gate=TradeQualityGateResult(passed=True, checks={}),
+            decision="EXECUTE",
+            master_confluence_score=60.0,
+            meta_label_prob=0.6
+        )
+        with self.assertLogs("JARVIS_OpportunityArbiter", level="INFO") as cm:
+            cand = self.arbiter.evaluate_opportunity(decision, ctx, trade_style="SCALP")
+        self.assertFalse(
+            any("DISQUALIFIED" in m for m in cm.output),
+            "counter-flush without HTF agreement must stay a penalized fade, not be disqualified"
+        )
+        # And the ×0.45 flush discount IS applied (htf_confluence stays < the
+        # unpenalized magnitude 1.10*0.66*1.4 ≈ 1.02).
+        self.assertLess(cand.utility_score, 1.02)
+
     def test_setup_grade_b_and_c_classification(self):
         """Verify GRADE B (Utility >= 1.00) and GRADE C (Utility < 1.00)."""
         # Grade B candidate
@@ -414,6 +580,40 @@ class TestOrchestratorMultiStyleRadar(unittest.TestCase):
         )
         self._freshness.start()
         self.addCleanup(self._freshness.stop)
+
+        # Same rationale: the 2026-10-20 profile session-window short-circuit
+        # drops a restricted symbol (XAUUSD 12-16 UTC) whenever the test runs
+        # outside that window, making the candidate count wall-clock dependent.
+        # Neutralise ONLY the window for this plumbing test via dataclasses.replace
+        # (profiles are shared module singletons -- never mutate in place).
+        import dataclasses
+
+        from jarvis.intelligence import symbol_profile_config as _spc
+
+        real_gspc = _spc.get_symbol_profile_config
+
+        def _window_open(symbol):
+            prof = real_gspc(symbol)
+            if prof is not None and getattr(prof, "session_restriction", False):
+                prof = dataclasses.replace(prof, allowed_utc_hours=None)
+            return prof
+
+        self._profile = patch(
+            "jarvis.intelligence.symbol_profile_config.get_symbol_profile_config",
+            side_effect=_window_open,
+        )
+        self._profile.start()
+        self.addCleanup(self._profile.stop)
+
+        # Same wall-clock-fragility rationale: the 2026-10-20 daily entry cap
+        # reads the live demo ledger, so a symbol with >= 4 ledger rows today
+        # would return the cap refusal instead of radar candidates. Plumbing
+        # test -- count nothing.
+        self._cap = patch.object(
+            JarvisOrchestrator, "_count_entries_today", return_value=0
+        )
+        self._cap.start()
+        self.addCleanup(self._cap.stop)
 
         self.orchestrator = JarvisOrchestrator(
             symbols=["XAUUSD", "EURUSD"],

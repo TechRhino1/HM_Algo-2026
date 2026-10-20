@@ -209,9 +209,8 @@ class SyncStampsBrokerTest(unittest.TestCase):
             initialize=lambda **kw: True,
             history_deals_get=lambda *a, **k: [deal],
         )
-        with patch.dict(sys.modules, {"MetaTrader5": fake}), \
-                patch("jarvis.data.database.broker_utc_offset", return_value=0):
-            self.db.sync_mt5_history(days=1)
+        with patch("jarvis.data.database.broker_utc_offset", return_value=0):
+            self.db.sync_mt5_history(days=1, mt5_module=fake)
 
         cur = self.db._get_conn().cursor()
         cur.execute("SELECT origin, closed_at FROM executed_trades WHERE ticket = 99001")

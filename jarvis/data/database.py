@@ -552,7 +552,7 @@ class SQLiteTradeDB:
             logger.error(f"Failed to record trade exit: {e}")
             return False
 
-    def sync_mt5_history(self, days: int = 30, limit: int = 100):
+    def sync_mt5_history(self, days: int = 30, limit: int = 100, mt5_module=None):
         """Syncs executed and closed trades from MT5 broker history into SQLite database.
 
         Called from the READ path (`fetch_recent_trades`), so it must never
@@ -572,11 +572,18 @@ class SQLiteTradeDB:
         The gate also gives the honest answer: no terminal in this process means
         there is nothing to sync FROM, so returning early is correct, not a
         degradation.
-        """
-        from jarvis.data.broker_symbols import ensure_mt5_terminal
 
-        if not ensure_mt5_terminal():
-            return
+        `mt5_module` lets a caller that owns its own terminal connection
+        (tests: a stand-in) inject it instead of relying on the process-wide
+        gate. That is the documented injected-module pattern: the caller owns
+        the lifecycle, and the global gate neither latches `_TERMINAL_READY`
+        from it nor spends its retry throttle window on a stand-in.
+        """
+        if mt5_module is None:
+            from jarvis.data.broker_symbols import ensure_mt5_terminal
+
+            if not ensure_mt5_terminal():
+                return
 
         # A read must not trigger a sync per request. With a terminal up, every
         # `/api/history` call re-read 30 days of deals; the throttle keeps the
@@ -587,7 +594,11 @@ class SQLiteTradeDB:
         self._last_mt5_sync = now
 
         try:
-            import MetaTrader5 as mt5
+            mt5 = (
+                mt5_module
+                if mt5_module is not None
+                else __import__("MetaTrader5")
+            )
             from datetime import datetime, timedelta, timezone
             from jarvis.data.symbol_registry import resolve
 
@@ -852,7 +863,7 @@ class SQLiteTradeDB:
             # correct: MT5 assigns the eventual position id = opening order
             # ticket, so when the limit actually fills the deal matches this
             # row and `sync_mt5_history` closes it. The gap is the order the
-            # broker never fills: our own cycle loop surfaces a PendING entry
+            # broker never fills: our own cycle loop surfaces a pending entry
             # price every few minutes, cancelling and re-placing as the market
             # moves, and each cancelled order left its row open forever.
             # Measured on data/jarvis_history.db: 5 gold SELL rows from
@@ -865,7 +876,8 @@ class SQLiteTradeDB:
             #
             # Reconciliation rule for an open row keyed by ticket:
             #   * the order exists in the broker history window,
-            #   * its final state is CCANCELLED,  and
+            #   * its final state is a terminal NON-fill (CANCELLED=2,
+            #     REJECTED=8, EXPIRED=5, PENDING_CANCEL=3), and
             #   * no deal was ever booked for that ticket,
             # → the trade will never happen: stamp `closed_at` with the
             #   order's own terminal time and leave the outcome NULL. An
@@ -874,7 +886,19 @@ class SQLiteTradeDB:
             #   The inconsequential `exit_price` COALESCE keeps the statement's
             #   intent explicit: no price was ever reached, so no price can
             #   appear that was not a fill.
-            ORDER_STATE_CANCELLED = 2
+            #
+            # 2026-10-20 widening: the same never-filled shape also hits
+            # MARKET dispatches — an order the broker accepted pre-trade but
+            # which never became a position. Those rows carry a ticket whose
+            # state is terminal-no-fill, and (per MT5's convention of copying
+            # the opening-order ticket into position_id when a fill DOES
+            # happen) their `position_id` is either NULL or equal to their
+            # own ticket. The discriminator between "filled" and "never
+            # filled" is the DEALS, not the ticket columns: a real fill
+            # produced deals, so it is not touched; a no-deal row whose order
+            # ended REJECTED/CANCELLED/EXPIRED is stamped closed too. Rows
+            # for paper tickets (no broker order at all) are left alone.
+            TERMINAL_NON_FILL_STATES = {2, 3, 5, 8}  # CANCELLED, PENDING_CANCEL, EXPIRED, REJECTED
             order_map: dict = {}
             try:
                 hist_orders = mt5.history_orders_get(from_date, to_date) or []
@@ -885,16 +909,37 @@ class SQLiteTradeDB:
             if order_map:
                 open_cur = conn.cursor()
                 open_cur.execute(
-                    "SELECT id, ticket FROM executed_trades "
-                    "WHERE closed_at IS NULL AND position_id IS NULL AND ticket IS NOT NULL"
+                    "SELECT id, ticket, position_id FROM executed_trades "
+                    "WHERE closed_at IS NULL AND ticket IS NOT NULL "
+                    "AND (position_id IS NULL OR position_id = ticket)"
                 )
                 off_orders_touched = 0
-                for row_id, row_ticket in open_cur.fetchall():
+                for row_id, row_ticket, row_pos in open_cur.fetchall():
                     st_done = order_map.get(int(row_ticket))
                     if not st_done:
                         continue
                     state, time_done = st_done
-                    if state != ORDER_STATE_CANCELLED:
+                    if state not in TERMINAL_NON_FILL_STATES:
+                        continue
+                    # Deals must agree with the order: a row whose position
+                    # really traded (deals exist) was filled — verify before
+                    # declaring an open row a ghost. Measured on this build:
+                    # `history_deals_get(from, to, position=num)` ignores the
+                    # `position=` argument when a date window is also given
+                    # (it returned every deal in the window, for every other
+                    # position, so the probe said "has deals" for rows that
+                    # never traded and the stamping loop was dead). The
+                    # position-only form is the documented signature and
+                    # answers correctly for both cases: an unfilled order's
+                    # ticket has no deals, a filled position has them.
+                    try:
+                        deals_probe = mt5.history_deals_get(
+                            position=int(row_pos or row_ticket)
+                        ) or []
+                    except Exception:
+                        # Cannot verify — treat like "has deals" and leave the row alone.
+                        deals_probe = None
+                    if deals_probe:
                         continue
                     cancel_dt = ""
                     if time_done:
@@ -912,7 +957,7 @@ class SQLiteTradeDB:
                 if off_orders_touched:
                     logger.info(
                         f"Pending-order reconciliation: stamped {off_orders_touched} "
-                        "cancelled-order row(s) closed (no deals were ever booked)."
+                        "never-filled-order row(s) closed (terminal order state, no deals)."
                     )
             conn.commit()
 

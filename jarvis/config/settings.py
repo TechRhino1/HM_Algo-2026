@@ -73,6 +73,12 @@ class TradingSettings:
     # no evidence and the policy blocks regardless.
     gate_policy_max_soft_fail: int = 3
     gate_policy_min_recent_win_rate: float = 0.45
+    # 2026-10-20 profitability audit: 83 gold trades taken in days on a micro
+    # account all resolved through an all-or-nothing book with -0.44R/trade
+    # expectancy; overtrading spread churn was a first-order cost. Cap new
+    # entries per symbol per UTC day (position management/trailing unaffected).
+    # 0 disables the cap.
+    max_daily_entries_per_symbol: int = 4
 
 @dataclass
 class ServerSettings:

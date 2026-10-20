@@ -55,6 +55,21 @@ DEFAULT_BE_BUFFER_PCT = 0.05      # buffer above/below entry when locking BE
 DEFAULT_RUNNER_TRAIL_ATR = 1.2    # trail width in ATR once running
 DEFAULT_TRAIL_ACTIVATION_R = 2.0  # only start trailing beyond +2R
 
+# Time stop (2026-10-20 ledger audit): half of all demo trades rode to a full
+# -1.00R stop (median R) because nothing ever freed a trade that neither ran
+# nor died. Institutional gold systems flatten dead trades at session end
+# (WAKE) and " losers take hours, winners take days " is the classic shape of
+# a lopsided book. The ceiling is expressed per asset class because index
+# swings are naturally slower than gold's intraday pulse.
+DEFAULT_TIME_STOP_MIN_R = 0.10    # a trade must be at least +0.10R to earn its age
+_TIME_STOP_MINUTES_BY_CLASS = {
+    "COMMODITY": 75.0,   # gold/silver pulse: 75 minutes decides if it lives
+    "CRYPTO": 90.0,
+    "INDEX": 240.0,
+    "FOREX": 120.0,
+}
+DEFAULT_TIME_STOP_MINUTES = 120.0
+
 
 @dataclass
 class ExitPolicy:
@@ -71,6 +86,11 @@ class ExitPolicy:
     milestones: List[tuple] = field(
         default_factory=lambda: [(1.0, -0.35), (1.5, 0.25), (2.0, 0.60), (2.8, 1.25), (3.8, 2.25), (5.0, 3.50)]
     )
+    # Time stop: a trade that has been alive longer than time_stop_minutes and
+    # still sits below time_stop_min_r is flattened outright (a close decision,
+    # not a stop move). 0 disables. See DEFAULT_* above for the audit basis.
+    time_stop_minutes: float = DEFAULT_TIME_STOP_MINUTES
+    time_stop_min_r: float = DEFAULT_TIME_STOP_MIN_R
     digits: int = 5
     pip_size: float = 0.0001
 
@@ -89,6 +109,15 @@ class ExitPolicy:
             from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config
 
             cfg = get_symbol_profile_config(symbol)
+            asset_cls = str(getattr(cfg, "asset_class", "") or "").upper()
+            sym_up = str(symbol or "").upper()
+            time_stop_minutes = _TIME_STOP_MINUTES_BY_CLASS.get(
+                asset_cls, DEFAULT_TIME_STOP_MINUTES
+            )
+            # Siloed metals pulse faster than indices/yen crosses; gold in
+            # particular is decided within the first hour by the M15 pulse.
+            if ("XAU" in sym_up or "GOLD" in sym_up) and asset_cls == "COMMODITY":
+                time_stop_minutes = 75.0
             return cls(
                 symbol=str(symbol),
                 be_trigger_r=float(getattr(cfg, "be_trigger_r", DEFAULT_BE_TRIGGER_R)),
@@ -103,6 +132,7 @@ class ExitPolicy:
                 trail_activation_r=float(
                     getattr(cfg, "trail_activation_r", DEFAULT_TRAIL_ACTIVATION_R)
                 ),
+                time_stop_minutes=float(time_stop_minutes),
                 digits=int(getattr(cfg, "digits", digits) or digits),
                 pip_size=float(getattr(cfg, "pip_size", pip_size) or pip_size),
             )
@@ -158,6 +188,8 @@ def evaluate_exit(
     be_already_locked: bool = False,
     struct_level: Optional[float] = None,
     regime: Optional[str] = None,
+    partial_executable: bool = True,
+    hold_minutes: Optional[float] = None,
 ) -> ExitDecision:
     """Compute the stop-loss / partial-profit action for an open trade.
 
@@ -170,6 +202,12 @@ def evaluate_exit(
     favorable_dist : best favourable excursion so far, in PRICE units.
     atr : current ATR in PRICE units (used for trail width only).
     struct_level : optional structural support (BUY) / resistance (SELL) to ratchet behind.
+    partial_executable : False when the position cannot actually be split into
+        two tradeable lots (micro accounts at the 0.01 floor). The fast-cash
+        step then degrades into a hard stop-lock at the same level instead of a
+        close, so the profit is still ratcheted and can never round-trip away.
+    hold_minutes : position age in minutes, when the caller knows it. Powers
+        the time stop; None leaves the age check inert.
 
     Returns
     -------
@@ -205,14 +243,62 @@ def evaluate_exit(
             progress_tp = max(0.0, favorable_dist / signed_tp_dist)
             target_r = signed_tp_dist / max(risk_dist, 1e-6)
 
+    # ── 0. Time stop: retire a trade that is dead, not just unlucky ─────────
+    # The 2026-10-20 audit measured the median closed trade at exactly -1.00R:
+    # half the book was never managed out of a trade that neither ran nor
+    # stopped quickly. Once the position has outlived its expectation window
+    # and cannot even book the nominal floor (+0.10R), holding it has no edge
+    # thesis left — close it and recycle the risk budget. Skipped once a
+    # partial has banked (de-risked runner may idle) and skipped while the
+    # trailing regime is active (trade is managing itself).
+    if (
+        policy.time_stop_minutes > 0
+        and hold_minutes is not None
+        and hold_minutes >= policy.time_stop_minutes
+        and not partial_already_taken
+        and r_multiple < policy.time_stop_min_r
+    ):
+        dec.close_position = True
+        dec.close_reason = (
+            f"TIME_STOP_{hold_minutes:.0f}min<{policy.time_stop_min_r:.2f}R"
+            f"_{policy.time_stop_minutes:.0f}min_limit"
+        )
+        dec.actions.append("TIME_STOP")
+        return dec
+
     # ── 1. Partial profit banking (risk reduction) ──────────────────────────
     # Take a partial BEFORE moving to breakeven so the position is de-risked
     # while still giving the remainder room to run.
+    #
+    # Micro-account fallback (2026-10-20): a 0.01-lot position cannot be split
+    # (the broker floor is 0.01 and nothing remains to trail), so live trades
+    # at the bottom lot always executed the "bridge" all-or-nothing book
+    # measured as 208 stop-out exits vs 52 TP exits with a median -1.00R and
+    # winners capped at +0.5R. When a partial is impossible, RATCHET the stop
+    # to (fast_cash_r - BE buffer) instead: the position becomes a free
+    # option — it can never round-trip into a loss once it has reached the
+    # fast-cash level, while the runner keeps all upside. This is the defence
+    # of the same book the institutional research recommends (partial at a
+    # level with a trailed remainder), executed with the tools a micro
+    # account actually has.
     if not partial_already_taken and r_multiple >= policy.fast_cash_r:
-        dec.partial_close_pct = policy.fast_cash_volume_pct
-        dec.partial_price = entry + (risk_dist * policy.fast_cash_r) * (1 if is_buy else -1)
-        dec.partial_price = round(dec.partial_price, digits)
-        dec.actions.append(f"PARTIAL_{policy.fast_cash_r:.2f}R")
+        if partial_executable:
+            dec.partial_close_pct = policy.fast_cash_volume_pct
+            dec.partial_price = entry + (risk_dist * policy.fast_cash_r) * (1 if is_buy else -1)
+            dec.partial_price = round(dec.partial_price, digits)
+            dec.actions.append(f"PARTIAL_{policy.fast_cash_r:.2f}R")
+        else:
+            raw_lock = risk_dist * policy.fast_cash_r - buffer_dist
+            if raw_lock > 0:
+                lock_price = round(entry + (raw_lock if is_buy else -raw_lock), digits)
+                if is_buy:
+                    if lock_price > dec.new_sl:
+                        dec.new_sl = lock_price
+                        dec.actions.append(f"PARTIAL_FALLBACK_LOCK_{policy.fast_cash_r:.2f}R")
+                else:
+                    if dec.new_sl == 0 or lock_price < dec.new_sl:
+                        dec.new_sl = lock_price
+                        dec.actions.append(f"PARTIAL_FALLBACK_LOCK_{policy.fast_cash_r:.2f}R")
 
     # ── 2. Breakeven lock ───────────────────────────────────────────────────
     # Deferred until the trade has proven itself. Locking at 1R was the primary

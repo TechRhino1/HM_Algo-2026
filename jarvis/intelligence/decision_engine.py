@@ -6,6 +6,7 @@ from typing import Callable, Dict, List, Any, Optional
 from datetime import datetime, timezone
 import logging
 import math
+import time
 
 logger = logging.getLogger("JARVIS_DecisionEngine")
 
@@ -138,6 +139,34 @@ class DecisionEngine:
         self.ml_predictor = ml_predictor or OnlineMLPredictor()
         self.min_ev_hurdle = min_ev_hurdle
         self.max_devil_penalty = max_devil_penalty
+
+        # Live-expectancy quarantine (2026-10-20 ledger audit). The
+        # snapshot is taken ONCE here and refreshed on a TTL thereafter,
+        # never per decision: the dividend-rate of the demo ledger is
+        # minutes, not milliseconds, and a per-decision read of live disk
+        # state makes two back-to-back identical simulations diverge the
+        # moment the live engine writes a trade between them (the exact
+        # flake tests/test_backtest_is_hermetic.py guards). A simulation
+        # constructs its engine inside offline_mode(), so its snapshot is
+        # frozen empty forever - the guard takes itself out of the sim.
+        try:
+            from jarvis.config.runtime import is_offline as _is_offline
+
+            self._quarantine_offline = bool(_is_offline())
+        except Exception:
+            self._quarantine_offline = False
+        self._quarantine_stats: dict = {}
+        self._quarantine_loaded_at: float = 0.0
+        if not self._quarantine_offline:
+            try:
+                from jarvis.execution.strategy_quarantine import (
+                    load_live_expectancy as _load_expectancy,
+                )
+
+                self._quarantine_stats = dict(_load_expectancy())
+                self._quarantine_loaded_at = time.monotonic()
+            except Exception:
+                self._quarantine_stats = {}
         self.order_flow = InstitutionalVolumeOrderFlowEngine()
         self.self_learning = self_learning or SelfLearningEngine()
         self.meta_labeler = meta_labeler or MetaLabeler()
@@ -157,7 +186,44 @@ class DecisionEngine:
         # cycle, so an undeduplicated warning would flood the log during an outage.
         self._no_price_warned: set = set()
 
+    _QUARANTINE_REFRESH_SEC: float = 300.0
+    _QUARANTINE_MIN_TRADES: int = 20
+    _QUARANTINE_MIN_EXPECTANCY_R: float = -0.25
 
+    def _strategy_quarantined(self, symbol: str, strategy: str) -> bool:
+        """Consult the constructor's quarantine snapshot, refreshing on a TTL.
+
+        Live: the snapshot re-reads the demo ledger at most every
+        ``_QUARANTINE_REFRESH_SEC`` — a closed trade per minute must not
+        re-decide every gate. Offline/backtest: the snapshot was frozen empty
+        at construction and this never reads live disk at all, so two
+        identical simulations stay identical.
+        """
+        if not strategy or strategy == "?":
+            return False
+        if self._quarantine_offline:
+            return False
+        now = time.monotonic()
+        if (now - self._quarantine_loaded_at) > self._QUARANTINE_REFRESH_SEC:
+            try:
+                from jarvis.execution.strategy_quarantine import (
+                    load_live_expectancy as _load_expectancy,
+                )
+
+                self._quarantine_stats = dict(_load_expectancy())
+                self._quarantine_loaded_at = now
+            except Exception:
+                # Keep the last good snapshot; a read outage must not
+                # silently un-quarantine or wholesale re-quarantine pairs.
+                pass
+        rec = self._quarantine_stats.get(
+            (str(symbol or "").upper().strip(), str(strategy).upper().strip())
+        )
+        if rec is None:
+            return False
+        n, exp_r = rec
+        return (n >= self._QUARANTINE_MIN_TRADES
+                and exp_r <= self._QUARANTINE_MIN_EXPECTANCY_R)
 
     def _resolve_market_trend_and_bias(
         self,
@@ -894,7 +960,27 @@ class DecisionEngine:
                 # enforced by a dedicated HARD gate below - the generic soft
                 # "Forex Prime Session" slot is how 00-06h trades still fired
                 # under the old gate forgiveness.
-                is_prime_session_valid = (now_dt.weekday() < 5) and (start_h <= now_dt.hour < end_h)
+                #
+                # 2026-10-20 premium exception: when the profile opts into
+                # premium_window_exception, an off-window hour is still allowed
+                # through IF the blended analyst score is elite (>= the
+                # profile's premium floor, 88.0 for gold - above every normal
+                # hard gate band of 70-85). The weekday<5 term is kept outside
+                # the exception: a weekend is never premium, the book is shut.
+                _in_window = (start_h <= now_dt.hour < end_h)
+                if not _in_window and getattr(cfg, "premium_window_exception", False):
+                    _premium_floor = float(getattr(cfg, "premium_out_of_window_min_ai_score", 0.0) or 0.0)
+                    if _premium_floor > 0.0 and ai_score >= _premium_floor:
+                        if not hasattr(self, "_premium_gold_warned_at") or (time.time() - self._premium_gold_warned_at) > 900:
+                            logger.info(
+                                "GOLD premium out-of-window entry admitted: ai_score %.1f >= floor %.1f "
+                                "(window %02d:%02d UTC); off-session chaff remains filtered to elite scores.",
+                                ai_score, _premium_floor, start_h, end_h,
+                            )
+                            self._premium_gold_warned_at = time.time()
+                        is_prime_session_valid = True
+                        _in_window = True
+                is_prime_session_valid = (now_dt.weekday() < 5) and _in_window
             else:
                 is_prime_session_valid = (now_dt.weekday() < 5) and (7 <= now_dt.hour < 19)
         elif is_oil_asset or ("XAG" in sym_name):
@@ -1075,6 +1161,23 @@ class DecisionEngine:
             cfg = get_symbol_profile_config(sym_name)
             if strategy in cfg.banned_strategies:
                 strategy_viable = False
+            else:
+                # Live-expectancy quarantine (2026-10-20 ledger audit): static
+                # ban lists cannot see an edge dying. A (symbol, strategy)
+                # pair that has burned >= 20 closed demo trades at <= -0.25R
+                # per trade is disabled regardless of what the setup looks
+                # like today. Consults the constructor's snapshot (refreshed
+                # on a TTL in live, frozen empty in offline/backtest); fails
+                # open on any problem.
+                try:
+                    if self._strategy_quarantined(sym_name, strategy):
+                        strategy_viable = False
+                        logger.debug(
+                            "Strategy Viability: %s x %s quarantined by live ledger expectancy",
+                            sym_name, strategy,
+                        )
+                except Exception:
+                    pass
 
         # 16. Commodity (WTI & XAGUSD) Macro Trend Alignment Guard
         commodity_macro_valid = True

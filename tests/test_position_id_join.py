@@ -93,9 +93,8 @@ class TradeCloseJoinTest(unittest.TestCase):
     def _sync_exit(self, position_id, profit):
         deals = [_deal(position_id, entry=1, deal_type=1, price=1.1100, profit=profit)]
         fake = _FakeMT5(deals)
-        with patch.dict(sys.modules, {"MetaTrader5": fake}), \
-                patch("jarvis.data.database.broker_utc_offset", return_value=0):
-            self.db.sync_mt5_history(days=1)
+        with patch("jarvis.data.database.broker_utc_offset", return_value=0):
+            self.db.sync_mt5_history(days=1, mt5_module=fake)
 
     def _rows(self):
         conn = self.db._get_conn()

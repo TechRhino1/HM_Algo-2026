@@ -40,6 +40,14 @@ class SymbolProfileConfig:
     # Session & Timing Filters
     session_restriction: bool = False
     allowed_utc_hours: Optional[Tuple[int, int]] = None  # (start_hour, end_hour) inclusive
+    # Premium window exception (2026-10-20): a session-restricted symbol that
+    # still gets FULLY analyzed every cycle. Outside its allowed window the
+    # entry is only permitted when the blended analyst score clears
+    # premium_out_of_window_min_ai_score (~0-100 scale, well above the normal
+    # hard gate floor), so the engine never misses an elite A+ setup but keeps
+    # the off-session chop filtered. In-window behavior is unchanged.
+    premium_window_exception: bool = False
+    premium_out_of_window_min_ai_score: float = 0.0
     
     # XM Ultra Low Standard Account Specifications
     contract_size: float = 1.0
@@ -448,6 +456,14 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         # two biggest bleeder clusters. Asia sessions are mostly uninformed
         # flow (Tokyo dominance documented for metals) and are excluded.
         allowed_utc_hours=(12, 16),
+        # 2026-10-20 premium exception: gold is still optimized for its NY
+        # peak window, but the user directive (and opportunity cost) says an
+        # elite setup elsewhere in the day must not be missed. Off-window
+        # scanning continues every cycle; entries outside 12-16 UTC now
+        # require a blended analyst score >= 88 (vs the normal hard gates at
+        # 70-85) so only genuinely A+ confluence trades gold off-hours.
+        premium_window_exception=True,
+        premium_out_of_window_min_ai_score=88.0,
         contract_size=100.0,
         pip_size=0.1,
         pip_value_per_lot=10.0,

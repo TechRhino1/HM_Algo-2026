@@ -236,6 +236,13 @@ class BacktestEngine:
 
         effective_start = max(20, min(total_bars - 2, start_bar_idx))
         spec = resolve_symbol(symbol)
+        # Live-parity clock for the time stop: a held bar count converts to
+        # minutes at the series' own timeframe, so a 75-minute gold cap stops
+        # 75 minutes worth of bars whether the sim runs on M15 or H1.
+        _tf_minutes = {
+            "M1": 1, "M5": 5, "M15": 15, "M30": 30,
+            "H1": 60, "H4": 240, "D1": 1440,
+        }.get(str(timeframe).upper(), 60)
         actual_slippage_delta = self.slippage_pips * spec.pip_size
         cooldown_mgr = LossCooldownManager()
         skipped_min_lot = 0
@@ -448,6 +455,13 @@ class BacktestEngine:
                     # introduce lookahead. The ATR trail and R-milestones already
                     # provide progressive locking.
                     struct_level=None,
+                    # Live parity: micro lots cannot split (the harness marks
+                    # partial_unsupported below), so the fallback stop-lock
+                    # path in the exit policy applies to the same trades that
+                    # take it live. bars_held × timeframe = position age for
+                    # the time stop.
+                    partial_executable=(float(open_trade.get("lots", 0) or 0.0) >= 0.02),
+                    hold_minutes=float(open_trade.get("bars_held", 0)) * _tf_minutes,
                 )
 
                 # Apply the partial scale-out (only if the lots can actually split)

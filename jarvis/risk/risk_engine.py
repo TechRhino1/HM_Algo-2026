@@ -486,6 +486,29 @@ class RiskEngine:
             elif account.equity < 1000.0:
                 base_risk = min(base_risk * 1.5, 1.0)   # 0.5% → 0.75% (cap 1.0%)
 
+            # 2026-10-20 learned sizing: the live ledger's expectancy for this
+            # (symbol, strategy) pair tints the risk budget — positive edge
+            # earns up to ×1.15, mildly negative ×0.80, a still-condemned
+            # quarantined pair ×0.00. Offline/backtest contexts return 1.0
+            # inside the module itself, so simulations are untouched.
+            try:
+                from jarvis.execution.strategy_quarantine import (
+                    expectancy_risk_multiplier,
+                    SIZING_MIN_TRADES,
+                )
+
+                _learned_mult = float(
+                    expectancy_risk_multiplier(decision.symbol, getattr(decision, "strategy", "") or "")
+                )
+                if _learned_mult != 1.0:
+                    base_risk = max(0.001, base_risk * _learned_mult)
+                    logger.info(
+                        "Learned sizing: %s × %s ledger expectancy biased → risk ×%.2f.",
+                        decision.symbol, getattr(decision, "strategy", "?"), _learned_mult,
+                    )
+            except Exception as _learned_exc:
+                logger.debug("Learned sizing unavailable: %s", _learned_exc)
+
             sym_info_enriched = dict(symbol_info) if symbol_info else {}
             if "name" not in sym_info_enriched and "symbol" not in sym_info_enriched:
                 sym_info_enriched["name"] = decision.symbol

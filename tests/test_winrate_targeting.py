@@ -527,6 +527,51 @@ def test_capital_protection_set_is_protective_only():
         assert not any(k in g for k in ("Score", "Reward", "Expected Value", "Devil"))
 
 
+def test_gold_session_window_blocks_calibrated_path():
+    """2026-10-20 regression: the 12-16 UTC gold window must be a PROTECTION gate.
+
+    "Forex Prime Session" and "Strategy Viable" used to live in EDGE_GATES, so
+    the calibrated path ignored the legacy gate verdict: on 2026-10-20 the
+    engine opened gold #1014 (BUY 09:15 UTC), #1016 (SELL 09:48) and #1017
+    (SELL 10:08) -- all outside the profile's 12:00-16:00 window -- because
+    their calibrated scores cleared the profile threshold. A failing session
+    check must now refuse the candidate outright regardless of score.
+    """
+    gate = _Gate({
+        g: True for g in CAPITAL_PROTECTION_GATES
+    } | {"Gold Session Window": False, "Forex Prime Session": False})
+    dec = evaluate_entry(quality_gate=gate, score=0.99, regime="TREND",
+                         profile=_Profile(min_score=0.0))
+    assert dec.allowed is False
+    assert "capital protection" in dec.reason
+    assert "Gold Session Window" in dec.protection_failures
+    assert "Forex Prime Session" in dec.protection_failures
+
+
+def test_gold_strategy_viable_blocks_calibrated_path():
+    """A banned strategy must be refused on the calibrated path, not merely
+    score-suppressed: gold trades #1015/#1016 on 2026-10-13/20 used
+    TREND_FOLLOWING/TREND_PULLBACK while the profile blacklisted
+    RANGE_MEAN_REVERSION/TREND_FOLLOWING -- the edge gate only deducts
+    points, it never says no.
+    """
+    gate = _Gate({
+        g: True for g in CAPITAL_PROTECTION_GATES
+    } | {"Strategy Viable": False})
+    dec = evaluate_entry(quality_gate=gate, score=0.99, regime="TREND",
+                         profile=_Profile(min_score=0.0))
+    assert dec.allowed is False
+    assert "Strategy Viable" in dec.protection_failures
+
+
+def test_gold_protection_gates_ok_when_window_open():
+    """Sanity: within the window with a viable strategy the trade still passes."""
+    gate = _Gate({g: True for g in CAPITAL_PROTECTION_GATES})
+    dec = evaluate_entry(quality_gate=gate, score=0.99, regime="TREND",
+                         profile=_Profile(min_score=0.5))
+    assert dec.allowed is True
+
+
 def test_edge_threshold_blocks_low_score():
     gate = _Gate({g: True for g in CAPITAL_PROTECTION_GATES})
     dec = evaluate_entry(quality_gate=gate, score=0.4, regime="TREND",

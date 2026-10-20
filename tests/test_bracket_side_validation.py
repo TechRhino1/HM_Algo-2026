@@ -61,7 +61,6 @@ class TestTheSyncRefusesIt:
     number, and assert it does not reach the journal."""
 
     def _run_sync(self, db, deals):
-        import sys
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -70,9 +69,8 @@ class TestTheSyncRefusesIt:
             initialize=lambda **kw: True,
             history_deals_get=lambda *a, **k: list(deals),
         )
-        with patch.dict(sys.modules, {"MetaTrader5": fake}), \
-                patch("jarvis.data.database.broker_utc_offset", return_value=0):
-            db.sync_mt5_history(days=1)
+        with patch("jarvis.data.database.broker_utc_offset", return_value=0):
+            db.sync_mt5_history(days=1, mt5_module=fake)
 
     def _deals(self, comment: str, action_type: int = 0):
         import time

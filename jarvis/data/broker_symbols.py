@@ -264,6 +264,23 @@ def ensure_mt5_terminal(mt5_module=None, allow_launch: bool = False) -> bool:
 
         real_package = _is_real_mt5_package(mt5)
 
+        # A stand-in that reached us through the GLOBAL sys.modules path
+        # (instead of an own-lifecycle injection via `mt5_module=`) must not
+        # get past here at all, and must not spend the throttle window doing
+        # it: its initialize()/terminal_info() answer True without any
+        # terminal, so latching this process's _TERMINAL_READY from it breaks
+        # the invariant every later caller relies on — the latch claims a
+        # terminal this process never attached to, and the data feed keeps
+        # reading with the REAL package's uninitialized session, serving
+        # synthetic bars to every decision. Measured: a sync-path test run
+        # before the multi-style radar test left the radar with 0 of its
+        # expected 6 candidates, every frame synthetic_fallback; spending the
+        # window additionally silenced every later sync-path test for
+        # _INIT_RETRY_SEC (flaky, order-dependent).
+        if not real_package:
+            logger.debug("MT5 terminal init refused: injected module through the global path.")
+            return False
+
         # The retry throttle bounds the expensive `initialize()` below. It is
         # consulted here but only CONSUMED after the cheap checks have passed,
         # because a refusal that costs nothing must not spend the window.

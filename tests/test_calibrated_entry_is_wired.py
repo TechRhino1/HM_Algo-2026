@@ -229,8 +229,14 @@ class TestThePolicyIsInertWhileDisabled:
 
     def test_the_default_in_a_fresh_config_is_off(self):
         # If this ever flips, the live book silently narrows to the five symbols
-        # with a positive out-of-sample expectancy.
-        assert SETTINGS.trading.use_calibrated_entry_policy is False
+        # with a positive out-of-sample expectancy. Assert on the *dataclass
+        # default*, not the deployed config/settings.json: the deployment has
+        # legitimately flipped the switch ON (2026-10 runner), and disk state
+        # is not what this guard is about -- what flips silently is the
+        # code-level default a fresh install would fall back to.
+        from jarvis.config.settings import TradingSettings
+
+        assert TradingSettings().use_calibrated_entry_policy is False
 
 
 class TestThePolicyDecidesWhenEnabled:
@@ -325,9 +331,13 @@ class TestTheWireIsConnected:
         # A candidate the calibrated policy accepts can still carry
         # decision.decision == "WAIT". Keying the in-process lock, the symbol
         # limit, the cooldown and the Asian blackout on the legacy verdict would
-        # skip all four for exactly the candidates the policy adds.
+        # skip all four for exactly the candidates the policy adds. The iSAR
+        # flip helper downstream is exempt from this check by design: it
+        # *closes an opposing live trade*, an aggressive act that should stay
+        # keyed to the legacy EXECUTE verdict until the calibrated policy has
+        # earned execution authority there too.
         src = inspect.getsource(orch_mod.JarvisOrchestrator.run_cycle_for_symbol)
-        guard_block = src[src.index("wants_entry ="):src.index("elif auth_res.get(\"authorized\")")]
+        guard_block = src[src.index("wants_entry ="):src.index("Institutional Stop-and-Reverse")]
         assert "decision.decision == \"EXECUTE\"" not in guard_block
 
     def test_the_legacy_confidence_floor_does_not_veto_the_policy(self):
