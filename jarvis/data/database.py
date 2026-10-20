@@ -845,6 +845,75 @@ class SQLiteTradeDB:
                           pid, pid,
                           dt_str if exit_deal else None, dt_str if exit_deal else None,
                           sl_val, sl_val, tp_val, tp_val, row[0]))
+
+            # ── Pending-order reconciliation ─────────────────────────────
+            # A limit/stop entry is journalled the moment the broker accepts
+            # the order (`is_fill or is_placed` in execution_engine), which is
+            # correct: MT5 assigns the eventual position id = opening order
+            # ticket, so when the limit actually fills the deal matches this
+            # row and `sync_mt5_history` closes it. The gap is the order the
+            # broker never fills: our own cycle loop surfaces a PendING entry
+            # price every few minutes, cancelling and re-placing as the market
+            # moves, and each cancelled order left its row open forever.
+            # Measured on data/jarvis_history.db: 5 gold SELL rows from
+            # 2026-10-20 05:10-05:51 UTC sat open with `realized_pnl=NULL`,
+            # `position_id=NULL` and `closed_at=NULL` while the matching
+            # broker orders (`history_orders_get`) were all state 2 =
+            # CANCELLED with `position_id=0` and no deals anywhere. Those
+            # ghost rows inflated every "open position" statistic count and
+            # kept cancelled strategy labels inside the live trade stats.
+            #
+            # Reconciliation rule for an open row keyed by ticket:
+            #   * the order exists in the broker history window,
+            #   * its final state is CCANCELLED,  and
+            #   * no deal was ever booked for that ticket,
+            # → the trade will never happen: stamp `closed_at` with the
+            #   order's own terminal time and leave the outcome NULL. An
+            #   unfilled order has no realised P&L, and NULL is the honest
+            #   value for "no outcome recorded" (migration 5's contract).
+            #   The inconsequential `exit_price` COALESCE keeps the statement's
+            #   intent explicit: no price was ever reached, so no price can
+            #   appear that was not a fill.
+            ORDER_STATE_CANCELLED = 2
+            order_map: dict = {}
+            try:
+                hist_orders = mt5.history_orders_get(from_date, to_date) or []
+                for ho in hist_orders:
+                    order_map[int(ho.ticket)] = (int(getattr(ho, "state", -1)), getattr(ho, "time_done", 0))
+            except Exception as e:
+                logger.debug(f"Pending-order reconciliation could not read order history: {e}")
+            if order_map:
+                open_cur = conn.cursor()
+                open_cur.execute(
+                    "SELECT id, ticket FROM executed_trades "
+                    "WHERE closed_at IS NULL AND position_id IS NULL AND ticket IS NOT NULL"
+                )
+                off_orders_touched = 0
+                for row_id, row_ticket in open_cur.fetchall():
+                    st_done = order_map.get(int(row_ticket))
+                    if not st_done:
+                        continue
+                    state, time_done = st_done
+                    if state != ORDER_STATE_CANCELLED:
+                        continue
+                    cancel_dt = ""
+                    if time_done:
+                        cancel_dt = datetime.fromtimestamp(
+                            float(time_done) - broker_offset, timezone.utc
+                        ).isoformat()
+                    conn.execute(
+                        "UPDATE executed_trades "
+                        "SET closed_at = COALESCE(closed_at, ?), "
+                        "    exit_price = COALESCE(exit_price, NULL) "
+                        "WHERE id = ? AND closed_at IS NULL",
+                        (cancel_dt or datetime.now(timezone.utc).isoformat(), row_id),
+                    )
+                    off_orders_touched += 1
+                if off_orders_touched:
+                    logger.info(
+                        f"Pending-order reconciliation: stamped {off_orders_touched} "
+                        "cancelled-order row(s) closed (no deals were ever booked)."
+                    )
             conn.commit()
 
         except Exception as e:

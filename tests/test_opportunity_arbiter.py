@@ -305,8 +305,14 @@ class TestOnlineMLPredictor(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def test_24d_feature_extraction_shape_and_values(self):
-        """Verify 24-D stationary quantitative feature extraction."""
+    def test_28d_feature_extraction_shape_and_values(self):
+        """Verify the current 28-D stationary quantitative feature contract.
+
+        The predictor expanded from 24 to 28 features (order-book imbalance,
+        vpin, parkinson vol, cvd divergence) and `_load` migrates legacy
+        24-length weights, so the dimension assertion must follow
+        `FEATURE_NAMES`, the single source of truth.
+        """
         features = self.predictor.extract_features(
             context=self.context,
             regime=self.regime,
@@ -316,30 +322,31 @@ class TestOnlineMLPredictor(unittest.TestCase):
             devil_penalty=0.0,
             target_rr=2.5
         )
-        self.assertEqual(len(features), 24)
-        self.assertEqual(self.predictor.n_features, 24)
+        self.assertEqual(len(features), len(self.predictor.FEATURE_NAMES))
+        self.assertEqual(self.predictor.n_features, len(self.predictor.FEATURE_NAMES))
         self.assertFalse(np.isnan(features).any())
         self.assertFalse(np.isinf(features).any())
 
     def test_predict_probability_clamped_institutional_domain(self):
         """Verify output probability is bounded strictly within [0.35, 0.88]."""
-        features = np.zeros(24, dtype=float)
+        n = len(self.predictor.FEATURE_NAMES)
+        features = np.zeros(n, dtype=float)
         p_zero = self.predictor.predict_probability(features)
         self.assertGreaterEqual(p_zero, 0.35)
         self.assertLessEqual(p_zero, 0.88)
 
-        extreme_positive = np.full(24, 10.0, dtype=float)
+        extreme_positive = np.full(n, 10.0, dtype=float)
         p_high = self.predictor.predict_probability(extreme_positive)
         self.assertEqual(p_high, 0.88)
 
-        extreme_negative = np.full(24, -10.0, dtype=float)
+        extreme_negative = np.full(n, -10.0, dtype=float)
         p_low = self.predictor.predict_probability(extreme_negative)
         self.assertEqual(p_low, 0.35)
 
     def test_return_weighted_online_sgd_update(self):
         """Verify return-weighted online learning step and Brier Score tracking."""
         initial_weights = self.predictor.weights.copy()
-        feat = np.ones(24, dtype=float) * 0.5
+        feat = np.ones(len(self.predictor.FEATURE_NAMES), dtype=float) * 0.5
 
         # Execute 3 updates (batch_size = 3) with high R-multiple win
         self.predictor.update_online(feat, target_win=1, r_multiple=2.5)

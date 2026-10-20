@@ -63,6 +63,16 @@ class TradingSettings:
     # universe off. That is a trading decision, not a bug fix, and it must be
     # taken knowingly rather than shipped as a default.
     use_calibrated_entry_policy: bool = False
+    # AdaptiveGatePolicy knobs. The SOFTEN pathway historically never fired
+    # because the decision engine always passed recent_win_rate=None; with the
+    # pathway now live, these two knobs decide how permissive it is.
+    # max_soft_fail: how many failing SOFT gates may be converted into a
+    # confidence penalty instead of a block.
+    # min_recent_win_rate: the recent closed-trade win rate (last 30) required
+    # before any softening is allowed. With fewer than 10 closed trades there is
+    # no evidence and the policy blocks regardless.
+    gate_policy_max_soft_fail: int = 3
+    gate_policy_min_recent_win_rate: float = 0.45
 
 @dataclass
 class ServerSettings:
@@ -151,6 +161,16 @@ class JarvisConfig:
                         cfg.trading.use_calibrated_entry_policy = str(raw).strip().lower() in {
                             "1", "true", "yes", "on",
                         }
+                if "gate_policy_max_soft_fail" in t_data:
+                    try:
+                        cfg.trading.gate_policy_max_soft_fail = int(t_data["gate_policy_max_soft_fail"])
+                    except (TypeError, ValueError) as exc:
+                        logger.warning(f"Ignoring invalid gate_policy_max_soft_fail={t_data['gate_policy_max_soft_fail']!r}: {exc}")
+                if "gate_policy_min_recent_win_rate" in t_data:
+                    try:
+                        cfg.trading.gate_policy_min_recent_win_rate = float(t_data["gate_policy_min_recent_win_rate"])
+                    except (TypeError, ValueError) as exc:
+                        logger.warning(f"Ignoring invalid gate_policy_min_recent_win_rate={t_data['gate_policy_min_recent_win_rate']!r}: {exc}")
                 m_data = data.get("ml", {})
                 ml_keys = (
                     ("sgd_learning_rate", "sgd_learning_rate", float),

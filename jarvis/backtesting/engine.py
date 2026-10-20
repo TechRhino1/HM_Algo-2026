@@ -208,6 +208,19 @@ class BacktestEngine:
         trades: List[Dict[str, Any]] = []
         open_trade: Optional[Dict[str, Any]] = None
 
+        # Gate-policy evidence supplier over THIS simulation's closed trades,
+        # mirroring the Kelly-sizing window below (is_win flags, last 30). Only
+        # closed trades enter the window, so the policy never sees future
+        # outcomes. Rebound per run, so each symbol starts with no evidence.
+        def _sim_recent_win_rate() -> Optional[float]:
+            recent = trades[-30:]
+            if len(recent) < 10:
+                return None
+            wins = sum(1 for t in recent if t.get("is_win", False))
+            return wins / len(recent)
+
+        self.decision_engine.recent_win_rate_fn = _sim_recent_win_rate
+
         if df_h1 is None or (isinstance(df_h1, pd.DataFrame) and df_h1.empty):
             df_h1 = HISTORICAL_DATA_ENGINE.get_market_data(
                 symbol=symbol,

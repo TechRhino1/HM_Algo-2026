@@ -302,7 +302,7 @@ class DynamicRiskAndLevelsEngine:
                     min_target_rr = 2.0
                     asym_rr = 2.8
                 elif is_gold:
-                    sl_dist = min(10.0 + spread_dist, max(6.0 + spread_dist, struct_sl_dist))
+                    sl_dist = min(14.0 + spread_dist, max(8.0 + spread_dist, struct_sl_dist))
                     min_target_rr = 2.0
                     asym_rr = 3.0
                 else:
@@ -311,8 +311,12 @@ class DynamicRiskAndLevelsEngine:
                     asym_rr = 2.8
             else:  # SWING
                 if is_gold:
-                    # Enforce strict small-account capital preservation (6.0 to 12.0 points max on Gold)
-                    max_swing_sl = min(12.0, max(6.0, 1.0 * atr))
+                    # The old \-12 clamp put the stop INSIDE one H1 candle's normal
+                    # range on a volatile gold session (H1 ATR alone reaches \+);
+                    # every retest of the anchor zone then grazes the stop out.
+                    # Stops now scale with gold's realized volatility, with a
+                    # small-account ceiling of \ instead of a fixed \ cap.
+                    max_swing_sl = min(18.0, max(9.0, 1.5 * atr))
                     min_target_rr = 2.0 if is_ranging else 2.5
                     asym_rr = 2.5 if is_ranging else 3.8
                 elif is_crypto:
@@ -338,7 +342,7 @@ class DynamicRiskAndLevelsEngine:
 
             # Floor is derived from current conditions: >=3.5x spread and >=1.20x ATR to protect against noise
             if is_gold:
-                min_sl_dist = max(3.5 * spread_dist, 6.0, min(10.0, 0.60 * atr + spread_dist))
+                min_sl_dist = max(3.5 * spread_dist, 7.0, min(13.0, 0.75 * atr + spread_dist))
             else:
                 min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
             if is_silver:
@@ -546,7 +550,7 @@ class DynamicRiskAndLevelsEngine:
                     min_target_rr = 2.0
                     asym_rr = 2.8
                 elif is_gold:
-                    sl_dist = min(10.0 + spread_dist, max(6.0 + spread_dist, struct_sl_dist))
+                    sl_dist = min(14.0 + spread_dist, max(8.0 + spread_dist, struct_sl_dist))
                     min_target_rr = 2.0
                     asym_rr = 3.0
                 else:
@@ -555,8 +559,12 @@ class DynamicRiskAndLevelsEngine:
                     asym_rr = 2.8
             else:  # SWING
                 if is_gold:
-                    # Enforce strict small-account capital preservation (6.0 to 12.0 points max on Gold)
-                    max_swing_sl = min(12.0, max(6.0, 1.0 * atr))
+                    # The old \-12 clamp put the stop INSIDE one H1 candle's normal
+                    # range on a volatile gold session (H1 ATR alone reaches \+);
+                    # every retest of the anchor zone then grazes the stop out.
+                    # Stops now scale with gold's realized volatility, with a
+                    # small-account ceiling of \ instead of a fixed \ cap.
+                    max_swing_sl = min(18.0, max(9.0, 1.5 * atr))
                     min_target_rr = 2.0 if is_ranging else 2.5
                     asym_rr = 2.5 if is_ranging else 3.8
                 elif is_crypto:
@@ -582,7 +590,7 @@ class DynamicRiskAndLevelsEngine:
 
             # Floor is derived from current conditions: >=3.5x spread and >=1.20x ATR to protect against noise
             if is_gold:
-                min_sl_dist = max(3.5 * spread_dist, 6.0, min(10.0, 0.60 * atr + spread_dist))
+                min_sl_dist = max(3.5 * spread_dist, 7.0, min(13.0, 0.75 * atr + spread_dist))
             else:
                 min_sl_dist = max(3.5 * spread_dist, 1.20 * atr + spread_dist)
             if is_silver:

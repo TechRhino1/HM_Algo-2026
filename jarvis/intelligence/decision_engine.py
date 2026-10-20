@@ -2,7 +2,7 @@
 HM Algo 2.0 — Autonomous Decision Engine & Trade Quality Gate.
 Synthesizes multi-agent confluences, applies Devil's Advocate risk penalties, calculates expected value, and gates execution.
 """
-from typing import Dict, List, Any, Optional
+from typing import Callable, Dict, List, Any, Optional
 from datetime import datetime, timezone
 import logging
 import math
@@ -129,7 +129,8 @@ class DecisionEngine:
         dynamic_levels_engine: Optional[DynamicRiskAndLevelsEngine] = None,
         min_ev_hurdle: float = 0.50,
         max_devil_penalty: float = 50.0,
-        strategy_bandit: Optional[Any] = None
+        strategy_bandit: Optional[Any] = None,
+        recent_win_rate_fn: Optional[Callable[[], Optional[float]]] = None,
     ):
         self.strategy_selector = strategy_selector or StrategySelector(bandit=strategy_bandit)
         self.hypothesis_engine = hypothesis_engine or HypothesisEngine()
@@ -143,6 +144,10 @@ class DecisionEngine:
         self.gate_policy = AdaptiveGatePolicy()
         self.ai_dissector = ai_dissector or AIDissector()
         self.realtime_optimizer = realtime_optimizer or RealtimeOptimizer()
+        # SOFTEN evidence supplier. Defaults to the realtime optimizer's live
+        # query, which is inert (returns None) in offline/backtest mode — a
+        # simulation must rebind this to its own running window instead.
+        self.recent_win_rate_fn = recent_win_rate_fn or self.realtime_optimizer.get_recent_win_rate
         self.master_confluence = master_confluence or MasterConfluenceEngine()
         self.fvg_engine = FairValueGapEngine()
         self.dynamic_levels_engine = dynamic_levels_engine or DynamicRiskAndLevelsEngine()
@@ -878,7 +883,17 @@ class DecisionEngine:
             now_dt = c_ts if isinstance(c_ts, datetime) else datetime.now(timezone.utc)
             if cfg and cfg.session_restriction and cfg.allowed_utc_hours:
                 start_h, end_h = cfg.allowed_utc_hours
-                # Strictly enforce 07:00 to 19:00 UTC (London & NY prime liquidity sessions) on weekdays
+                # Gold session gate (profile-driven, hard). Research + ledger
+                # measured on our own executed_trades: 15-17h UTC was the
+                # largest gold bleed cluster (129 live rows, -$522.73),
+                # 06-08h the second (-$252.44), while 12-14h was the only
+                # consistently profitable segment. NY data-driven hours carry
+                # the widest moves (13:00 UTC peak ~$24/h vs ~$2.80 at the
+                # 21:00 UTC rollover), and Asia flow is chiefly uninformed
+                # (Tokyo-dominance studies for the metals). The window is
+                # enforced by a dedicated HARD gate below - the generic soft
+                # "Forex Prime Session" slot is how 00-06h trades still fired
+                # under the old gate forgiveness.
                 is_prime_session_valid = (now_dt.weekday() < 5) and (start_h <= now_dt.hour < end_h)
             else:
                 is_prime_session_valid = (now_dt.weekday() < 5) and (7 <= now_dt.hour < 19)
@@ -1106,6 +1121,7 @@ class DecisionEngine:
             "Trend Not Exhausted": not is_exhausted,
             "No Order Flow Absorption Trap": not is_of_trap,
             "Forex Prime Session": is_prime_session_valid,
+            "Gold Session Window": (is_prime_session_valid if is_gold else True),
             "Gold Trend Following Alignment": gold_trend_following_valid,
             "Commodity Macro Alignment": commodity_macro_valid,
             "Crypto Macro Trend Filter": crypto_macro_trend_valid,
@@ -1616,7 +1632,13 @@ class DecisionEngine:
         if gate_passed:
             gate_policy_decision = "PASS"
         else:
-            _gp_decision, _gp_gates = self.gate_policy.decide(failing_reasons, recent_win_rate=None)
+            _recent_wr: Optional[float] = None
+            try:
+                _recent_wr = self.recent_win_rate_fn()
+            except Exception as _wr_exc:
+                logger.debug(f"Recent win-rate supplier failed: {_wr_exc}")
+                _recent_wr = None
+            _gp_decision, _gp_gates = self.gate_policy.decide(failing_reasons, recent_win_rate=_recent_wr)
             if _gp_decision == "SOFTEN":
                 gate_policy_decision = "SOFTEN"
                 softened_gates = _gp_gates

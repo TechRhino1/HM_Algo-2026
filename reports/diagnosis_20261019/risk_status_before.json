@@ -1,0 +1,43 @@
+{
+    "daily_loss_pct":  3.59,
+    "max_daily_loss_pct":  5.0,
+    "total_dd_pct":  5.85,
+    "max_drawdown_pct":  15.0,
+    "daily_start_equity":  447.93,
+    "peak_equity":  458.69,
+    "drawdown_multiplier":  0.75,
+    "circuit_breaker_active":  false,
+    "circuit_breaker_reason":  "",
+    "circuit_breaker_cooldown_sec":  0,
+    "consecutive_losses":  0,
+    "paused_symbols":  [
+
+                       ],
+    "portfolio_heat_score":  11.4,
+    "portfolio_heat_zone":  "NORMAL",
+    "heat_risk_multiplier":  1.0,
+    "allow_new_risk":  true,
+    "margin_utilization_pct":  1.1,
+    "heat_components":  {
+                            "open_risk_pct":  0.0,
+                            "risk_component":  0.0,
+                            "drawdown_pct":  0.68,
+                            "drawdown_component":  13.7,
+                            "margin_pct":  1.07,
+                            "margin_component":  2.7,
+                            "position_count":  2,
+                            "position_component":  50.0,
+                            "correlation_component":  0.0
+                        },
+    "heat_reasons":  [
+
+                     ],
+    "hrp_weights":  {
+                        "XAUUSD":  0.22,
+                        "EURUSD":  0.18,
+                        "GBPUSD":  0.17,
+                        "USDJPY":  0.15,
+                        "BTCUSD":  0.12,
+                        "US30":  0.16
+                    }
+}

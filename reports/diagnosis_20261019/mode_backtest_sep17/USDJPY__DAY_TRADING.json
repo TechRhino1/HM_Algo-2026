@@ -1,0 +1,32 @@
+{
+  "symbol": "USDJPY",
+  "style": "DAY_TRADING",
+  "primary_tf": "M15",
+  "window_start": "2026-03-15 23:00:00",
+  "window_end": "2026-09-11 20:00:00",
+  "window_days": 179.9,
+  "primary_bars": 12465,
+  "profile": "none",
+  "elapsed_sec": 520.3,
+  "n_trades": 0,
+  "metrics": {
+    "total_trades": 0,
+    "win_rate_pct": 0.0,
+    "profit_factor": 0.0,
+    "expectancy_dollars": 0.0,
+    "net_profit": 0.0,
+    "max_drawdown_dollars": 0.0,
+    "max_drawdown_pct": 0.0,
+    "sharpe_ratio": 0.0,
+    "sortino_ratio": 0.0,
+    "calmar_ratio": 0.0,
+    "wins": 0,
+    "losses": 0,
+    "total_r": 0,
+    "expectancy_r": 0.0,
+    "avg_win_r": 0.0,
+    "avg_loss_r": 0.0,
+    "payoff_r": 0.0
+  },
+  "trades": []
+}

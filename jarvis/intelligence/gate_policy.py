@@ -15,6 +15,28 @@ today's behaviour), so it can never increase risk on an untuned system.
 from typing import List, Tuple, Optional, Dict
 
 
+def _policy_thresholds() -> tuple:
+    """(max_soft_fail, min_recent_win_rate) from settings, with the documented
+    defaults as fallback.
+
+    Falls back silently if jarvis.config.settings is unavailable or does not
+    define the trading.gate_policy_* fields, so callers with a minimal settings
+    object keep the published behaviour.
+    """
+    try:
+        from jarvis.config.settings import SETTINGS
+        t = getattr(SETTINGS, "trading", None)
+        if t is None:
+            return 3, 0.45
+        return (
+            int(getattr(t, "gate_policy_max_soft_fail", 3)),
+            float(getattr(t, "gate_policy_min_recent_win_rate", 0.45)),
+        )
+    except Exception:
+        return 3, 0.45
+
+
+
 # Gates that must always block when they fail (capital-protection / validity).
 HARD_GATES = {
     "Market Session Open",
@@ -23,6 +45,7 @@ HARD_GATES = {
     "Regime Viability",
     "Directional Bias",
     "Strategy Viable",
+    "Gold Session Window",
     "No Active Macro Shock",
     "Risk/Reward >= 1.5",
     "Valid Stop Loss Distance",
@@ -59,9 +82,11 @@ SOFT_GATE_PENALTIES: Dict[str, float] = {
 
 
 class AdaptiveGatePolicy:
-    def __init__(self, max_soft_fail: int = 3, min_recent_win_rate: float = 0.45):
-        self.max_soft_fail = max_soft_fail
-        self.min_recent_win_rate = min_recent_win_rate
+    def __init__(self, max_soft_fail: Optional[int] = None,
+                 min_recent_win_rate: Optional[float] = None):
+        _df_max, _df_min = _policy_thresholds()
+        self.max_soft_fail = int(max_soft_fail) if max_soft_fail is not None else _df_max
+        self.min_recent_win_rate = float(min_recent_win_rate) if min_recent_win_rate is not None else _df_min
 
     def decide(self, failing_reasons: List[str], recent_win_rate: Optional[float] = None) -> Tuple[str, List[str]]:
         """Return (decision, gates_to_soften).

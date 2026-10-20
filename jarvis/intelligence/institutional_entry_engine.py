@@ -434,7 +434,13 @@ class InstitutionalEntryEngine:
         is_forex = (getattr(spec, "asset_class", "").upper() == "FOREX") and not (is_gold or is_silver or is_oil or is_crypto or is_index)
 
         h1_atr = context.volatility.atr if (hasattr(context, "volatility") and context.volatility.atr > 0) else (d1_atr / 4.0)
-        sl_buffer = spread_dist + ((0.25 * h1_atr) if (is_gold or is_silver) else (0.40 * d1_atr))
+        if is_gold:
+            # Published XAU standard: 0.3-0.5 ATR beyond the structural wick.
+            # 0.25 put the stop inside the anchor-zone liquidity cluster, where
+            # gold's routine retests and spread noise graze it out.
+            sl_buffer = spread_dist + (0.45 * h1_atr)
+        else:
+            sl_buffer = spread_dist + ((0.30 * h1_atr) if is_silver else (0.40 * d1_atr))
         min_sl_floor = self._calculate_structural_sl_floor(context, h1_atr if (is_gold or is_silver) else d1_atr, spread_dist, trade_style="SWING")
         if bias == "BUY":
             outer_swing = range_low
@@ -459,7 +465,7 @@ class InstitutionalEntryEngine:
 
         # Asset-Class Structural Bounds
         if is_gold:
-            max_risk_cap = min(max(6.0, 1.20 * h1_atr), 12.0)
+            max_risk_cap = min(max(9.0, 1.20 * h1_atr), 18.0)
         elif is_silver:
             max_risk_cap = min(max(0.35, 1.20 * h1_atr), 0.75)
         elif is_oil:

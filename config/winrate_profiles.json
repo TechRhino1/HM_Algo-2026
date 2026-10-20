@@ -1,2886 +1,542 @@
 {
-  "version": 1,
   "meta": {
-    "target_wr": 0.55,
-    "min_trades": 20,
-    "folds": 4,
-    "grid": "coarse",
     "days": 95,
     "enforce_reachable_target": true,
-    "reachability_margin": 0.0,
-    "min_tp_r_floor": 0.8182,
-    "wide_grid": true,
+    "folds": 4,
+    "generated_utc": "2026-10-19T20:33:03.702071+00:00",
+    "grid": "coarse",
+    "min_tp_r_floor": 1.17,
+    "min_trades": 20,
+    "reachability_margin": 0.17,
     "slippage_pips": 0.5,
-    "generated_utc": "2026-10-14T14:51:06.760396+00:00",
     "symbols": [
-      "AUDUSD",
-      "BTCUSD",
-      "ETHUSD",
-      "EURUSD",
-      "GBPUSD",
-      "GER40",
-      "NAS100",
-      "NZDUSD",
-      "SOLUSD",
-      "UK100",
-      "US30",
       "USDCAD",
-      "USDCHF",
       "USDJPY",
-      "XAGUSD",
       "XAUUSD"
-    ]
+    ],
+    "target_wr": 0.5,
+    "wide_grid": true
   },
   "profiles": {
-    "AUDUSD": {
-      "symbol": "AUDUSD",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 2.5,
-        "be_trigger_r": null,
-        "fast_cash_r": null,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 48,
-        "min_score": 0.662625
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 8,
-      "win_rate": 0.25,
-      "expectancy_r": -0.0402,
-      "payoff": 2.819,
-      "profit_factor": 0.94,
-      "total_r": -0.321,
-      "max_dd_r": 3.259,
-      "target_met": false,
-      "binding_constraint": "sample size - only 8 trades in the sample (20 required to assert a rate); the regime policy removed TREND_BEAR, TREND_BULL",
-      "oos_trades": 19,
-      "oos_win_rate": 0.2105,
-      "oos_expectancy_r": -0.6383,
-      "oos_profit_factor": 0.157,
-      "oos_total_r": -12.128,
-      "oos_target_met": false,
+    "USDCAD": {
+      "binding_constraint": "none - target met in-sample AND out-of-sample (OOS 64.3% on 42 trades)",
+      "expectancy_r": 0.0139,
       "folds": 4,
-      "oos_pre_policy_trades": 53,
-      "oos_pre_policy_win_rate": 0.2453,
-      "oos_pre_policy_expectancy_r": -0.4558,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.48,
-          0.5439,
-          0.58,
-          0.6691,
-          0.6786,
-          0.6915,
-          0.7198,
-          0.76248,
-          0.8477
-        ],
-        "bin_win_rate": [
-          0.2308,
-          0.2308,
-          0.2308,
-          0.2308,
-          0.25,
-          0.25,
-          0.25,
-          0.2857
-        ],
-        "bin_count": [
-          7,
-          6,
-          7,
-          6,
-          7,
-          6,
-          7,
-          7
-        ],
-        "brier": 0.18479,
-        "n": 53
-      },
-      "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 74,
-          "win_rate": 0.3919,
-          "expectancy_r": -0.1362,
-          "total_r": -10.076,
-          "enabled": false,
-          "reason": "expectancy -0.136R worse than -0.050R over 74 trades"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 83,
-          "win_rate": 0.4096,
-          "expectancy_r": -0.1928,
-          "total_r": -16.003,
-          "enabled": false,
-          "reason": "expectancy -0.193R worse than -0.050R over 83 trades"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 41,
-          "win_rate": 0.4146,
-          "expectancy_r": 0.1601,
-          "total_r": 6.566,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.160R)"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 3,
-          "win_rate": 0.0,
-          "expectancy_r": -0.5185,
-          "total_r": -1.556,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 1,
-          "win_rate": 0.0,
-          "expectancy_r": -1.0575,
-          "total_r": -1.057,
-          "enabled": true,
-          "reason": "insufficient samples (1<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BEAR": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.662625
-        },
-        "TREND_BULL": {
-          "tp_r": 2.0,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.662625
-        }
-      },
       "frontier": [
         {
-          "tp_r": 1.0,
-          "best_wr": 0.3235,
-          "best_wr_trades": 34,
-          "best_wr_expectancy_r": -0.3393,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.3158,
-          "best_wr_trades": 19,
-          "best_wr_expectancy_r": -0.3803,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.3158,
-          "best_wr_trades": 19,
-          "best_wr_expectancy_r": -0.3672,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.3158,
-          "best_wr_trades": 19,
-          "best_wr_expectancy_r": -0.354,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        }
-      ],
-      "notes": "Deployed tp2.5_beoff_pcoffx0.5_troff@2_mb48_s0.662625 chosen by walk-forward vote across 4 purged folds; OOS 21.1% on 19 trades (-0.638R, PF 0.16). In-sample reference: 8 trades, 25.0% WR, -0.040R. Regime policy enabled 3/5 regimes (disabled: TREND_BEAR, TREND_BULL), fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "BTCUSD": {
-      "symbol": "BTCUSD",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 2.5,
-        "be_trigger_r": 1.0,
-        "fast_cash_r": 0.5,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 24,
-        "min_score": 0.768549
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 53,
-      "win_rate": 0.5472,
-      "expectancy_r": 0.0407,
-      "payoff": 0.934,
-      "profit_factor": 1.129,
-      "total_r": 2.155,
-      "max_dd_r": 5.141,
-      "target_met": false,
-      "binding_constraint": "selection stability - 57.8% is reachable in-sample (tp2.5_be1_pc0.5x0.5_troff@2_mb48_s0@thr0.769) but walk-forward selection did not converge on it, so the deployed configuration achieves only 54.7%",
-      "oos_trades": 52,
-      "oos_win_rate": 0.4808,
-      "oos_expectancy_r": -0.0229,
-      "oos_profit_factor": 0.94,
-      "oos_total_r": -1.192,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 52,
-      "oos_pre_policy_win_rate": 0.4808,
-      "oos_pre_policy_expectancy_r": -0.0229,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.76922,
-          0.778537,
-          0.781,
-          0.791125,
-          0.80041,
-          0.818375,
-          0.82958,
-          0.840902,
-          0.902
-        ],
-        "bin_win_rate": [
-          0.3636,
-          0.3636,
-          0.4643,
-          0.4643,
-          0.4643,
-          0.4643,
-          0.5,
-          0.7143
-        ],
-        "bin_count": [
-          7,
-          4,
-          9,
-          6,
-          6,
-          7,
-          6,
-          7
-        ],
-        "brier": 0.2392,
-        "n": 52
-      },
-      "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 49,
-          "win_rate": 0.4082,
-          "expectancy_r": -0.0333,
-          "total_r": -1.63,
-          "enabled": true,
-          "reason": "expectancy within tolerance (-0.033R)"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 129,
-          "win_rate": 0.5194,
-          "expectancy_r": 0.0158,
-          "total_r": 2.039,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.016R)"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 6,
-          "win_rate": 1.0,
-          "expectancy_r": 1.5,
-          "total_r": 9.0,
-          "enabled": true,
-          "reason": "only 6 samples (<12) - too few to disable"
-        },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 3,
-          "win_rate": 0.6667,
-          "expectancy_r": -0.15,
-          "total_r": -0.45,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.768549
-        },
-        "TREND_BEAR": {
-          "tp_r": 1.5,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.768549
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.5263,
-          "best_wr_trades": 57,
-          "best_wr_expectancy_r": 0.0188,
-          "wr_at_positive_expectancy": 0.5263,
-          "expectancy_at_positive_wr": 0.0188,
-          "trades_at_positive_wr": 57
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.5405,
-          "best_wr_trades": 111,
-          "best_wr_expectancy_r": 0.0272,
-          "wr_at_positive_expectancy": 0.5405,
-          "expectancy_at_positive_wr": 0.0272,
-          "trades_at_positive_wr": 111
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.5625,
-          "best_wr_trades": 48,
-          "best_wr_expectancy_r": 0.0458,
-          "wr_at_positive_expectancy": 0.5625,
-          "expectancy_at_positive_wr": 0.0458,
-          "trades_at_positive_wr": 48
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.5778,
-          "best_wr_trades": 45,
-          "best_wr_expectancy_r": 0.0104,
-          "wr_at_positive_expectancy": 0.5778,
-          "expectancy_at_positive_wr": 0.0104,
-          "trades_at_positive_wr": 45
-        }
-      ],
-      "notes": "Deployed tp2.5_be1_pc0.5x0.5_troff@2_mb24_s0.768549 chosen by walk-forward vote across 4 purged folds; OOS 48.1% on 52 trades (-0.023R, PF 0.94). In-sample reference: 53 trades, 54.7% WR, +0.041R. Regime policy enabled 4/4 regimes, fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "ETHUSD": {
-      "symbol": "ETHUSD",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 2.5,
-        "be_trigger_r": null,
-        "fast_cash_r": null,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 24,
-        "min_score": 0.782
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 39,
-      "win_rate": 0.3846,
-      "expectancy_r": 0.1618,
-      "payoff": 2.245,
-      "profit_factor": 1.403,
-      "total_r": 6.312,
-      "max_dd_r": 4.09,
-      "target_met": false,
-      "binding_constraint": "win rate - best achievable in-sample with positive expectancy is 54.8% (tp2_be1_pc0.5x0.5_troff@2_mb24_s0@thr0.748), below the 55% target",
-      "oos_trades": 44,
-      "oos_win_rate": 0.3864,
-      "oos_expectancy_r": 0.0702,
-      "oos_profit_factor": 1.178,
-      "oos_total_r": 3.089,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 44,
-      "oos_pre_policy_win_rate": 0.3864,
-      "oos_pre_policy_expectancy_r": 0.0702,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.75522,
-          0.77475,
-          0.796165,
-          0.804,
-          0.80805,
-          0.822625,
-          0.833,
-          0.8465,
-          0.881
-        ],
-        "bin_win_rate": [
-          0.3864,
-          0.3864,
-          0.3864,
-          0.3864,
-          0.3864,
-          0.3864,
-          0.3864,
-          0.3864
-        ],
-        "bin_count": [
-          6,
-          5,
-          5,
-          6,
-          5,
-          6,
-          5,
-          6
-        ],
-        "brier": 0.23709,
-        "n": 44
-      },
-      "regime_edge": {
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 109,
-          "win_rate": 0.4312,
-          "expectancy_r": 0.021,
-          "total_r": 2.291,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.021R)"
-        },
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 40,
-          "win_rate": 0.45,
-          "expectancy_r": 0.0402,
-          "total_r": 1.609,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.040R)"
-        },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 8,
-          "win_rate": 0.875,
-          "expectancy_r": 1.4302,
-          "total_r": 11.442,
-          "enabled": true,
-          "reason": "only 8 samples (<12) - too few to disable"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 2.5,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.782
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.5455,
-          "best_wr_trades": 66,
-          "best_wr_expectancy_r": 0.0507,
-          "wr_at_positive_expectancy": 0.5455,
-          "expectancy_at_positive_wr": 0.0507,
-          "trades_at_positive_wr": 66
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.5312,
-          "best_wr_trades": 64,
-          "best_wr_expectancy_r": 0.0145,
-          "wr_at_positive_expectancy": 0.5312,
-          "expectancy_at_positive_wr": 0.0145,
-          "trades_at_positive_wr": 64
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.5484,
-          "best_wr_trades": 62,
-          "best_wr_expectancy_r": 0.0553,
-          "wr_at_positive_expectancy": 0.5484,
-          "expectancy_at_positive_wr": 0.0553,
-          "trades_at_positive_wr": 62
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.5424,
-          "best_wr_trades": 59,
-          "best_wr_expectancy_r": 0.0582,
-          "wr_at_positive_expectancy": 0.5424,
-          "expectancy_at_positive_wr": 0.0582,
-          "trades_at_positive_wr": 59
-        }
-      ],
-      "notes": "Deployed tp2.5_beoff_pcoffx0.5_troff@2_mb24_s0.782 chosen by walk-forward vote across 4 purged folds; OOS 38.6% on 44 trades (+0.070R, PF 1.18). In-sample reference: 39 trades, 38.5% WR, +0.162R. Regime policy enabled 3/3 regimes, fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "EURUSD": {
-      "symbol": "EURUSD",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 2.5,
-        "be_trigger_r": null,
-        "fast_cash_r": null,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 48,
-        "min_score": 0.66498
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 28,
-      "win_rate": 0.3214,
-      "expectancy_r": -0.2856,
-      "payoff": 1.202,
-      "profit_factor": 0.569,
-      "total_r": -7.997,
-      "max_dd_r": 14.237,
-      "target_met": false,
-      "binding_constraint": "expectancy - the walk-forward-selected configuration has no edge out of sample",
-      "oos_trades": 38,
-      "oos_win_rate": 0.3947,
-      "oos_expectancy_r": -0.2537,
-      "oos_profit_factor": 0.527,
-      "oos_total_r": -9.642,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 65,
-      "oos_pre_policy_win_rate": 0.3538,
-      "oos_pre_policy_expectancy_r": -0.2876,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.62876,
-          0.672,
-          0.693,
-          0.70072,
-          0.73096,
-          0.75564,
-          0.78904,
-          0.82228,
-          0.8728
-        ],
-        "bin_win_rate": [
-          0.125,
-          0.35,
-          0.35,
-          0.35,
-          0.35,
-          0.35,
-          0.4706,
-          0.4706
-        ],
-        "bin_count": [
-          8,
-          8,
-          8,
-          8,
-          8,
-          8,
-          8,
-          9
-        ],
-        "brier": 0.21862,
-        "n": 65
-      },
-      "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 83,
-          "win_rate": 0.4819,
-          "expectancy_r": 0.0091,
-          "total_r": 0.756,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.009R)"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 101,
-          "win_rate": 0.3663,
-          "expectancy_r": -0.1679,
-          "total_r": -16.96,
-          "enabled": false,
-          "reason": "expectancy -0.168R worse than -0.050R over 101 trades"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 46,
-          "win_rate": 0.5217,
-          "expectancy_r": 0.238,
-          "total_r": 10.948,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.238R)"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 9,
-          "win_rate": 0.3333,
-          "expectancy_r": -0.3621,
-          "total_r": -3.259,
-          "enabled": true,
-          "reason": "only 9 samples (<12) - too few to disable"
-        },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 9,
-          "win_rate": 0.6667,
-          "expectancy_r": 0.9559,
-          "total_r": 8.603,
-          "enabled": true,
-          "reason": "only 9 samples (<12) - too few to disable"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.66498
-        },
-        "BREAKOUT": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.66498
-        },
-        "TREND_BEAR": {
-          "tp_r": 2.0,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.66498
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.4878,
+          "best_wr": 0.6341,
+          "best_wr_expectancy_r": 0.0139,
           "best_wr_trades": 41,
-          "best_wr_expectancy_r": -0.1076,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.4658,
-          "best_wr_trades": 73,
-          "best_wr_expectancy_r": -0.0859,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.4714,
-          "best_wr_trades": 70,
-          "best_wr_expectancy_r": -0.0749,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.4615,
-          "best_wr_trades": 39,
-          "best_wr_expectancy_r": -0.258,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        }
-      ],
-      "notes": "Deployed tp2.5_beoff_pcoffx0.5_troff@2_mb48_s0.66498 chosen by walk-forward vote across 4 purged folds; OOS 39.5% on 38 trades (-0.254R, PF 0.53). In-sample reference: 28 trades, 32.1% WR, -0.286R. Regime policy enabled 4/5 regimes (disabled: TREND_BULL), fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "GBPUSD": {
-      "symbol": "GBPUSD",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 2.5,
-        "be_trigger_r": null,
-        "fast_cash_r": null,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 48,
-        "min_score": 0.698
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 38,
-      "win_rate": 0.3947,
-      "expectancy_r": 0.1223,
-      "payoff": 1.863,
-      "profit_factor": 1.215,
-      "total_r": 4.649,
-      "max_dd_r": 4.617,
-      "target_met": false,
-      "binding_constraint": "selection stability - 55.7% is reachable in-sample (tp2_beoff_pc0.5x0.5_troff@2_mb24_s0@thr0.618) but walk-forward selection did not converge on it, so the deployed configuration achieves only 39.5%",
-      "oos_trades": 38,
-      "oos_win_rate": 0.3947,
-      "oos_expectancy_r": 0.1448,
-      "oos_profit_factor": 1.265,
-      "oos_total_r": 5.503,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 38,
-      "oos_pre_policy_win_rate": 0.3947,
-      "oos_pre_policy_expectancy_r": 0.1448,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.698,
-          0.706982,
-          0.71525,
-          0.735553,
-          0.74816,
-          0.766375,
-          0.78058,
-          0.79675,
-          0.934
-        ],
-        "bin_win_rate": [
-          0.2,
-          0.3929,
-          0.3929,
-          0.3929,
-          0.3929,
-          0.3929,
-          0.3929,
-          0.6
-        ],
-        "bin_count": [
-          5,
-          5,
-          4,
-          5,
-          5,
-          4,
-          5,
-          5
-        ],
-        "brier": 0.22838,
-        "n": 38
-      },
-      "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 57,
-          "win_rate": 0.4737,
-          "expectancy_r": 0.4235,
-          "total_r": 24.138,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.423R)"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 76,
-          "win_rate": 0.3553,
-          "expectancy_r": 0.0766,
-          "total_r": 5.822,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.077R)"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 12,
-          "win_rate": 0.5,
-          "expectancy_r": 0.4736,
-          "total_r": 5.684,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.474R)"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 3,
-          "win_rate": 0.0,
-          "expectancy_r": -1.0175,
-          "total_r": -3.053,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BEAR": {
-          "tp_r": 2.0,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.698
-        },
-        "TREND_BULL": {
-          "tp_r": 2.5,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.698
-        }
-      },
-      "frontier": [
-        {
+          "expectancy_at_positive_wr": 0.0201,
           "tp_r": 1.0,
-          "best_wr": 0.52,
-          "best_wr_trades": 75,
-          "best_wr_expectancy_r": -0.0715,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
+          "trades_at_positive_wr": 41,
+          "wr_at_positive_expectancy": 0.6341
         },
         {
-          "tp_r": 1.5,
-          "best_wr": 0.5435,
-          "best_wr_trades": 46,
-          "best_wr_expectancy_r": 0.0358,
-          "wr_at_positive_expectancy": 0.5435,
-          "expectancy_at_positive_wr": 0.0358,
-          "trades_at_positive_wr": 46
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.5692,
-          "best_wr_trades": 65,
-          "best_wr_expectancy_r": -0.0451,
-          "wr_at_positive_expectancy": 0.5574,
-          "expectancy_at_positive_wr": 0.0015,
-          "trades_at_positive_wr": 61
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.5862,
-          "best_wr_trades": 58,
-          "best_wr_expectancy_r": -0.0057,
-          "wr_at_positive_expectancy": 0.5556,
-          "expectancy_at_positive_wr": 0.0291,
-          "trades_at_positive_wr": 45
-        }
-      ],
-      "notes": "Deployed tp2.5_beoff_pcoffx0.5_troff@2_mb48_s0.698 chosen by walk-forward vote across 4 purged folds; OOS 39.5% on 38 trades (+0.145R, PF 1.26). In-sample reference: 38 trades, 39.5% WR, +0.122R. Regime policy enabled 4/4 regimes, fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "GER40": {
-      "symbol": "GER40",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 2.0,
-        "be_trigger_r": null,
-        "fast_cash_r": null,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 24,
-        "min_score": 0.73684
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 36,
-      "win_rate": 0.6111,
-      "expectancy_r": 0.307,
-      "payoff": 1.222,
-      "profit_factor": 1.92,
-      "total_r": 11.053,
-      "max_dd_r": 2.009,
-      "target_met": true,
-      "binding_constraint": "none - target met in-sample AND out-of-sample (OOS 61.5% on 39 trades)",
-      "oos_trades": 39,
-      "oos_win_rate": 0.6154,
-      "oos_expectancy_r": 0.1606,
-      "oos_profit_factor": 1.475,
-      "oos_total_r": 6.264,
-      "oos_target_met": true,
-      "folds": 4,
-      "oos_pre_policy_trades": 39,
-      "oos_pre_policy_win_rate": 0.6154,
-      "oos_pre_policy_expectancy_r": 0.1606,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.73766,
-          0.7434,
-          0.75076,
-          0.75663,
-          0.764,
-          0.79,
-          0.82037,
-          0.85375,
-          0.875
-        ],
-        "bin_win_rate": [
-          0.6,
-          0.6,
-          0.6,
-          0.625,
-          0.625,
-          0.625,
-          0.625,
-          0.625
-        ],
-        "bin_count": [
-          5,
-          5,
-          5,
-          4,
-          5,
-          5,
-          5,
-          5
-        ],
-        "brier": 0.23654,
-        "n": 39
-      },
-      "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 53,
-          "win_rate": 0.7547,
-          "expectancy_r": 0.5627,
-          "total_r": 29.824,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.563R)"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 72,
-          "win_rate": 0.5417,
-          "expectancy_r": 0.0683,
-          "total_r": 4.917,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.068R)"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 3,
-          "win_rate": 0.6667,
-          "expectancy_r": 0.2107,
-          "total_r": 0.632,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 3,
-          "win_rate": 1.0,
-          "expectancy_r": 1.6667,
-          "total_r": 5.0,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 2.0,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.73684
-        },
-        "TREND_BEAR": {
-          "tp_r": 2.0,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.73684
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.6667,
-          "best_wr_trades": 45,
-          "best_wr_expectancy_r": 0.174,
-          "wr_at_positive_expectancy": 0.6667,
-          "expectancy_at_positive_wr": 0.174,
-          "trades_at_positive_wr": 45
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.675,
-          "best_wr_trades": 40,
-          "best_wr_expectancy_r": 0.1987,
-          "wr_at_positive_expectancy": 0.675,
-          "expectancy_at_positive_wr": 0.1987,
-          "trades_at_positive_wr": 40
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.6774,
-          "best_wr_trades": 31,
-          "best_wr_expectancy_r": 0.1931,
-          "wr_at_positive_expectancy": 0.6774,
-          "expectancy_at_positive_wr": 0.1931,
-          "trades_at_positive_wr": 31
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.6897,
-          "best_wr_trades": 29,
-          "best_wr_expectancy_r": 0.1535,
-          "wr_at_positive_expectancy": 0.6897,
-          "expectancy_at_positive_wr": 0.1535,
-          "trades_at_positive_wr": 29
-        }
-      ],
-      "notes": "Deployed tp2_beoff_pcoffx0.5_troff@2_mb24_s0.73684 chosen by walk-forward vote across 4 purged folds; OOS 61.5% on 39 trades (+0.161R, PF 1.48). In-sample reference: 36 trades, 61.1% WR, +0.307R. Regime policy enabled 4/4 regimes, fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "NAS100": {
-      "symbol": "NAS100",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 1.0,
-        "be_trigger_r": null,
-        "fast_cash_r": 0.5,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 48,
-        "min_score": 0.738104
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 37,
-      "win_rate": 0.4595,
-      "expectancy_r": -0.0514,
-      "payoff": 1.036,
-      "profit_factor": 0.88,
-      "total_r": -1.902,
-      "max_dd_r": 5.513,
-      "target_met": false,
-      "binding_constraint": "expectancy - the walk-forward-selected configuration has no edge out of sample",
-      "oos_trades": 46,
-      "oos_win_rate": 0.413,
-      "oos_expectancy_r": -0.0862,
-      "oos_profit_factor": 0.846,
-      "oos_total_r": -3.966,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 46,
-      "oos_pre_policy_win_rate": 0.413,
-      "oos_pre_policy_expectancy_r": -0.0862,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.618,
-          0.666975,
-          0.70472,
-          0.72259,
-          0.73599,
-          0.7497,
-          0.759395,
-          0.792,
-          0.95
-        ],
-        "bin_win_rate": [
-          0.3333,
-          0.4242,
-          0.4242,
-          0.4242,
-          0.4242,
-          0.4242,
-          0.4242,
-          0.4286
-        ],
-        "bin_count": [
-          6,
-          6,
-          5,
-          6,
-          6,
-          5,
-          5,
-          7
-        ],
-        "brier": 0.24148,
-        "n": 46
-      },
-      "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 91,
-          "win_rate": 0.6044,
-          "expectancy_r": 0.2079,
-          "total_r": 18.917,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.208R)"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 32,
-          "win_rate": 0.4688,
-          "expectancy_r": -0.0043,
-          "total_r": -0.138,
-          "enabled": true,
-          "reason": "expectancy within tolerance (-0.004R)"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 48,
-          "win_rate": 0.4375,
-          "expectancy_r": -0.0036,
-          "total_r": -0.174,
-          "enabled": true,
-          "reason": "expectancy within tolerance (-0.004R)"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 6,
-          "win_rate": 0.8333,
-          "expectancy_r": 0.6862,
-          "total_r": 4.117,
-          "enabled": true,
-          "reason": "only 6 samples (<12) - too few to disable"
-        },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 1,
-          "win_rate": 0.0,
-          "expectancy_r": -1.0037,
-          "total_r": -1.004,
-          "enabled": true,
-          "reason": "insufficient samples (1<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.738104
-        },
-        "TREND_BEAR": {
-          "tp_r": 2.0,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.738104
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.5455,
-          "best_wr_trades": 66,
-          "best_wr_expectancy_r": -0.0394,
-          "wr_at_positive_expectancy": 0.5172,
-          "expectancy_at_positive_wr": 0.0053,
-          "trades_at_positive_wr": 58
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.5818,
-          "best_wr_trades": 55,
-          "best_wr_expectancy_r": -0.0477,
-          "wr_at_positive_expectancy": 0.5,
-          "expectancy_at_positive_wr": 0.0026,
-          "trades_at_positive_wr": 36
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.587,
-          "best_wr_trades": 46,
-          "best_wr_expectancy_r": 0.0432,
-          "wr_at_positive_expectancy": 0.587,
-          "expectancy_at_positive_wr": 0.0432,
-          "trades_at_positive_wr": 46
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.5909,
-          "best_wr_trades": 44,
-          "best_wr_expectancy_r": -0.0066,
-          "wr_at_positive_expectancy": 0.5366,
-          "expectancy_at_positive_wr": 0.006,
-          "trades_at_positive_wr": 41
-        }
-      ],
-      "notes": "Deployed tp1_beoff_pc0.5x0.5_troff@2_mb48_s0.738104 chosen by walk-forward vote across 4 purged folds; OOS 41.3% on 46 trades (-0.086R, PF 0.85). In-sample reference: 37 trades, 46.0% WR, -0.051R. Regime policy enabled 5/5 regimes, fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "NZDUSD": {
-      "symbol": "NZDUSD",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 1.0,
-        "be_trigger_r": null,
-        "fast_cash_r": 0.5,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 24,
-        "min_score": 0.650658
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 53,
-      "win_rate": 0.5094,
-      "expectancy_r": -0.1358,
-      "payoff": 0.659,
-      "profit_factor": 0.685,
-      "total_r": -7.199,
-      "max_dd_r": 9.585,
-      "target_met": false,
-      "binding_constraint": "expectancy - the walk-forward-selected configuration has no edge out of sample",
-      "oos_trades": 38,
-      "oos_win_rate": 0.3947,
-      "oos_expectancy_r": -0.2257,
-      "oos_profit_factor": 0.615,
-      "oos_total_r": -8.578,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 42,
-      "oos_pre_policy_win_rate": 0.381,
-      "oos_pre_policy_expectancy_r": -0.2755,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.654,
-          0.666632,
-          0.67528,
-          0.716712,
-          0.73385,
-          0.737445,
-          0.74986,
-          0.790223,
-          0.85798
-        ],
-        "bin_win_rate": [
-          0.3611,
-          0.3611,
-          0.3611,
-          0.3611,
-          0.3611,
-          0.3611,
-          0.3611,
-          0.5
-        ],
-        "bin_count": [
-          6,
-          5,
-          5,
-          5,
-          5,
-          5,
-          5,
-          6
-        ],
-        "brier": 0.23347,
-        "n": 42
-      },
-      "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 70,
-          "win_rate": 0.4429,
-          "expectancy_r": 0.1299,
-          "total_r": 9.095,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.130R)"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 6,
-          "win_rate": 0.1667,
-          "expectancy_r": -0.8219,
-          "total_r": -4.931,
-          "enabled": true,
-          "reason": "only 6 samples (<12) - too few to disable"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 46,
-          "win_rate": 0.5435,
-          "expectancy_r": 0.0254,
-          "total_r": 1.17,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.025R)"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 22,
-          "win_rate": 0.2273,
-          "expectancy_r": -0.4073,
-          "total_r": -8.962,
-          "enabled": false,
-          "reason": "expectancy -0.407R worse than -0.050R over 22 trades"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BEAR": {
-          "tp_r": 2.5,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.650658
-        },
-        "TREND_BULL": {
-          "tp_r": 2.5,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.650658
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.5094,
-          "best_wr_trades": 53,
-          "best_wr_expectancy_r": -0.1358,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.52,
-          "best_wr_trades": 50,
-          "best_wr_expectancy_r": -0.089,
-          "wr_at_positive_expectancy": 0.4651,
-          "expectancy_at_positive_wr": 0.0658,
-          "trades_at_positive_wr": 43
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.4884,
-          "best_wr_trades": 43,
-          "best_wr_expectancy_r": 0.0016,
-          "wr_at_positive_expectancy": 0.4884,
-          "expectancy_at_positive_wr": 0.0016,
-          "trades_at_positive_wr": 43
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.4872,
-          "best_wr_trades": 39,
-          "best_wr_expectancy_r": 0.021,
-          "wr_at_positive_expectancy": 0.4872,
-          "expectancy_at_positive_wr": 0.021,
-          "trades_at_positive_wr": 39
-        }
-      ],
-      "notes": "Deployed tp1_beoff_pc0.5x0.5_troff@2_mb24_s0.650658 chosen by walk-forward vote across 4 purged folds; OOS 39.5% on 38 trades (-0.226R, PF 0.61). In-sample reference: 53 trades, 50.9% WR, -0.136R. Regime policy enabled 3/4 regimes (disabled: BREAKOUT), fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "SOLUSD": {
-      "symbol": "SOLUSD",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 1.5,
-        "be_trigger_r": null,
-        "fast_cash_r": 0.5,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 24,
-        "min_score": 0.65003
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 52,
-      "win_rate": 0.5192,
-      "expectancy_r": -0.0619,
-      "payoff": 0.776,
-      "profit_factor": 0.838,
-      "total_r": -3.217,
-      "max_dd_r": 7.152,
-      "target_met": false,
-      "binding_constraint": "expectancy - the walk-forward-selected configuration has no edge out of sample",
-      "oos_trades": 51,
-      "oos_win_rate": 0.4902,
-      "oos_expectancy_r": -0.1387,
-      "oos_profit_factor": 0.684,
-      "oos_total_r": -7.075,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 80,
-      "oos_pre_policy_win_rate": 0.4375,
-      "oos_pre_policy_expectancy_r": -0.1697,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.65014,
-          0.664875,
-          0.68079,
-          0.704825,
-          0.71499,
-          0.741125,
-          0.7755,
-          0.825935,
-          0.888
-        ],
-        "bin_win_rate": [
-          0.2,
-          0.4714,
-          0.4714,
-          0.4714,
-          0.4714,
-          0.4714,
-          0.4714,
-          0.4714
-        ],
-        "bin_count": [
-          10,
-          10,
-          10,
-          10,
-          10,
-          10,
-          10,
-          10
-        ],
-        "brier": 0.23804,
-        "n": 80
-      },
-      "regime_edge": {
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 50,
-          "win_rate": 0.54,
-          "expectancy_r": -0.2299,
-          "total_r": -11.493,
-          "enabled": false,
-          "reason": "expectancy -0.230R worse than -0.050R over 50 trades"
-        },
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 111,
-          "win_rate": 0.4324,
-          "expectancy_r": -0.1368,
-          "total_r": -15.182,
-          "enabled": false,
-          "reason": "expectancy -0.137R worse than -0.050R over 111 trades"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 141,
-          "win_rate": 0.5957,
-          "expectancy_r": 0.0419,
-          "total_r": 5.903,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.042R)"
-        },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 5,
-          "win_rate": 0.0,
-          "expectancy_r": -0.6825,
-          "total_r": -3.412,
-          "enabled": true,
-          "reason": "insufficient samples (5<6) - left enabled"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 3,
-          "win_rate": 0.0,
-          "expectancy_r": -0.5,
-          "total_r": -1.5,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        },
-        "LOW_VOLATILITY": {
-          "regime": "LOW_VOLATILITY",
-          "trades": 5,
-          "win_rate": 1.0,
-          "expectancy_r": 0.2751,
-          "total_r": 1.376,
-          "enabled": true,
-          "reason": "insufficient samples (5<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 2.5,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.65003
-        },
-        "TREND_BEAR": {
-          "tp_r": 2.0,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.65003
-        },
-        "BREAKOUT": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.65003
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.5263,
+          "best_wr": 0.6316,
+          "best_wr_expectancy_r": 0.0364,
           "best_wr_trades": 38,
-          "best_wr_expectancy_r": -0.0211,
-          "wr_at_positive_expectancy": 0.5,
-          "expectancy_at_positive_wr": 0.0211,
-          "trades_at_positive_wr": 38
-        },
-        {
+          "expectancy_at_positive_wr": 0.0364,
           "tp_r": 1.5,
-          "best_wr": 0.5349,
-          "best_wr_trades": 43,
-          "best_wr_expectancy_r": -0.0618,
-          "wr_at_positive_expectancy": 0.5263,
-          "expectancy_at_positive_wr": 0.027,
-          "trades_at_positive_wr": 38
+          "trades_at_positive_wr": 38,
+          "wr_at_positive_expectancy": 0.6316
         },
         {
+          "best_wr": 0.625,
+          "best_wr_expectancy_r": 0.0958,
+          "best_wr_trades": 24,
+          "expectancy_at_positive_wr": 0.0958,
           "tp_r": 2.0,
-          "best_wr": 0.5263,
-          "best_wr_trades": 38,
-          "best_wr_expectancy_r": -0.0398,
-          "wr_at_positive_expectancy": 0.5263,
-          "expectancy_at_positive_wr": 0.0676,
-          "trades_at_positive_wr": 38
+          "trades_at_positive_wr": 24,
+          "wr_at_positive_expectancy": 0.625
         },
         {
+          "best_wr": 0.625,
+          "best_wr_expectancy_r": 0.082,
+          "best_wr_trades": 24,
+          "expectancy_at_positive_wr": 0.082,
           "tp_r": 2.5,
-          "best_wr": 0.5405,
-          "best_wr_trades": 37,
-          "best_wr_expectancy_r": -0.048,
-          "wr_at_positive_expectancy": 0.5405,
-          "expectancy_at_positive_wr": 0.0053,
-          "trades_at_positive_wr": 37
+          "trades_at_positive_wr": 24,
+          "wr_at_positive_expectancy": 0.625
         }
       ],
-      "notes": "Deployed tp1.5_beoff_pc0.5x0.5_troff@2_mb24_s0.65003 chosen by walk-forward vote across 4 purged folds; OOS 49.0% on 51 trades (-0.139R, PF 0.68). In-sample reference: 52 trades, 51.9% WR, -0.062R. Regime policy enabled 4/6 regimes (disabled: BREAKOUT, TREND_BEAR), fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "UK100": {
-      "symbol": "UK100",
-      "target_wr": 0.55,
       "geometry": {
-        "tp_r": 1.0,
         "be_trigger_r": null,
-        "fast_cash_r": 0.5,
         "fast_cash_pct": 0.5,
-        "trail_atr": null,
+        "fast_cash_r": null,
+        "max_bars": 48,
+        "min_score": 0.5209,
+        "tp_r": 1.0,
         "trail_activation_r": 2.0,
-        "max_bars": 24,
-        "min_score": 0.72104
+        "trail_atr": null
       },
-      "score_col": "score",
       "geometry_mode": "A_fixed_tp",
-      "n_trades": 21,
-      "win_rate": 0.6667,
-      "expectancy_r": 0.1883,
-      "payoff": 0.899,
-      "profit_factor": 1.798,
-      "total_r": 3.953,
-      "max_dd_r": 1.421,
-      "target_met": true,
-      "binding_constraint": "out-of-sample - met in-sample (66.7%) but not on purged folds; OOS expectancy is non-positive (-0.119R)",
-      "oos_trades": 23,
-      "oos_win_rate": 0.4348,
-      "oos_expectancy_r": -0.1193,
-      "oos_profit_factor": 0.68,
-      "oos_total_r": -2.745,
-      "oos_target_met": false,
-      "folds": 4,
+      "max_dd_r": 2.901,
+      "n_trades": 41,
+      "notes": "Deployed tp1_beoff_pcoffx0.5_troff@2_mb48_s0.5209 chosen by walk-forward vote across 4 purged folds; OOS 64.3% on 42 trades (+0.063R, PF 1.31). In-sample reference: 41 trades, 63.4% WR, +0.014R. Regime policy enabled 3/4 regimes (disabled: RANGE), fitted on train folds; all reported figures already exclude disabled regimes.",
+      "oos_expectancy_r": 0.0631,
+      "oos_pre_policy_expectancy_r": 0.0208,
       "oos_pre_policy_trades": 43,
-      "oos_pre_policy_win_rate": 0.4651,
-      "oos_pre_policy_expectancy_r": -0.0997,
+      "oos_pre_policy_win_rate": 0.6279,
+      "oos_profit_factor": 1.307,
+      "oos_target_met": true,
+      "oos_total_r": 2.652,
+      "oos_trades": 42,
+      "oos_win_rate": 0.6429,
+      "payoff": 0.609,
       "policy_fitted_on": "train folds",
+      "profit_factor": 1.055,
+      "regime_edge": {
+        "BREAKOUT": {
+          "enabled": true,
+          "expectancy_r": 0.5343,
+          "reason": "insufficient samples (3<6) - left enabled",
+          "regime": "BREAKOUT",
+          "total_r": 1.603,
+          "trades": 3,
+          "win_rate": 1.0
+        },
+        "RANGE": {
+          "enabled": false,
+          "expectancy_r": -0.3178,
+          "reason": "expectancy -0.318R worse than -0.050R over 12 trades",
+          "regime": "RANGE",
+          "total_r": -3.814,
+          "trades": 12,
+          "win_rate": 0.25
+        },
+        "TREND_BEAR": {
+          "enabled": true,
+          "expectancy_r": 0.1113,
+          "reason": "expectancy within tolerance (+0.111R)",
+          "regime": "TREND_BEAR",
+          "total_r": 18.468,
+          "trades": 166,
+          "win_rate": 0.6566
+        },
+        "TREND_BULL": {
+          "enabled": true,
+          "expectancy_r": 0.0079,
+          "reason": "expectancy within tolerance (+0.008R)",
+          "regime": "TREND_BULL",
+          "total_r": 0.812,
+          "trades": 103,
+          "win_rate": 0.5825
+        }
+      },
+      "regime_geometry": {
+        "TREND_BEAR": {
+          "be_trigger_r": null,
+          "fast_cash_pct": 0.5,
+          "fast_cash_r": null,
+          "max_bars": 48,
+          "min_score": 0.5209,
+          "tp_r": 1.0,
+          "trail_activation_r": 2.0,
+          "trail_atr": null
+        },
+        "TREND_BULL": {
+          "be_trigger_r": null,
+          "fast_cash_pct": 0.5,
+          "fast_cash_r": null,
+          "max_bars": 48,
+          "min_score": 0.5209,
+          "tp_r": 1.0,
+          "trail_activation_r": 2.0,
+          "trail_atr": null
+        }
+      },
       "score_calibration": {
-        "bin_edges": [
-          0.6847,
-          0.713915,
-          0.72344,
-          0.73025,
-          0.74,
-          0.764155,
-          0.7715,
-          0.79328,
-          0.8872
-        ],
-        "bin_win_rate": [
-          0.3333,
-          0.3333,
-          0.3333,
-          0.3333,
-          0.3333,
-          0.6,
-          0.7273,
-          0.7273
-        ],
         "bin_count": [
           6,
-          4,
-          6,
+          5,
+          5,
           5,
           6,
           5,
           5,
           6
         ],
-        "brier": 0.21818,
+        "bin_edges": [
+          0.5209,
+          0.5294,
+          0.53265,
+          0.539425,
+          0.5488,
+          0.5652,
+          0.57395,
+          0.587225,
+          0.6796
+        ],
+        "bin_win_rate": [
+          0.3333,
+          0.4,
+          0.6667,
+          0.6667,
+          0.6667,
+          0.6667,
+          0.8182,
+          0.8182
+        ],
+        "brier": 0.2055,
         "n": 43
       },
-      "regime_edge": {
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 61,
-          "win_rate": 0.5246,
-          "expectancy_r": -0.1175,
-          "total_r": -7.17,
-          "enabled": false,
-          "reason": "expectancy -0.117R worse than -0.050R over 61 trades"
-        },
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 43,
-          "win_rate": 0.7209,
-          "expectancy_r": 0.2714,
-          "total_r": 11.67,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.271R)"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 13,
-          "win_rate": 0.6154,
-          "expectancy_r": 0.344,
-          "total_r": 4.472,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.344R)"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 11,
-          "win_rate": 0.7273,
-          "expectancy_r": 0.2411,
-          "total_r": 2.652,
-          "enabled": true,
-          "reason": "only 11 samples (<12) - too few to disable"
-        },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 3,
-          "win_rate": 0.0,
-          "expectancy_r": -0.2568,
-          "total_r": -0.77,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 2.5,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.72104
-        },
-        "TREND_BEAR": {
-          "tp_r": 1.5,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.72104
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.6667,
-          "best_wr_trades": 21,
-          "best_wr_expectancy_r": 0.1883,
-          "wr_at_positive_expectancy": 0.6667,
-          "expectancy_at_positive_wr": 0.1883,
-          "trades_at_positive_wr": 21
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.6667,
-          "best_wr_trades": 18,
-          "best_wr_expectancy_r": 0.1589,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.6667,
-          "best_wr_trades": 18,
-          "best_wr_expectancy_r": 0.1565,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.6667,
-          "best_wr_trades": 18,
-          "best_wr_expectancy_r": 0.1027,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        }
-      ],
-      "notes": "Deployed tp1_beoff_pc0.5x0.5_troff@2_mb24_s0.72104 chosen by walk-forward vote across 4 purged folds; OOS 43.5% on 23 trades (-0.119R, PF 0.68). In-sample reference: 21 trades, 66.7% WR, +0.188R. Regime policy enabled 4/5 regimes (disabled: TREND_BULL), fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "US30": {
-      "symbol": "US30",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 1.5,
-        "be_trigger_r": 1.0,
-        "fast_cash_r": 0.5,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 48,
-        "min_score": 0.756
-      },
       "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 30,
-      "win_rate": 0.6667,
-      "expectancy_r": 0.2163,
-      "payoff": 1.018,
-      "profit_factor": 2.036,
-      "total_r": 6.489,
-      "max_dd_r": 1.707,
-      "target_met": true,
-      "binding_constraint": "out-of-sample - met in-sample (66.7%) but not on purged folds; OOS expectancy is non-positive (-0.065R)",
-      "oos_trades": 39,
-      "oos_win_rate": 0.4872,
-      "oos_expectancy_r": -0.0648,
-      "oos_profit_factor": 0.85,
-      "oos_total_r": -2.528,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 39,
-      "oos_pre_policy_win_rate": 0.4872,
-      "oos_pre_policy_expectancy_r": -0.0648,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.71684,
-          0.75376,
-          0.759,
-          0.76306,
-          0.77192,
-          0.77875,
-          0.80682,
-          0.849255,
-          0.90264
-        ],
-        "bin_win_rate": [
-          0.0,
-          0.5172,
-          0.5172,
-          0.5172,
-          0.5172,
-          0.5172,
-          0.5172,
-          0.8
-        ],
-        "bin_count": [
-          5,
-          4,
-          6,
-          4,
-          5,
-          5,
-          5,
-          5
-        ],
-        "brier": 0.20619,
-        "n": 39
-      },
-      "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 51,
-          "win_rate": 0.5686,
-          "expectancy_r": 0.1292,
-          "total_r": 6.59,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.129R)"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 14,
-          "win_rate": 0.5714,
-          "expectancy_r": 0.0002,
-          "total_r": 0.002,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.000R)"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 66,
-          "win_rate": 0.5909,
-          "expectancy_r": 0.1385,
-          "total_r": 9.138,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.139R)"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 3,
-          "win_rate": 0.6667,
-          "expectancy_r": 0.9995,
-          "total_r": 2.999,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 1,
-          "win_rate": 1.0,
-          "expectancy_r": 2.0,
-          "total_r": 2.0,
-          "enabled": true,
-          "reason": "insufficient samples (1<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.756
-        },
-        "TREND_BEAR": {
-          "tp_r": 1.5,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.756
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.5405,
-          "best_wr_trades": 37,
-          "best_wr_expectancy_r": 0.0231,
-          "wr_at_positive_expectancy": 0.5405,
-          "expectancy_at_positive_wr": 0.0615,
-          "trades_at_positive_wr": 37
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.6667,
-          "best_wr_trades": 30,
-          "best_wr_expectancy_r": 0.1829,
-          "wr_at_positive_expectancy": 0.6667,
-          "expectancy_at_positive_wr": 0.2163,
-          "trades_at_positive_wr": 30
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.6,
-          "best_wr_trades": 30,
-          "best_wr_expectancy_r": 0.2221,
-          "wr_at_positive_expectancy": 0.6,
-          "expectancy_at_positive_wr": 0.2221,
-          "trades_at_positive_wr": 30
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.5714,
-          "best_wr_trades": 28,
-          "best_wr_expectancy_r": 0.1511,
-          "wr_at_positive_expectancy": 0.5714,
-          "expectancy_at_positive_wr": 0.1511,
-          "trades_at_positive_wr": 28
-        }
-      ],
-      "notes": "Deployed tp1.5_be1_pc0.5x0.5_troff@2_mb48_s0.756 chosen by walk-forward vote across 4 purged folds; OOS 48.7% on 39 trades (-0.065R, PF 0.85). In-sample reference: 30 trades, 66.7% WR, +0.216R. Regime policy enabled 5/5 regimes, fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "USDCAD": {
       "symbol": "USDCAD",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 1.0,
-        "be_trigger_r": null,
-        "fast_cash_r": 0.5,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 24,
-        "min_score": 0.672
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 65,
-      "win_rate": 0.6,
-      "expectancy_r": 0.0608,
-      "payoff": 0.791,
-      "profit_factor": 1.186,
-      "total_r": 3.955,
-      "max_dd_r": 7.533,
       "target_met": true,
-      "binding_constraint": "out-of-sample - met in-sample (60.0%) but not on purged folds; OOS expectancy is non-positive (-0.038R)",
-      "oos_trades": 49,
-      "oos_win_rate": 0.449,
-      "oos_expectancy_r": -0.0377,
-      "oos_profit_factor": 0.921,
-      "oos_total_r": -1.847,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 49,
-      "oos_pre_policy_win_rate": 0.449,
-      "oos_pre_policy_expectancy_r": -0.0377,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.67244,
-          0.686,
-          0.705,
-          0.72402,
-          0.74892,
-          0.76548,
-          0.786,
-          0.816,
-          0.85206
-        ],
-        "bin_win_rate": [
-          0.3333,
-          0.4333,
-          0.4333,
-          0.4333,
-          0.4333,
-          0.4333,
-          0.5385,
-          0.5385
-        ],
-        "bin_count": [
-          6,
-          6,
-          6,
-          6,
-          6,
-          6,
-          6,
-          7
-        ],
-        "brier": 0.24349,
-        "n": 49
-      },
-      "regime_edge": {
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 75,
-          "win_rate": 0.5067,
-          "expectancy_r": -0.0037,
-          "total_r": -0.276,
-          "enabled": true,
-          "reason": "expectancy within tolerance (-0.004R)"
-        },
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 65,
-          "win_rate": 0.5231,
-          "expectancy_r": 0.0735,
-          "total_r": 4.78,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.073R)"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 18,
-          "win_rate": 0.7778,
-          "expectancy_r": 0.4106,
-          "total_r": 7.391,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.411R)"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 3,
-          "win_rate": 1.0,
-          "expectancy_r": 1.1667,
-          "total_r": 3.5,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 2.5,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.672
-        },
-        "TREND_BEAR": {
-          "tp_r": 1.5,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.672
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.6,
-          "best_wr_trades": 65,
-          "best_wr_expectancy_r": 0.0608,
-          "wr_at_positive_expectancy": 0.6,
-          "expectancy_at_positive_wr": 0.0608,
-          "trades_at_positive_wr": 65
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.5893,
-          "best_wr_trades": 56,
-          "best_wr_expectancy_r": 0.0175,
-          "wr_at_positive_expectancy": 0.5893,
-          "expectancy_at_positive_wr": 0.0175,
-          "trades_at_positive_wr": 56
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.5636,
-          "best_wr_trades": 55,
-          "best_wr_expectancy_r": -0.0211,
-          "wr_at_positive_expectancy": 0.5588,
-          "expectancy_at_positive_wr": 0.0375,
-          "trades_at_positive_wr": 34
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.5849,
-          "best_wr_trades": 53,
-          "best_wr_expectancy_r": 0.0102,
-          "wr_at_positive_expectancy": 0.5849,
-          "expectancy_at_positive_wr": 0.0102,
-          "trades_at_positive_wr": 53
-        }
-      ],
-      "notes": "Deployed tp1_beoff_pc0.5x0.5_troff@2_mb24_s0.672 chosen by walk-forward vote across 4 purged folds; OOS 44.9% on 49 trades (-0.038R, PF 0.92). In-sample reference: 65 trades, 60.0% WR, +0.061R. Regime policy enabled 4/4 regimes, fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "USDCHF": {
-      "symbol": "USDCHF",
       "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 2.5,
-        "be_trigger_r": 1.0,
-        "fast_cash_r": 0.5,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 48,
-        "min_score": 0.642765
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 5,
-      "win_rate": 0.4,
-      "expectancy_r": -0.4647,
-      "payoff": 0.363,
-      "profit_factor": 0.242,
-      "total_r": -2.324,
-      "max_dd_r": 2.785,
-      "target_met": false,
-      "binding_constraint": "sample size - only 5 trades in the sample (20 required to assert a rate); the regime policy removed BREAKOUT, TREND_BEAR, TREND_BULL",
-      "oos_trades": 4,
-      "oos_win_rate": 0.5,
-      "oos_expectancy_r": -0.3255,
-      "oos_profit_factor": 0.363,
-      "oos_total_r": -1.302,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 50,
-      "oos_pre_policy_win_rate": 0.5,
-      "oos_pre_policy_expectancy_r": -0.0867,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.64326,
-          0.647,
-          0.655245,
-          0.665112,
-          0.678,
-          0.703167,
-          0.74025,
-          0.76218,
-          0.81098
-        ],
-        "bin_win_rate": [
-          0.3333,
-          0.5227,
-          0.5227,
-          0.5227,
-          0.5227,
-          0.5227,
-          0.5227,
-          0.5227
-        ],
-        "bin_count": [
-          6,
-          7,
-          6,
-          6,
-          6,
-          6,
-          6,
-          7
-        ],
-        "brier": 0.24621,
-        "n": 50
-      },
-      "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 67,
-          "win_rate": 0.5224,
-          "expectancy_r": -0.1248,
-          "total_r": -8.361,
-          "enabled": false,
-          "reason": "expectancy -0.125R worse than -0.050R over 67 trades"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 90,
-          "win_rate": 0.6111,
-          "expectancy_r": -0.1161,
-          "total_r": -10.451,
-          "enabled": false,
-          "reason": "expectancy -0.116R worse than -0.050R over 90 trades"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 45,
-          "win_rate": 0.5556,
-          "expectancy_r": -0.13,
-          "total_r": -5.851,
-          "enabled": false,
-          "reason": "expectancy -0.130R worse than -0.050R over 45 trades"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 9,
-          "win_rate": 0.5556,
-          "expectancy_r": -0.0688,
-          "total_r": -0.619,
-          "enabled": true,
-          "reason": "only 9 samples (<12) - too few to disable"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.642765
-        },
-        "TREND_BEAR": {
-          "tp_r": 1.5,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.642765
-        },
-        "BREAKOUT": {
-          "tp_r": 2.0,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.642765
-        }
-      },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 1.0,
-          "best_wr_trades": 1,
-          "best_wr_expectancy_r": 0.404,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 1.0,
-          "best_wr_trades": 1,
-          "best_wr_expectancy_r": 0.404,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 1.0,
-          "best_wr_trades": 1,
-          "best_wr_expectancy_r": 0.404,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 1.0,
-          "best_wr_trades": 1,
-          "best_wr_expectancy_r": 0.404,
-          "wr_at_positive_expectancy": 0.0,
-          "expectancy_at_positive_wr": 0.0,
-          "trades_at_positive_wr": 0
-        }
-      ],
-      "notes": "Deployed tp2.5_be1_pc0.5x0.5_troff@2_mb48_s0.642765 chosen by walk-forward vote across 4 purged folds; OOS 50.0% on 4 trades (-0.326R, PF 0.36). In-sample reference: 5 trades, 40.0% WR, -0.465R. Regime policy enabled 1/4 regimes (disabled: BREAKOUT, TREND_BEAR, TREND_BULL), fitted on train folds; all reported figures already exclude disabled regimes."
+      "total_r": 0.572,
+      "win_rate": 0.6341
     },
     "USDJPY": {
-      "symbol": "USDJPY",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 2.5,
-        "be_trigger_r": 1.0,
-        "fast_cash_r": 0.5,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 48,
-        "min_score": 0.61992
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 62,
-      "win_rate": 0.5484,
-      "expectancy_r": 0.1365,
-      "payoff": 1.131,
-      "profit_factor": 1.373,
-      "total_r": 8.463,
-      "max_dd_r": 5.888,
-      "target_met": false,
-      "binding_constraint": "selection stability - 59.2% is reachable in-sample (tp1.5_be1_pc0.5x0.5_troff@2_mb24_s0@thr0.435) but walk-forward selection did not converge on it, so the deployed configuration achieves only 54.8%",
-      "oos_trades": 67,
-      "oos_win_rate": 0.5373,
-      "oos_expectancy_r": 0.1005,
-      "oos_profit_factor": 1.274,
-      "oos_total_r": 6.731,
-      "oos_target_met": false,
+      "binding_constraint": "none - target met in-sample AND out-of-sample (OOS 68.8% on 16 trades)",
+      "expectancy_r": 0.279,
       "folds": 4,
-      "oos_pre_policy_trades": 67,
-      "oos_pre_policy_win_rate": 0.5373,
-      "oos_pre_policy_expectancy_r": 0.1005,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.62,
-          0.62727,
-          0.64681,
-          0.66146,
-          0.684,
-          0.70112,
-          0.72894,
-          0.76873,
-          0.891
-        ],
-        "bin_win_rate": [
-          0.4444,
-          0.5455,
-          0.5455,
-          0.5455,
-          0.5455,
-          0.56,
-          0.56,
-          0.56
-        ],
-        "bin_count": [
-          9,
-          8,
-          8,
-          8,
-          9,
-          8,
-          8,
-          9
-        ],
-        "brier": 0.24722,
-        "n": 67
-      },
-      "regime_edge": {
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 89,
-          "win_rate": 0.5506,
-          "expectancy_r": 0.1965,
-          "total_r": 17.487,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.197R)"
-        },
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 98,
-          "win_rate": 0.5816,
-          "expectancy_r": 0.1668,
-          "total_r": 16.348,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.167R)"
-        },
-        "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 66,
-          "win_rate": 0.6364,
-          "expectancy_r": 0.1993,
-          "total_r": 13.152,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.199R)"
-        },
-        "LIQUIDITY_SWEEP": {
-          "regime": "LIQUIDITY_SWEEP",
-          "trades": 6,
-          "win_rate": 0.5,
-          "expectancy_r": -0.2341,
-          "total_r": -1.405,
-          "enabled": true,
-          "reason": "only 6 samples (<12) - too few to disable"
-        },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 9,
-          "win_rate": 0.3333,
-          "expectancy_r": -0.0748,
-          "total_r": -0.673,
-          "enabled": true,
-          "reason": "only 9 samples (<12) - too few to disable"
-        },
-        "LOW_VOLATILITY": {
-          "regime": "LOW_VOLATILITY",
-          "trades": 3,
-          "win_rate": 1.0,
-          "expectancy_r": 0.3418,
-          "total_r": 1.026,
-          "enabled": true,
-          "reason": "insufficient samples (3<6) - left enabled"
-        }
-      },
-      "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 2.5,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.61992
-        },
-        "BREAKOUT": {
-          "tp_r": 2.5,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.61992
-        },
-        "TREND_BEAR": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.61992
-        }
-      },
       "frontier": [
         {
+          "best_wr": 0.7,
+          "best_wr_expectancy_r": 0.2258,
+          "best_wr_trades": 20,
+          "expectancy_at_positive_wr": 0.2258,
           "tp_r": 1.0,
-          "best_wr": 0.5412,
-          "best_wr_trades": 85,
-          "best_wr_expectancy_r": 0.0743,
-          "wr_at_positive_expectancy": 0.5412,
-          "expectancy_at_positive_wr": 0.0743,
-          "trades_at_positive_wr": 85
+          "trades_at_positive_wr": 20,
+          "wr_at_positive_expectancy": 0.7
         },
         {
+          "best_wr": 0.6667,
+          "best_wr_expectancy_r": 0.229,
+          "best_wr_trades": 27,
+          "expectancy_at_positive_wr": 0.229,
           "tp_r": 1.5,
-          "best_wr": 0.5918,
-          "best_wr_trades": 98,
-          "best_wr_expectancy_r": 0.0493,
-          "wr_at_positive_expectancy": 0.5918,
-          "expectancy_at_positive_wr": 0.0493,
-          "trades_at_positive_wr": 98
+          "trades_at_positive_wr": 27,
+          "wr_at_positive_expectancy": 0.6667
         },
         {
+          "best_wr": 0.6875,
+          "best_wr_expectancy_r": 0.4282,
+          "best_wr_trades": 16,
+          "expectancy_at_positive_wr": 0.2215,
           "tp_r": 2.0,
-          "best_wr": 0.5811,
-          "best_wr_trades": 74,
-          "best_wr_expectancy_r": 0.1306,
-          "wr_at_positive_expectancy": 0.5811,
-          "expectancy_at_positive_wr": 0.1306,
-          "trades_at_positive_wr": 74
+          "trades_at_positive_wr": 25,
+          "wr_at_positive_expectancy": 0.64
         },
         {
+          "best_wr": 0.6875,
+          "best_wr_expectancy_r": 0.279,
+          "best_wr_trades": 16,
+          "expectancy_at_positive_wr": 0.2096,
           "tp_r": 2.5,
-          "best_wr": 0.5625,
-          "best_wr_trades": 48,
-          "best_wr_expectancy_r": 0.1094,
-          "wr_at_positive_expectancy": 0.5625,
-          "expectancy_at_positive_wr": 0.1094,
-          "trades_at_positive_wr": 48
+          "trades_at_positive_wr": 33,
+          "wr_at_positive_expectancy": 0.6061
         }
       ],
-      "notes": "Deployed tp2.5_be1_pc0.5x0.5_troff@2_mb48_s0.61992 chosen by walk-forward vote across 4 purged folds; OOS 53.7% on 67 trades (+0.101R, PF 1.27). In-sample reference: 62 trades, 54.8% WR, +0.137R. Regime policy enabled 6/6 regimes, fitted on train folds; all reported figures already exclude disabled regimes."
-    },
-    "XAGUSD": {
-      "symbol": "XAGUSD",
-      "target_wr": 0.55,
       "geometry": {
-        "tp_r": 1.0,
         "be_trigger_r": null,
-        "fast_cash_r": 0.5,
         "fast_cash_pct": 0.5,
-        "trail_atr": null,
+        "fast_cash_r": 0.5,
+        "max_bars": 48,
+        "min_score": 0.575,
+        "tp_r": 2.5,
         "trail_activation_r": 2.0,
-        "max_bars": 24,
-        "min_score": 0.43196
+        "trail_atr": null
       },
-      "score_col": "score",
       "geometry_mode": "A_fixed_tp",
-      "n_trades": 96,
-      "win_rate": 0.5208,
-      "expectancy_r": 0.0032,
-      "payoff": 0.928,
-      "profit_factor": 1.009,
-      "total_r": 0.309,
-      "max_dd_r": 5.662,
-      "target_met": false,
-      "binding_constraint": "selection stability - 56.6% is reachable in-sample (tp2.5_be1_pc0.5x0.5_troff@2_mb24_s0@thr0.432) but walk-forward selection did not converge on it, so the deployed configuration achieves only 52.1%",
-      "oos_trades": 77,
-      "oos_win_rate": 0.4935,
-      "oos_expectancy_r": -0.0517,
-      "oos_profit_factor": 0.874,
-      "oos_total_r": -3.983,
-      "oos_target_met": false,
-      "folds": 4,
-      "oos_pre_policy_trades": 84,
-      "oos_pre_policy_win_rate": 0.4881,
-      "oos_pre_policy_expectancy_r": -0.0393,
+      "max_dd_r": 1.004,
+      "n_trades": 16,
+      "notes": "Deployed tp2.5_beoff_pc0.5x0.5_troff@2_mb48_s0.575 chosen by walk-forward vote across 4 purged folds; OOS 68.8% on 16 trades (+0.279R, PF 2.54). In-sample reference: 16 trades, 68.8% WR, +0.279R. Regime policy enabled 3/4 regimes (disabled: TREND_BULL), fitted on train folds; all reported figures already exclude disabled regimes.",
+      "oos_expectancy_r": 0.279,
+      "oos_pre_policy_expectancy_r": -0.0023,
+      "oos_pre_policy_trades": 27,
+      "oos_pre_policy_win_rate": 0.5926,
+      "oos_profit_factor": 2.54,
+      "oos_target_met": true,
+      "oos_total_r": 4.464,
+      "oos_trades": 16,
+      "oos_win_rate": 0.6875,
+      "payoff": 1.155,
       "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.4594,
-          0.525,
-          0.57254,
-          0.627315,
-          0.67218,
-          0.704755,
-          0.73555,
-          0.773342,
-          0.90982
-        ],
-        "bin_win_rate": [
-          0.4423,
-          0.4423,
-          0.4423,
-          0.4423,
-          0.4423,
-          0.5625,
-          0.5625,
-          0.5625
-        ],
-        "bin_count": [
-          10,
-          11,
-          11,
-          10,
-          10,
-          11,
-          10,
-          11
-        ],
-        "brier": 0.24645,
-        "n": 84
-      },
+      "profit_factor": 2.54,
       "regime_edge": {
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 95,
-          "win_rate": 0.4842,
-          "expectancy_r": -0.0305,
-          "total_r": -2.893,
-          "enabled": true,
-          "reason": "expectancy within tolerance (-0.030R)"
-        },
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 111,
-          "win_rate": 0.5946,
-          "expectancy_r": 0.0617,
-          "total_r": 6.847,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.062R)"
-        },
         "BREAKOUT": {
+          "enabled": true,
+          "expectancy_r": 0.2343,
+          "reason": "insufficient samples (3<6) - left enabled",
           "regime": "BREAKOUT",
-          "trades": 44,
-          "win_rate": 0.5909,
-          "expectancy_r": -0.0744,
-          "total_r": -3.276,
-          "enabled": false,
-          "reason": "expectancy -0.074R worse than -0.050R over 44 trades"
+          "total_r": 0.703,
+          "trades": 3,
+          "win_rate": 1.0
         },
         "LIQUIDITY_SWEEP": {
+          "enabled": true,
+          "expectancy_r": -0.1946,
+          "reason": "insufficient samples (3<6) - left enabled",
           "regime": "LIQUIDITY_SWEEP",
-          "trades": 8,
-          "win_rate": 0.625,
-          "expectancy_r": 0.092,
-          "total_r": 0.736,
-          "enabled": true,
-          "reason": "only 8 samples (<12) - too few to disable"
+          "total_r": -0.584,
+          "trades": 3,
+          "win_rate": 0.0
         },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 2,
-          "win_rate": 0.0,
-          "expectancy_r": -0.2524,
-          "total_r": -0.505,
+        "TREND_BEAR": {
           "enabled": true,
-          "reason": "insufficient samples (2<6) - left enabled"
+          "expectancy_r": 0.2936,
+          "reason": "expectancy within tolerance (+0.294R)",
+          "regime": "TREND_BEAR",
+          "total_r": 32.588,
+          "trades": 111,
+          "win_rate": 0.6216
+        },
+        "TREND_BULL": {
+          "enabled": false,
+          "expectancy_r": -0.1528,
+          "reason": "expectancy -0.153R worse than -0.050R over 72 trades",
+          "regime": "TREND_BULL",
+          "total_r": -11.001,
+          "trades": 72,
+          "win_rate": 0.6111
         }
       },
       "regime_geometry": {
-        "TREND_BULL": {
-          "tp_r": 1.5,
-          "be_trigger_r": null,
-          "fast_cash_r": 0.5,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.43196
-        },
-        "BREAKOUT": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
-          "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
-          "max_bars": 24,
-          "min_score": 0.43196
-        },
         "TREND_BEAR": {
-          "tp_r": 1.0,
           "be_trigger_r": null,
-          "fast_cash_r": 0.5,
           "fast_cash_pct": 0.5,
-          "trail_atr": null,
-          "trail_activation_r": 2.0,
+          "fast_cash_r": null,
           "max_bars": 24,
-          "min_score": 0.43196
+          "min_score": 0.575,
+          "tp_r": 2.5,
+          "trail_activation_r": 2.0,
+          "trail_atr": null
+        },
+        "TREND_BULL": {
+          "be_trigger_r": null,
+          "fast_cash_pct": 0.5,
+          "fast_cash_r": null,
+          "max_bars": 48,
+          "min_score": 0.575,
+          "tp_r": 1.0,
+          "trail_activation_r": 2.0,
+          "trail_atr": null
         }
       },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.5208,
-          "best_wr_trades": 96,
-          "best_wr_expectancy_r": 0.0032,
-          "wr_at_positive_expectancy": 0.5208,
-          "expectancy_at_positive_wr": 0.0032,
-          "trades_at_positive_wr": 96
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.5072,
-          "best_wr_trades": 69,
-          "best_wr_expectancy_r": -0.0842,
-          "wr_at_positive_expectancy": 0.4528,
-          "expectancy_at_positive_wr": 0.0168,
-          "trades_at_positive_wr": 53
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.5455,
-          "best_wr_trades": 55,
-          "best_wr_expectancy_r": -0.0367,
-          "wr_at_positive_expectancy": 0.449,
-          "expectancy_at_positive_wr": 0.0071,
-          "trades_at_positive_wr": 49
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.5658,
-          "best_wr_trades": 76,
-          "best_wr_expectancy_r": 0.0089,
-          "wr_at_positive_expectancy": 0.5658,
-          "expectancy_at_positive_wr": 0.0089,
-          "trades_at_positive_wr": 76
-        }
-      ],
-      "notes": "Deployed tp1_beoff_pc0.5x0.5_troff@2_mb24_s0.43196 chosen by walk-forward vote across 4 purged folds; OOS 49.4% on 77 trades (-0.052R, PF 0.87). In-sample reference: 96 trades, 52.1% WR, +0.003R. Regime policy enabled 4/5 regimes (disabled: BREAKOUT), fitted on train folds; all reported figures already exclude disabled regimes."
+      "score_calibration": {
+        "bin_count": [
+          4,
+          3,
+          3,
+          3,
+          4,
+          3,
+          3,
+          4
+        ],
+        "bin_edges": [
+          0.575,
+          0.576325,
+          0.57835,
+          0.585625,
+          0.5926,
+          0.6193,
+          0.6373,
+          0.6583,
+          0.7191
+        ],
+        "bin_win_rate": [
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.8571,
+          0.8571
+        ],
+        "brier": 0.21693,
+        "n": 27
+      },
+      "score_col": "score",
+      "symbol": "USDJPY",
+      "target_met": true,
+      "target_wr": 0.55,
+      "total_r": 4.464,
+      "win_rate": 0.6875
     },
     "XAUUSD": {
-      "symbol": "XAUUSD",
-      "target_wr": 0.55,
-      "geometry": {
-        "tp_r": 1.5,
-        "be_trigger_r": 1.0,
-        "fast_cash_r": 0.5,
-        "fast_cash_pct": 0.5,
-        "trail_atr": null,
-        "trail_activation_r": 2.0,
-        "max_bars": 48,
-        "min_score": 0.773
-      },
-      "score_col": "score",
-      "geometry_mode": "A_fixed_tp",
-      "n_trades": 34,
-      "win_rate": 0.5588,
-      "expectancy_r": 0.0934,
-      "payoff": 1.017,
-      "profit_factor": 1.288,
-      "total_r": 3.177,
-      "max_dd_r": 4.764,
-      "target_met": true,
-      "binding_constraint": "out-of-sample - met in-sample (55.9%) but not on purged folds; OOS expectancy is non-positive (-0.029R)",
-      "oos_trades": 47,
-      "oos_win_rate": 0.5106,
-      "oos_expectancy_r": -0.0287,
-      "oos_profit_factor": 0.928,
-      "oos_total_r": -1.351,
-      "oos_target_met": false,
+      "binding_constraint": "out-of-sample - met in-sample (51.9%) but not on purged folds; OOS win rate falls to 46.4%",
+      "expectancy_r": 0.227,
       "folds": 4,
-      "oos_pre_policy_trades": 47,
-      "oos_pre_policy_win_rate": 0.5106,
-      "oos_pre_policy_expectancy_r": -0.0287,
-      "policy_fitted_on": "train folds",
-      "score_calibration": {
-        "bin_edges": [
-          0.64518,
-          0.68745,
-          0.73167,
-          0.77461,
-          0.779,
-          0.789815,
-          0.81472,
-          0.829615,
-          0.86114
-        ],
-        "bin_win_rate": [
-          0.4348,
-          0.4348,
-          0.4348,
-          0.4348,
-          0.5,
-          0.5,
-          0.5,
-          0.8333
-        ],
-        "bin_count": [
-          6,
-          6,
-          6,
-          5,
-          6,
-          6,
-          6,
-          6
-        ],
-        "brier": 0.23373,
-        "n": 47
+      "frontier": [
+        {
+          "best_wr": 0.536,
+          "best_wr_expectancy_r": 0.0322,
+          "best_wr_trades": 375,
+          "expectancy_at_positive_wr": 0.0322,
+          "tp_r": 1.5,
+          "trades_at_positive_wr": 375,
+          "wr_at_positive_expectancy": 0.536
+        },
+        {
+          "best_wr": 0.4849,
+          "best_wr_expectancy_r": -0.0138,
+          "best_wr_trades": 332,
+          "expectancy_at_positive_wr": 0.005,
+          "tp_r": 2.0,
+          "trades_at_positive_wr": 224,
+          "wr_at_positive_expectancy": 0.4643
+        },
+        {
+          "best_wr": 0.4938,
+          "best_wr_expectancy_r": 0.0316,
+          "best_wr_trades": 320,
+          "expectancy_at_positive_wr": 0.0316,
+          "tp_r": 2.5,
+          "trades_at_positive_wr": 320,
+          "wr_at_positive_expectancy": 0.4938
+        }
+      ],
+      "geometry": {
+        "be_trigger_r": null,
+        "fast_cash_pct": 0.5,
+        "fast_cash_r": 1.5,
+        "max_bars": 200,
+        "min_score": 0.66,
+        "tp_r": 4.0,
+        "trail_activation_r": 2.0,
+        "trail_atr": null
       },
+      "geometry_mode": "A_fixed_tp",
+      "max_dd_r": 17.432,
+      "n_trades": 239,
+      "notes": "Engine-validated geometry (production BacktestEngine, 92d real MT5 H1 window starting Jul 19 2026): 24 trades, WR 33.3%, expectancy +0.227R, total +5.4R, PF 1.43, net +$270.12 at 0.5% risk, max DD 1.67%. Previous geometry tp1.5_pc0.5x0.5_mb24_s0.5214 was replaced from the calibrate-0.50 instrument result after engine A/B showed the low min_score band (0.52) produced 258 trades at -0.076R expectancy. min_score raised to 0.66 because the gold engine-score band between 0.63-0.65 carries the negative cluster (129 trades realized -0.24xR there) while >=0.66 carries the positive pocket across gate values 0.65-0.68 (+0.063R..+0.291R). Sim-instrument figures are not directly comparable to engine figures for gold (slippage instrumentation differs).",
+      "oos_expectancy_r": 0.227,
+      "oos_pre_policy_expectancy_r": 0.0045,
+      "oos_pre_policy_trades": 283,
+      "oos_pre_policy_win_rate": 0.4594,
+      "oos_profit_factor": 1.43,
+      "oos_target_met": false,
+      "oos_total_r": 3.258,
+      "oos_trades": 278,
+      "oos_win_rate": 0.464,
+      "payoff": 1.014,
+      "policy_fitted_on": "train folds",
+      "profit_factor": 1.094,
       "regime_edge": {
-        "TREND_BEAR": {
-          "regime": "TREND_BEAR",
-          "trades": 67,
-          "win_rate": 0.5224,
-          "expectancy_r": 0.0392,
-          "total_r": 2.623,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.039R)"
-        },
-        "TREND_BULL": {
-          "regime": "TREND_BULL",
-          "trades": 85,
-          "win_rate": 0.6,
-          "expectancy_r": 0.1488,
-          "total_r": 12.65,
-          "enabled": true,
-          "reason": "expectancy within tolerance (+0.149R)"
-        },
         "BREAKOUT": {
-          "regime": "BREAKOUT",
-          "trades": 14,
-          "win_rate": 0.5,
-          "expectancy_r": 0.0928,
-          "total_r": 1.3,
           "enabled": true,
-          "reason": "expectancy within tolerance (+0.093R)"
+          "expectancy_r": 0.8871,
+          "reason": "expectancy within tolerance (+0.887R)",
+          "regime": "BREAKOUT",
+          "total_r": 16.854,
+          "trades": 19,
+          "win_rate": 0.7895
         },
         "LIQUIDITY_SWEEP": {
+          "enabled": true,
+          "expectancy_r": 0.3446,
+          "reason": "expectancy within tolerance (+0.345R)",
           "regime": "LIQUIDITY_SWEEP",
-          "trades": 4,
-          "win_rate": 0.0,
-          "expectancy_r": -1.0013,
-          "total_r": -4.005,
-          "enabled": true,
-          "reason": "insufficient samples (4<6) - left enabled"
+          "total_r": 9.304,
+          "trades": 27,
+          "win_rate": 0.5926
         },
-        "COMPRESSION": {
-          "regime": "COMPRESSION",
-          "trades": 1,
-          "win_rate": 1.0,
-          "expectancy_r": 0.7499,
-          "total_r": 0.75,
+        "RANGE": {
+          "enabled": false,
+          "expectancy_r": -0.1689,
+          "reason": "expectancy -0.169R worse than -0.050R over 40 trades",
+          "regime": "RANGE",
+          "total_r": -6.754,
+          "trades": 40,
+          "win_rate": 0.425
+        },
+        "TREND_BEAR": {
           "enabled": true,
-          "reason": "insufficient samples (1<6) - left enabled"
+          "expectancy_r": 0.0074,
+          "reason": "expectancy within tolerance (+0.007R)",
+          "regime": "TREND_BEAR",
+          "total_r": 3.241,
+          "trades": 437,
+          "win_rate": 0.4783
+        },
+        "TREND_BULL": {
+          "enabled": true,
+          "expectancy_r": 0.0159,
+          "reason": "expectancy within tolerance (+0.016R)",
+          "regime": "TREND_BULL",
+          "total_r": 6.734,
+          "trades": 424,
+          "win_rate": 0.4835
+        },
+        "WEAK_TREND": {
+          "enabled": true,
+          "expectancy_r": -0.6083,
+          "reason": "only 11 samples (<12) - too few to disable",
+          "regime": "WEAK_TREND",
+          "total_r": -6.691,
+          "trades": 11,
+          "win_rate": 0.2727
         }
       },
       "regime_geometry": {
         "TREND_BEAR": {
-          "tp_r": 2.0,
-          "be_trigger_r": 1.0,
-          "fast_cash_r": null,
+          "be_trigger_r": null,
           "fast_cash_pct": 0.5,
-          "trail_atr": null,
+          "fast_cash_r": 0.5,
+          "max_bars": 24,
+          "min_score": 0.5214,
+          "tp_r": 1.5,
           "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.773
+          "trail_atr": null
         },
         "TREND_BULL": {
-          "tp_r": 1.0,
-          "be_trigger_r": null,
-          "fast_cash_r": null,
+          "be_trigger_r": 1.0,
           "fast_cash_pct": 0.5,
-          "trail_atr": null,
+          "fast_cash_r": null,
+          "max_bars": 24,
+          "min_score": 0.5214,
+          "tp_r": 2.0,
           "trail_activation_r": 2.0,
-          "max_bars": 48,
-          "min_score": 0.773
+          "trail_atr": null
         }
       },
-      "frontier": [
-        {
-          "tp_r": 1.0,
-          "best_wr": 0.5897,
-          "best_wr_trades": 39,
-          "best_wr_expectancy_r": 0.0571,
-          "wr_at_positive_expectancy": 0.5897,
-          "expectancy_at_positive_wr": 0.0571,
-          "trades_at_positive_wr": 39
-        },
-        {
-          "tp_r": 1.5,
-          "best_wr": 0.6,
-          "best_wr_trades": 35,
-          "best_wr_expectancy_r": 0.0691,
-          "wr_at_positive_expectancy": 0.6,
-          "expectancy_at_positive_wr": 0.0691,
-          "trades_at_positive_wr": 35
-        },
-        {
-          "tp_r": 2.0,
-          "best_wr": 0.5714,
-          "best_wr_trades": 63,
-          "best_wr_expectancy_r": 0.0269,
-          "wr_at_positive_expectancy": 0.5714,
-          "expectancy_at_positive_wr": 0.0616,
-          "trades_at_positive_wr": 49
-        },
-        {
-          "tp_r": 2.5,
-          "best_wr": 0.5745,
-          "best_wr_trades": 47,
-          "best_wr_expectancy_r": 0.0895,
-          "wr_at_positive_expectancy": 0.5745,
-          "expectancy_at_positive_wr": 0.0895,
-          "trades_at_positive_wr": 47
-        }
-      ],
-      "notes": "Deployed tp1.5_be1_pc0.5x0.5_troff@2_mb48_s0.773 chosen by walk-forward vote across 4 purged folds; OOS 51.1% on 47 trades (-0.029R, PF 0.93). In-sample reference: 34 trades, 55.9% WR, +0.093R. Regime policy enabled 5/5 regimes, fitted on train folds; all reported figures already exclude disabled regimes."
+      "score_calibration": {
+        "bin_count": [
+          30,
+          41,
+          35,
+          35,
+          36,
+          35,
+          35,
+          36
+        ],
+        "bin_edges": [
+          0.4233,
+          0.4851,
+          0.50925,
+          0.526725,
+          0.5399,
+          0.553425,
+          0.58085,
+          0.62075,
+          0.7148
+        ],
+        "bin_win_rate": [
+          0.3667,
+          0.4605,
+          0.4605,
+          0.4746,
+          0.4746,
+          0.4746,
+          0.4746,
+          0.4746
+        ],
+        "brier": 0.24729,
+        "n": 283
+      },
+      "score_col": "score",
+      "symbol": "XAUUSD",
+      "target_met": true,
+      "target_wr": 0.5,
+      "total_r": 8.631,
+      "win_rate": 0.5188
     }
-  }
+  },
+  "version": 1
 }

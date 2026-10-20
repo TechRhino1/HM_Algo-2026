@@ -2,7 +2,7 @@
 HM Algo 2.0 -- Real-Time Adaptive Feedback Optimizer.
 Queries recent closed trade PnLs from SQLite to adjust win probability, score, and R:R deltas dynamically.
 """
-from typing import Dict
+from typing import Dict, Optional
 import time
 import threading
 import logging
@@ -80,3 +80,50 @@ class RealtimeOptimizer:
             with self._lock:
                 self._cache[key] = (now, adj)
             return adj
+
+    def get_recent_win_rate(self, min_samples: int = 10, limit: int = 30) -> Optional[float]:
+        """Win rate over the last ``limit`` closed trades, across all symbols.
+
+        Evidence supplier for the gate policy's SOFTEN path: the line that fed it
+        ``recent_win_rate=None`` made SOFTEN dead code (the policy could only
+        BLOCK, identical to no policy at all). Fewer than ``min_samples`` closed
+        trades returns None, which the policy treats as "no evidence" and blocks.
+
+        Backtests must not read the live DB, so offline mode returns None and the
+        BacktestEngine rebinds ``DecisionEngine.recent_win_rate_fn`` to a supplier
+        over its own replayed trades.
+        """
+        from jarvis.config.runtime import is_offline
+
+        if is_offline():
+            return None
+        key = "__recent_win_rate__"
+        now = time.time()
+        with self._lock:
+            if key in self._cache:
+                ts, val = self._cache[key]
+                if now - ts < self.cache_ttl:
+                    return val
+        rate: Optional[float] = None
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.db_path, timeout=5.0)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT realized_pnl FROM executed_trades "
+                    "WHERE realized_pnl IS NOT NULL AND realized_pnl != 0 "
+                    f"ORDER BY id DESC LIMIT {int(limit)}"
+                )
+                rows = cur.fetchall()
+            finally:
+                conn.close()
+            if len(rows) >= min_samples:
+                wins = sum(1 for r in rows if r[0] is not None and float(r[0]) > 0)
+                rate = wins / len(rows)
+        except Exception as e:
+            logger.debug(f"RealtimeOptimizer win-rate query failed: {e}")
+            rate = None
+        with self._lock:
+            self._cache[key] = (now, rate)
+        return rate

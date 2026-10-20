@@ -15,7 +15,9 @@ class TestAIDecisionEngine(unittest.TestCase):
     def test_high_quality_setup(self):
         ctx = MarketContext(
             symbol="XAUUSD",
-            timestamp=datetime(2026, 1, 5, 10, 0, tzinfo=timezone.utc),
+            # 13:00 UTC sits inside the gold session window (12-16), so this
+            # test exercises setup quality, not the hard window gate.
+            timestamp=datetime(2026, 1, 5, 13, 0, tzinfo=timezone.utc),
             current_price=2400.0,
             bid=2399.8,
             ask=2400.2,
@@ -46,6 +48,50 @@ class TestAIDecisionEngine(unittest.TestCase):
         self.assertIn(res.decision, ["EXECUTE", "WAIT"])
         self.assertEqual(res.bias, "BUY")
         self.assertGreaterEqual(res.model_confidence, 0.50)
+
+    def test_gold_session_window_is_hard_outside_profile_hours(self):
+        """Gold outside its profile window must be a HARD block.
+
+        "Forex Prime Session" is a soft gate (confidence penalty), so the
+        window needs its own hard check: "Gold Session Window". A 10:00 UTC
+        gold context (outside 12-16) must produce NO_TRADE with the hard
+        reason recorded, regardless of setup quality.
+        """
+        ctx = MarketContext(
+            symbol="XAUUSD",
+            timestamp=datetime(2026, 1, 5, 10, 0, tzinfo=timezone.utc),
+            current_price=2400.0,
+            bid=2399.8,
+            ask=2400.2,
+            structure=StructureContext(bias="BULLISH", bos=True, choch=True, choch_type="BULLISH", demand_zone=(2390.0, 2392.0)),
+            liquidity=LiquidityContext(sweep_detected=True, sweep_type="BULLISH_SWEEP"),
+            volatility=VolatilityContext(atr=10.0, current_spread_pips=1.5),
+            momentum=MomentumContext(trend_score=80.0, adx=32.0),
+            session=SessionContext(current_session="LONDON", is_prime_session=True)
+        )
+        regime = RegimeOutput(
+            primary_regime=MarketRegime.TREND_BULL,
+            probabilities={"TREND_BULL": 0.85},
+            confidence=0.85
+        )
+        analyst_reports = {
+            "STRUCTURE": AnalystReport(role=AnalystRole.STRUCTURE, symbol="XAUUSD", bias="BULLISH", confidence=0.85, score=85.0, evidence=["BOS confirmed"]),
+            "MOMENTUM": AnalystReport(role=AnalystRole.MOMENTUM, symbol="XAUUSD", bias="BULLISH", confidence=0.80, score=80.0, evidence=["ADX 32"])
+        }
+        devil_report = DevilAdvocateReport(
+            symbol="XAUUSD",
+            counter_bias="BEARISH",
+            penalty_score=10.0,
+            invalidation_risk_coefficient=0.90,
+            threats_detected=[]
+        )
+
+        res = self.engine.evaluate(ctx, regime, analyst_reports, devil_report, account_balance=10000.0)
+        self.assertEqual(res.decision, "NO_TRADE")
+        reasons = list(getattr(res.quality_gate, "failing_reasons", []) or [])
+        self.assertIn("Gold Session Window", reasons)
+        from jarvis.intelligence.gate_policy import HARD_GATES
+        self.assertTrue(set(reasons) & set(HARD_GATES), "at least one failing reason must be hard")
 
     def test_strict_quality_gate_no_soften_bypass(self):
         ctx = MarketContext(

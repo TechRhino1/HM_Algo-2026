@@ -1,70 +1,88 @@
 # HM Algo 2.0 — 3-Month Backtest on Real MT5 Data
 
-**Mode:** uncalibrated baseline (legacy 29-gate stack)  
+**Mode:** calibrated per-symbol win-rate profiles  
 **Data:** MT5 terminal, real H1 bars (validated non-synthetic)  
 **Initial balance:** $10,000.00 at 0.5% risk per trade  
-**Generated:** 2026-10-14T16:04:23.817683+00:00
+**Generated:** 2026-10-19T21:06:17.114973+00:00
 
 ## 1. Headline
 
 | Metric | Value |
 |---|---|
-| Symbols traded | 16 |
-| Total trades | 141 |
-| Win rate | 48.23% |
-| Expectancy | +0.0122 R per trade |
-| Average win / loss | +0.885 R / -0.801 R |
-| Payoff ratio | 1.105 |
-| Total R | +1.72 R |
-| Profit factor | 1.16 |
-| Net profit | $+290.13 |
-| Max drawdown | 1.73% |
-| Sharpe / Sortino / Calmar | 0.68 / 1.87 / 1.63 |
-| Expectancy (sample-uniqueness weighted) | +0.0708 R |
+| Symbols traded | 1 |
+| Total trades | 24 |
+| Win rate | 33.33% |
+| Expectancy | +0.2266 R per trade |
+| Average win / loss | +2.688 R / -1.004 R |
+| Payoff ratio | 2.677 |
+| Total R | +5.44 R |
+| Profit factor | 1.43 |
+| Net profit | $+270.12 |
+| Max drawdown | 1.67% |
+| Sharpe / Sortino / Calmar | 0.7 / 5.97 / 1.57 |
+| Expectancy (sample-uniqueness weighted) | -0.0069 R |
+
+**Win-rate target outcome:** 2/3 symbols met the target out-of-sample. 1 met it in-sample but failed out-of-sample (i.e. the target was reachable only by overfitting).
 
 ## 2. Per-symbol results
 
 | Symbol | Trades | WR % | Exp (R) | PF | Net $ | MaxDD % | OOS WR % | OOS Exp (R) | Target | Binding constraint |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|:--:|---|
-| XAUUSD | 30 | 43.3 | -0.050 | 0.99 | -6.40 | 1.35 | 0.0 | +0.000 | — | — |
-| GBPUSD | 16 | 56.2 | +0.129 | 1.57 | +72.28 | 0.55 | 0.0 | +0.000 | — | — |
-| USDCAD | 14 | 71.4 | +0.338 | 3.66 | +138.49 | 0.43 | 0.0 | +0.000 | — | — |
-| UK100 | 11 | 54.5 | +0.018 | 1.05 | +6.40 | 0.73 | 0.0 | +0.000 | — | — |
-| AUDUSD | 10 | 40.0 | -0.375 | 0.45 | -60.23 | 0.60 | 0.0 | +0.000 | — | — |
-| US30 | 10 | 40.0 | +0.047 | 0.98 | -1.12 | 0.31 | 0.0 | +0.000 | — | — |
-| GER40 | 8 | 62.5 | +0.087 | 1.71 | +54.22 | 0.39 | 0.0 | +0.000 | — | — |
-| NZDUSD | 8 | 37.5 | -0.116 | 1.20 | +20.31 | 0.56 | 0.0 | +0.000 | — | — |
-| USDCHF | 7 | 28.6 | -0.684 | 0.20 | -104.45 | 1.04 | 0.0 | +0.000 | — | — |
-| SOLUSD | 6 | 50.0 | +0.216 | 0.88 | -10.08 | 0.67 | 0.0 | +0.000 | — | — |
-| BTCUSD | 4 | 75.0 | +1.206 | 5.90 | +181.31 | 0.37 | 0.0 | +0.000 | — | — |
-| ETHUSD | 4 | 75.0 | +0.790 | 3.02 | +98.42 | 0.49 | 0.0 | +0.000 | — | — |
-| USDJPY | 4 | 25.0 | +0.044 | 1.31 | +14.20 | 0.45 | 0.0 | +0.000 | — | — |
-| EURUSD | 3 | 0.0 | -0.831 | 0.00 | -98.58 | 0.99 | 0.0 | +0.000 | — | — |
-| NAS100 | 3 | 0.0 | -1.001 | 0.00 | -92.04 | 0.92 | 0.0 | +0.000 | — | — |
-| XAGUSD | 3 | 66.7 | +0.188 | 2.36 | +77.40 | 0.56 | 0.0 | +0.000 | — | — |
+| XAUUSD | 24 | 33.3 | +0.227 | 1.43 | +270.12 | 1.67 | 46.4 | +0.227 | in-sample | out-of-sample - met in-sample (51.9%) but not on purged folds; OOS win |
+
+### 2a. What the learned regime policy contributes
+
+Calibration reports the same out-of-sample sample twice: once with every regime enabled, and once with the regimes the learned policy has switched off removed. Both are purged out-of-sample w.r.t. the geometry and threshold; the policy itself is fitted on **training folds only**, so it has never seen the out-of-sample bars it filters. The gap between the two columns is the policy's entire contribution — read it as the honest size of the effect, not as free money.
+
+| Symbol | OOS n (all regimes) | OOS WR | OOS Exp (R) | OOS n (policy applied) | OOS WR | OOS Exp (R) | Policy fitted on |
+|---|---:|---:|---:|---:|---:|---:|---|
+| XAUUSD | 283 | 45.9 | +0.004 | 278 | 46.4 | +0.227 | train folds |
+
+## 3. Win-rate / expectancy frontier
+
+For each target size (`tp_r`, as a multiple of initial risk) the table gives the highest win rate found at all, and the highest win rate that still carries positive expectancy. Where those two diverge, the gap is win rate that can only be bought by running a losing system. This is the direct evidence for whether the 75% target is reachable.
+
+**USDCAD**
+
+| tp_r | best WR | exp at best WR | trades | best WR with exp > 0 | exp | trades |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 63.4% | +0.014 | 41 | 63.4% | +0.020 | 41 |
+| 1.5 | 63.2% | +0.036 | 38 | 63.2% | +0.036 | 38 |
+| 2 | 62.5% | +0.096 | 24 | 62.5% | +0.096 | 24 |
+| 2.5 | 62.5% | +0.082 | 24 | 62.5% | +0.082 | 24 |
+
+**USDJPY**
+
+| tp_r | best WR | exp at best WR | trades | best WR with exp > 0 | exp | trades |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 70.0% | +0.226 | 20 | 70.0% | +0.226 | 20 |
+| 1.5 | 66.7% | +0.229 | 27 | 66.7% | +0.229 | 27 |
+| 2 | 68.8% | +0.428 | 16 | 64.0% | +0.222 | 25 |
+| 2.5 | 68.8% | +0.279 | 16 | 60.6% | +0.210 | 33 |
+
+**XAUUSD**
+
+| tp_r | best WR | exp at best WR | trades | best WR with exp > 0 | exp | trades |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1.5 | 53.6% | +0.032 | 375 | 53.6% | +0.032 | 375 |
+| 2 | 48.5% | -0.014 | 332 | 46.4% | +0.005 | 224 |
+| 2.5 | 49.4% | +0.032 | 320 | 49.4% | +0.032 | 320 |
+
+## 4. Calibrated geometry per symbol
+
+`tp_r` is the target distance in multiples of initial risk; `be` is the breakeven trigger (off = never lock breakeven); `pc` the partial bank; `mb` the time stop in bars; `thr` the entry score threshold.
+
+The last two columns come from the isotonic score calibration: the realised win probability the fitted map assigns to a score sitting exactly at the deployed threshold, and the Brier score of that map (lower is better; 0.25 is the skill-free baseline for a balanced sample). The calibration is monotone, so it cannot change which candidates pass — it exists to make the score interpretable and to give the AI layer a probability rather than an arbitrary index.
+
+| Symbol | tp_r | be | pc | mb | threshold | P(win) @ thr | Brier | Enabled regimes |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| USDCAD | 1 | off | off | 48 | 0.521 | 33.3% | 0.205 | BREAKOUT, TREND_BEAR, TREND_BULL |
+| USDJPY | 2.5 | off | 0.5 | 48 | 0.575 | 50.0% | 0.217 | BREAKOUT, LIQUIDITY_SWEEP, TREND_BEAR |
+| XAUUSD | 4 | off | 1.5 | 200 | 0.660 | 47.5% | 0.247 | BREAKOUT, LIQUIDITY_SWEEP, TREND_BEAR, TREND_BULL, WEAK_TREND |
 
 ## 5. Portfolio risk allocation (HRP)
 
-Inverse-variance weights from the HRP allocator over per-symbol daily R:
-
-| Symbol | Risk weight |
-|---|---:|
-| XAGUSD | 16.06% |
-| NAS100 | 12.77% |
-| AUDUSD | 9.35% |
-| EURUSD | 8.56% |
-| USDJPY | 8.31% |
-| USDCHF | 7.51% |
-| US30 | 6.79% |
-| NZDUSD | 5.80% |
-| SOLUSD | 4.75% |
-| GER40 | 4.35% |
-| ETHUSD | 3.78% |
-| UK100 | 3.23% |
-| USDCAD | 3.22% |
-| GBPUSD | 2.90% |
-| BTCUSD | 1.90% |
-| XAUUSD | 0.73% |
+Not enough aligned per-symbol return history to compute HRP weights.
 
 ## 6. Entry rejection analysis
 
@@ -74,22 +92,7 @@ Counts are per **bar evaluated**, not per candidate: a bar on which the pipeline
 
 | Symbol | Top rejection reasons |
 |---|---|
-| XAUUSD | Symbol XAUUSD loss cooldown active (899s remaining). (912); Failed quality check: Directional Bias. (95); Adversarial risk: Attempting SELL in unfavor |
-| GBPUSD | Symbol GBPUSD loss cooldown active (899s remaining). (64); Failed quality check: Forex Prime Session. (44); Failed quality check: Directional Bias. (2 |
-| USDCAD | Awaiting validation check: Devil Adversarial Guard. (63); Awaiting validation check: Macro MTF Alignment. (39); Failed quality check: Macro MTF Alignm |
-| UK100 | Failed quality check: Index Trend Alignment. (107); Failed quality check: Forex Prime Session. (101); Adversarial risk: Attempting SELL in unfavorable |
-| AUDUSD | Symbol AUDUSD loss cooldown active (899s remaining). (768); Awaiting validation check: Devil Adversarial Guard. (31); Failed quality check: Forex Prim |
-| US30 | Symbol US30 loss cooldown active (899s remaining). (369); Failed quality check: US30 Confluence Guard. (204); Failed quality check: Forex Prime Sessio |
-| GER40 | Failed quality check: Forex Prime Session. (120); Failed quality check: Index Trend Alignment. (107); Adversarial risk: Attempting SELL in unfavorable |
-| NZDUSD | Symbol NZDUSD loss cooldown active (899s remaining). (800); Awaiting validation check: Devil Adversarial Guard. (30); Adversarial risk: Attempting SEL |
-| USDCHF | Symbol USDCHF loss cooldown active (899s remaining). (888); Awaiting validation check: Devil Adversarial Guard. (28); Failed quality check: Macro MTF  |
-| SOLUSD | Failed quality check: Directional Bias. (88); Failed quality check: Crypto Macro Trend Filter. (84); Failed quality check: SOL Confluence Guard. (81) |
-| BTCUSD | Failed quality check: Directional Bias. (65); Adversarial risk: Attempting BUY in unfavorable PREMIUM zone relative to equilibrium. (51); Failed quali |
-| ETHUSD | Adversarial risk: Attempting BUY in unfavorable PREMIUM zone relative to equilibrium. (87); Failed quality check: Directional Bias. (87); Failed quali |
-| USDJPY | Symbol USDJPY loss cooldown active (899s remaining). (1113); Failed quality check: JPY Momentum Guard. (77); Awaiting validation check: JPY Momentum G |
-| EURUSD | Symbol EURUSD loss cooldown active (899s remaining). (1491); Awaiting validation check: Forex Prime Session. (10); Awaiting validation check: Devil Ad |
-| NAS100 | Symbol NAS100 loss cooldown active (899s remaining). (924); Failed quality check: Forex Prime Session. (79); Failed quality check: Directional Bias. ( |
-| XAGUSD | Failed quality check: Directional Bias. (594); Adversarial risk: Attempting SELL in unfavorable DISCOUNT zone relative to equilibrium. (286); Adversar |
+| XAUUSD | capital protection: Directional Bias (353); score 0.480 below calibrated threshold 0.660 (98); regime RANGE disabled by learned policy (expectancy -0. |
 
 ## 7. Method and honesty notes
 

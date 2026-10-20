@@ -1,0 +1,1308 @@
+{
+  "generated_utc": "2026-10-19T19:26:00.248876+00:00",
+  "spec": {
+    "symbols": [],
+    "modes": [
+      "SCALP"
+    ],
+    "objective": "expectancy_r",
+    "min_trades": 30,
+    "max_dd_r": 20.0,
+    "slippage_pips": 0.5,
+    "commission_per_lot": 5.0,
+    "passes": 3,
+    "max_evaluations": 400,
+    "walk_forward_split": 0.7,
+    "walk_forward_folds": 3,
+    "days": 95,
+    "label": "scalp95"
+  },
+  "gates": {
+    "regime_min_candidates": 200,
+    "regime_min_trades": 12,
+    "disable_margin_r": 0.05
+  },
+  "modes": [
+    {
+      "style": "SCALP",
+      "primary_timeframe": "M5",
+      "series_count": 16,
+      "bars_median": 14245,
+      "search_window": [
+        0,
+        9971
+      ],
+      "validation_window": [
+        9971,
+        14245
+      ],
+      "regime_mass": {
+        "TREND_BULL": 85626,
+        "TREND_BEAR": 66722,
+        "BREAKOUT": 9962,
+        "RANGE": 9221,
+        "LIQUIDITY_SWEEP": 4129,
+        "CONSOLIDATION": 835,
+        "WEAK_TREND": 811,
+        "HIGH_VOLATILITY": 567
+      },
+      "baseline": {
+        "geometry": {
+          "tp_r": 1.5,
+          "be_trigger_r": null,
+          "fast_cash_r": null,
+          "fast_cash_pct": 0.5,
+          "trail_atr": null,
+          "trail_activation_r": 2.0,
+          "max_bars": 200,
+          "min_score": 0.0
+        },
+        "geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+        "best_min_score_quantile": 0.0,
+        "feasible": false,
+        "in_sample": {
+          "trades": 3153,
+          "win_rate": 0.4853,
+          "expectancy_r": -0.1061,
+          "avg_win_r": 0.6885,
+          "avg_loss_r": -0.8551,
+          "payoff": 0.805,
+          "profit_factor": 0.759,
+          "total_r": -334.4,
+          "max_dd_r": 351.401
+        },
+        "out_of_sample": {
+          "trades": 954,
+          "win_rate": 0.5231,
+          "expectancy_r": -0.0027,
+          "avg_win_r": 0.5972,
+          "avg_loss_r": -0.6605,
+          "payoff": 0.904,
+          "profit_factor": 0.992,
+          "total_r": -2.536,
+          "max_dd_r": 28.095
+        },
+        "walk_forward": {
+          "in_sample_expectancy_r": -0.1061,
+          "out_of_sample_expectancy_r": -0.0027,
+          "in_sample_trades": 3153,
+          "out_of_sample_trades": 954,
+          "edge_retention": null,
+          "is_profitable_in_sample": false,
+          "is_profitable_out_of_sample": false,
+          "generalises": false,
+          "note": "in-sample expectancy was not positive \u2014 no edge to retain"
+        },
+        "evaluations": 20
+      },
+      "regimes": [
+        {
+          "regime": "TREND_BULL",
+          "status": "searched",
+          "candidates": 85626,
+          "baseline_within_regime": {
+            "trades": 2799,
+            "win_rate": 0.4795,
+            "expectancy_r": -0.0916,
+            "avg_win_r": 0.6309,
+            "avg_loss_r": -0.7581,
+            "payoff": 0.832,
+            "profit_factor": 0.768,
+            "total_r": -256.347,
+            "max_dd_r": 256.347
+          },
+          "searched_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "searched_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "searched_quantile": 0.0,
+          "searched_in_sample": {
+            "trades": 2148,
+            "win_rate": 0.4763,
+            "expectancy_r": -0.1078,
+            "avg_win_r": 0.6595,
+            "avg_loss_r": -0.807,
+            "payoff": 0.817,
+            "profit_factor": 0.744,
+            "total_r": -231.587,
+            "max_dd_r": 232.969
+          },
+          "searched_out_of_sample": {
+            "trades": 661,
+            "win_rate": 0.4947,
+            "expectancy_r": -0.0361,
+            "avg_win_r": 0.531,
+            "avg_loss_r": -0.5912,
+            "payoff": 0.898,
+            "profit_factor": 0.879,
+            "total_r": -23.833,
+            "max_dd_r": 26.604
+          },
+          "searched_full_window": {
+            "trades": 2799,
+            "win_rate": 0.4795,
+            "expectancy_r": -0.0916,
+            "avg_win_r": 0.6309,
+            "avg_loss_r": -0.7581,
+            "payoff": 0.832,
+            "profit_factor": 0.768,
+            "total_r": -256.347,
+            "max_dd_r": 256.347
+          },
+          "walk_forward": {
+            "in_sample_expectancy_r": -0.1078,
+            "out_of_sample_expectancy_r": -0.0361,
+            "in_sample_trades": 2148,
+            "out_of_sample_trades": 661,
+            "edge_retention": null,
+            "is_profitable_in_sample": false,
+            "is_profitable_out_of_sample": false,
+            "generalises": false,
+            "note": "in-sample expectancy was not positive \u2014 no edge to retain"
+          },
+          "validation_folds": [
+            {
+              "fold": 1,
+              "entry_lo": 9971,
+              "entry_hi": 11395,
+              "trades": 234,
+              "expectancy_r": -0.0505,
+              "total_r": -11.81,
+              "win_rate": 0.5043
+            },
+            {
+              "fold": 2,
+              "entry_lo": 11395,
+              "entry_hi": 12819,
+              "trades": 197,
+              "expectancy_r": -0.0172,
+              "total_r": -3.391,
+              "win_rate": 0.5228
+            },
+            {
+              "fold": 3,
+              "entry_lo": 12819,
+              "entry_hi": 14245,
+              "trades": 159,
+              "expectancy_r": -0.0876,
+              "total_r": -13.929,
+              "win_rate": 0.4717
+            }
+          ],
+          "feasible": false,
+          "deployed_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "deployed_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "deployed_quantile": 0.0,
+          "uses_own_geometry": false,
+          "geometry_basis": "pooled geometry \u2014 the regime geometry failed the constraints on the full window",
+          "enabled": false,
+          "reason": "expectancy -0.092R worse than -0.050R over 2799 trades",
+          "evaluations": 20
+        },
+        {
+          "regime": "TREND_BEAR",
+          "status": "searched",
+          "candidates": 66722,
+          "baseline_within_regime": {
+            "trades": 2615,
+            "win_rate": 0.4692,
+            "expectancy_r": -0.1089,
+            "avg_win_r": 0.6045,
+            "avg_loss_r": -0.7405,
+            "payoff": 0.816,
+            "profit_factor": 0.723,
+            "total_r": -284.71,
+            "max_dd_r": 284.71
+          },
+          "searched_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "searched_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "searched_quantile": 0.0,
+          "searched_in_sample": {
+            "trades": 1944,
+            "win_rate": 0.4588,
+            "expectancy_r": -0.1392,
+            "avg_win_r": 0.6238,
+            "avg_loss_r": -0.7877,
+            "payoff": 0.792,
+            "profit_factor": 0.673,
+            "total_r": -270.702,
+            "max_dd_r": 277.965
+          },
+          "searched_out_of_sample": {
+            "trades": 678,
+            "win_rate": 0.5,
+            "expectancy_r": -0.0219,
+            "avg_win_r": 0.5488,
+            "avg_loss_r": -0.5926,
+            "payoff": 0.926,
+            "profit_factor": 0.926,
+            "total_r": -14.849,
+            "max_dd_r": 22.585
+          },
+          "searched_full_window": {
+            "trades": 2615,
+            "win_rate": 0.4692,
+            "expectancy_r": -0.1089,
+            "avg_win_r": 0.6045,
+            "avg_loss_r": -0.7405,
+            "payoff": 0.816,
+            "profit_factor": 0.723,
+            "total_r": -284.71,
+            "max_dd_r": 284.71
+          },
+          "walk_forward": {
+            "in_sample_expectancy_r": -0.1392,
+            "out_of_sample_expectancy_r": -0.0219,
+            "in_sample_trades": 1944,
+            "out_of_sample_trades": 678,
+            "edge_retention": null,
+            "is_profitable_in_sample": false,
+            "is_profitable_out_of_sample": false,
+            "generalises": false,
+            "note": "in-sample expectancy was not positive \u2014 no edge to retain"
+          },
+          "validation_folds": [
+            {
+              "fold": 1,
+              "entry_lo": 9971,
+              "entry_hi": 11395,
+              "trades": 232,
+              "expectancy_r": 0.034,
+              "total_r": 7.894,
+              "win_rate": 0.5517
+            },
+            {
+              "fold": 2,
+              "entry_lo": 11395,
+              "entry_hi": 12819,
+              "trades": 221,
+              "expectancy_r": -0.0564,
+              "total_r": -12.468,
+              "win_rate": 0.4977
+            },
+            {
+              "fold": 3,
+              "entry_lo": 12819,
+              "entry_hi": 14245,
+              "trades": 162,
+              "expectancy_r": -0.126,
+              "total_r": -20.407,
+              "win_rate": 0.4383
+            }
+          ],
+          "feasible": false,
+          "deployed_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "deployed_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "deployed_quantile": 0.0,
+          "uses_own_geometry": false,
+          "geometry_basis": "pooled geometry \u2014 the regime geometry failed the constraints on the full window",
+          "enabled": false,
+          "reason": "expectancy -0.109R worse than -0.050R over 2615 trades",
+          "evaluations": 20
+        },
+        {
+          "regime": "BREAKOUT",
+          "status": "searched",
+          "candidates": 9962,
+          "baseline_within_regime": {
+            "trades": 1300,
+            "win_rate": 0.4723,
+            "expectancy_r": -0.0817,
+            "avg_win_r": 0.535,
+            "avg_loss_r": -0.6336,
+            "payoff": 0.844,
+            "profit_factor": 0.756,
+            "total_r": -106.148,
+            "max_dd_r": 109.642
+          },
+          "searched_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": 0.75,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.97
+          },
+          "searched_geometry_key": "tp1.5_beoff_pc0.75x0.5_troff@2_mb200_s0.97",
+          "searched_quantile": 0.97,
+          "searched_in_sample": {
+            "trades": 119,
+            "win_rate": 0.5546,
+            "expectancy_r": 0.0712,
+            "avg_win_r": 0.4781,
+            "avg_loss_r": -0.4355,
+            "payoff": 1.098,
+            "profit_factor": 1.367,
+            "total_r": 8.469,
+            "max_dd_r": 3.533
+          },
+          "searched_out_of_sample": {
+            "trades": 63,
+            "win_rate": 0.5556,
+            "expectancy_r": 0.0581,
+            "avg_win_r": 0.4252,
+            "avg_loss_r": -0.4007,
+            "payoff": 1.061,
+            "profit_factor": 1.326,
+            "total_r": 3.662,
+            "max_dd_r": 2.155
+          },
+          "searched_full_window": {
+            "trades": 182,
+            "win_rate": 0.5549,
+            "expectancy_r": 0.0667,
+            "avg_win_r": 0.4597,
+            "avg_loss_r": -0.4235,
+            "payoff": 1.086,
+            "profit_factor": 1.354,
+            "total_r": 12.131,
+            "max_dd_r": 3.489
+          },
+          "walk_forward": {
+            "in_sample_expectancy_r": 0.0712,
+            "out_of_sample_expectancy_r": 0.0581,
+            "in_sample_trades": 119,
+            "out_of_sample_trades": 63,
+            "edge_retention": 0.816,
+            "is_profitable_in_sample": true,
+            "is_profitable_out_of_sample": true,
+            "generalises": true,
+            "note": "edge survived out-of-sample"
+          },
+          "validation_folds": [
+            {
+              "fold": 1,
+              "entry_lo": 9971,
+              "entry_hi": 11395,
+              "trades": 11,
+              "expectancy_r": 0.1543,
+              "total_r": 1.698,
+              "win_rate": 0.6364
+            },
+            {
+              "fold": 2,
+              "entry_lo": 11395,
+              "entry_hi": 12819,
+              "trades": 21,
+              "expectancy_r": 0.1058,
+              "total_r": 2.221,
+              "win_rate": 0.619
+            },
+            {
+              "fold": 3,
+              "entry_lo": 12819,
+              "entry_hi": 14245,
+              "trades": 19,
+              "expectancy_r": 0.0462,
+              "total_r": 0.879,
+              "win_rate": 0.5263
+            }
+          ],
+          "feasible": true,
+          "deployed_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": 0.75,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.97
+          },
+          "deployed_geometry_key": "tp1.5_beoff_pc0.75x0.5_troff@2_mb200_s0.97",
+          "deployed_quantile": 0.97,
+          "uses_own_geometry": true,
+          "geometry_basis": "regime geometry beats the pooled geometry on this regime (0.0667 > -inf on expectancy_r)",
+          "enabled": true,
+          "reason": "expectancy within tolerance (+0.067R over 182 trades)",
+          "evaluations": 56
+        },
+        {
+          "regime": "RANGE",
+          "status": "searched",
+          "candidates": 9221,
+          "baseline_within_regime": {
+            "trades": 1036,
+            "win_rate": 0.444,
+            "expectancy_r": -0.1316,
+            "avg_win_r": 0.4689,
+            "avg_loss_r": -0.6111,
+            "payoff": 0.767,
+            "profit_factor": 0.613,
+            "total_r": -136.298,
+            "max_dd_r": 137.323
+          },
+          "searched_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "searched_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "searched_quantile": 0.0,
+          "searched_in_sample": {
+            "trades": 712,
+            "win_rate": 0.4438,
+            "expectancy_r": -0.1597,
+            "avg_win_r": 0.4919,
+            "avg_loss_r": -0.6797,
+            "payoff": 0.724,
+            "profit_factor": 0.577,
+            "total_r": -113.741,
+            "max_dd_r": 116.853
+          },
+          "searched_out_of_sample": {
+            "trades": 328,
+            "win_rate": 0.4482,
+            "expectancy_r": -0.069,
+            "avg_win_r": 0.4127,
+            "avg_loss_r": -0.4602,
+            "payoff": 0.897,
+            "profit_factor": 0.728,
+            "total_r": -22.616,
+            "max_dd_r": 24.171
+          },
+          "searched_full_window": {
+            "trades": 1036,
+            "win_rate": 0.444,
+            "expectancy_r": -0.1316,
+            "avg_win_r": 0.4689,
+            "avg_loss_r": -0.6111,
+            "payoff": 0.767,
+            "profit_factor": 0.613,
+            "total_r": -136.298,
+            "max_dd_r": 137.323
+          },
+          "walk_forward": {
+            "in_sample_expectancy_r": -0.1597,
+            "out_of_sample_expectancy_r": -0.069,
+            "in_sample_trades": 712,
+            "out_of_sample_trades": 328,
+            "edge_retention": null,
+            "is_profitable_in_sample": false,
+            "is_profitable_out_of_sample": false,
+            "generalises": false,
+            "note": "in-sample expectancy was not positive \u2014 no edge to retain"
+          },
+          "validation_folds": [
+            {
+              "fold": 1,
+              "entry_lo": 9971,
+              "entry_hi": 11395,
+              "trades": 79,
+              "expectancy_r": -0.0373,
+              "total_r": -2.948,
+              "win_rate": 0.519
+            },
+            {
+              "fold": 2,
+              "entry_lo": 11395,
+              "entry_hi": 12819,
+              "trades": 120,
+              "expectancy_r": -0.0347,
+              "total_r": -4.168,
+              "win_rate": 0.5333
+            },
+            {
+              "fold": 3,
+              "entry_lo": 12819,
+              "entry_hi": 14245,
+              "trades": 82,
+              "expectancy_r": -0.1214,
+              "total_r": -9.958,
+              "win_rate": 0.4024
+            }
+          ],
+          "feasible": false,
+          "deployed_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "deployed_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "deployed_quantile": 0.0,
+          "uses_own_geometry": false,
+          "geometry_basis": "pooled geometry \u2014 the regime geometry failed the constraints on the full window",
+          "enabled": false,
+          "reason": "expectancy -0.132R worse than -0.050R over 1036 trades",
+          "evaluations": 20
+        },
+        {
+          "regime": "LIQUIDITY_SWEEP",
+          "status": "searched",
+          "candidates": 4129,
+          "baseline_within_regime": {
+            "trades": 993,
+            "win_rate": 0.4642,
+            "expectancy_r": -0.1046,
+            "avg_win_r": 0.4482,
+            "avg_loss_r": -0.5847,
+            "payoff": 0.766,
+            "profit_factor": 0.665,
+            "total_r": -103.878,
+            "max_dd_r": 111.445
+          },
+          "searched_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "searched_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "searched_quantile": 0.0,
+          "searched_in_sample": {
+            "trades": 686,
+            "win_rate": 0.4286,
+            "expectancy_r": -0.1587,
+            "avg_win_r": 0.4759,
+            "avg_loss_r": -0.6346,
+            "payoff": 0.75,
+            "profit_factor": 0.562,
+            "total_r": -108.875,
+            "max_dd_r": 111.105
+          },
+          "searched_out_of_sample": {
+            "trades": 313,
+            "win_rate": 0.5335,
+            "expectancy_r": 0.0095,
+            "avg_win_r": 0.3975,
+            "avg_loss_r": -0.4372,
+            "payoff": 0.909,
+            "profit_factor": 1.047,
+            "total_r": 2.987,
+            "max_dd_r": 11.815
+          },
+          "searched_full_window": {
+            "trades": 993,
+            "win_rate": 0.4642,
+            "expectancy_r": -0.1046,
+            "avg_win_r": 0.4482,
+            "avg_loss_r": -0.5847,
+            "payoff": 0.766,
+            "profit_factor": 0.665,
+            "total_r": -103.878,
+            "max_dd_r": 111.445
+          },
+          "walk_forward": {
+            "in_sample_expectancy_r": -0.1587,
+            "out_of_sample_expectancy_r": 0.0095,
+            "in_sample_trades": 686,
+            "out_of_sample_trades": 313,
+            "edge_retention": null,
+            "is_profitable_in_sample": false,
+            "is_profitable_out_of_sample": true,
+            "generalises": false,
+            "note": "in-sample expectancy was not positive \u2014 no edge to retain"
+          },
+          "validation_folds": [
+            {
+              "fold": 1,
+              "entry_lo": 9971,
+              "entry_hi": 11395,
+              "trades": 89,
+              "expectancy_r": 0.0101,
+              "total_r": 0.898,
+              "win_rate": 0.4944
+            },
+            {
+              "fold": 2,
+              "entry_lo": 11395,
+              "entry_hi": 12819,
+              "trades": 96,
+              "expectancy_r": 0.0739,
+              "total_r": 7.097,
+              "win_rate": 0.6042
+            },
+            {
+              "fold": 3,
+              "entry_lo": 12819,
+              "entry_hi": 14245,
+              "trades": 80,
+              "expectancy_r": -0.0995,
+              "total_r": -7.962,
+              "win_rate": 0.5
+            }
+          ],
+          "feasible": false,
+          "deployed_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "deployed_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "deployed_quantile": 0.0,
+          "uses_own_geometry": false,
+          "geometry_basis": "pooled geometry \u2014 the regime geometry failed the constraints on the full window",
+          "enabled": false,
+          "reason": "expectancy -0.105R worse than -0.050R over 993 trades",
+          "evaluations": 20
+        },
+        {
+          "regime": "CONSOLIDATION",
+          "status": "searched",
+          "candidates": 835,
+          "baseline_within_regime": {
+            "trades": 273,
+            "win_rate": 0.4066,
+            "expectancy_r": -0.123,
+            "avg_win_r": 0.3813,
+            "avg_loss_r": -0.4685,
+            "payoff": 0.814,
+            "profit_factor": 0.558,
+            "total_r": -33.575,
+            "max_dd_r": 34.035
+          },
+          "searched_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "searched_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "searched_quantile": 0.0,
+          "searched_in_sample": {
+            "trades": 177,
+            "win_rate": 0.3785,
+            "expectancy_r": -0.1773,
+            "avg_win_r": 0.3954,
+            "avg_loss_r": -0.5261,
+            "payoff": 0.752,
+            "profit_factor": 0.458,
+            "total_r": -31.381,
+            "max_dd_r": 31.974
+          },
+          "searched_out_of_sample": {
+            "trades": 96,
+            "win_rate": 0.4583,
+            "expectancy_r": -0.0229,
+            "avg_win_r": 0.3598,
+            "avg_loss_r": -0.3467,
+            "payoff": 1.038,
+            "profit_factor": 0.878,
+            "total_r": -2.194,
+            "max_dd_r": 4.289
+          },
+          "searched_full_window": {
+            "trades": 273,
+            "win_rate": 0.4066,
+            "expectancy_r": -0.123,
+            "avg_win_r": 0.3813,
+            "avg_loss_r": -0.4685,
+            "payoff": 0.814,
+            "profit_factor": 0.558,
+            "total_r": -33.575,
+            "max_dd_r": 34.035
+          },
+          "walk_forward": {
+            "in_sample_expectancy_r": -0.1773,
+            "out_of_sample_expectancy_r": -0.0229,
+            "in_sample_trades": 177,
+            "out_of_sample_trades": 96,
+            "edge_retention": null,
+            "is_profitable_in_sample": false,
+            "is_profitable_out_of_sample": false,
+            "generalises": false,
+            "note": "in-sample expectancy was not positive \u2014 no edge to retain"
+          },
+          "validation_folds": [
+            {
+              "fold": 1,
+              "entry_lo": 9971,
+              "entry_hi": 11395,
+              "trades": 21,
+              "expectancy_r": 0.0345,
+              "total_r": 0.725,
+              "win_rate": 0.5238
+            },
+            {
+              "fold": 2,
+              "entry_lo": 11395,
+              "entry_hi": 12819,
+              "trades": 39,
+              "expectancy_r": 0.0387,
+              "total_r": 1.508,
+              "win_rate": 0.5385
+            },
+            {
+              "fold": 3,
+              "entry_lo": 12819,
+              "entry_hi": 14245,
+              "trades": 25,
+              "expectancy_r": -0.1092,
+              "total_r": -2.73,
+              "win_rate": 0.36
+            }
+          ],
+          "feasible": false,
+          "deployed_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "deployed_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "deployed_quantile": 0.0,
+          "uses_own_geometry": false,
+          "geometry_basis": "pooled geometry \u2014 the regime geometry failed the constraints on the full window",
+          "enabled": false,
+          "reason": "expectancy -0.123R worse than -0.050R over 273 trades",
+          "evaluations": 20
+        },
+        {
+          "regime": "WEAK_TREND",
+          "status": "searched",
+          "candidates": 811,
+          "baseline_within_regime": {
+            "trades": 240,
+            "win_rate": 0.4375,
+            "expectancy_r": -0.1039,
+            "avg_win_r": 0.3394,
+            "avg_loss_r": -0.4487,
+            "payoff": 0.756,
+            "profit_factor": 0.588,
+            "total_r": -24.943,
+            "max_dd_r": 30.947
+          },
+          "searched_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "searched_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "searched_quantile": 0.0,
+          "searched_in_sample": {
+            "trades": 140,
+            "win_rate": 0.4643,
+            "expectancy_r": -0.0799,
+            "avg_win_r": 0.3808,
+            "avg_loss_r": -0.4791,
+            "payoff": 0.795,
+            "profit_factor": 0.689,
+            "total_r": -11.179,
+            "max_dd_r": 18.672
+          },
+          "searched_out_of_sample": {
+            "trades": 102,
+            "win_rate": 0.3922,
+            "expectancy_r": -0.1427,
+            "avg_win_r": 0.2731,
+            "avg_loss_r": -0.4109,
+            "payoff": 0.665,
+            "profit_factor": 0.429,
+            "total_r": -14.551,
+            "max_dd_r": 14.551
+          },
+          "searched_full_window": {
+            "trades": 240,
+            "win_rate": 0.4375,
+            "expectancy_r": -0.1039,
+            "avg_win_r": 0.3394,
+            "avg_loss_r": -0.4487,
+            "payoff": 0.756,
+            "profit_factor": 0.588,
+            "total_r": -24.943,
+            "max_dd_r": 30.947
+          },
+          "walk_forward": {
+            "in_sample_expectancy_r": -0.0799,
+            "out_of_sample_expectancy_r": -0.1427,
+            "in_sample_trades": 140,
+            "out_of_sample_trades": 102,
+            "edge_retention": null,
+            "is_profitable_in_sample": false,
+            "is_profitable_out_of_sample": false,
+            "generalises": false,
+            "note": "in-sample expectancy was not positive \u2014 no edge to retain"
+          },
+          "validation_folds": [
+            {
+              "fold": 1,
+              "entry_lo": 9971,
+              "entry_hi": 11395,
+              "trades": 21,
+              "expectancy_r": -0.1555,
+              "total_r": -3.266,
+              "win_rate": 0.4286
+            },
+            {
+              "fold": 2,
+              "entry_lo": 11395,
+              "entry_hi": 12819,
+              "trades": 39,
+              "expectancy_r": -0.03,
+              "total_r": -1.171,
+              "win_rate": 0.5128
+            },
+            {
+              "fold": 3,
+              "entry_lo": 12819,
+              "entry_hi": 14245,
+              "trades": 28,
+              "expectancy_r": -0.3334,
+              "total_r": -9.335,
+              "win_rate": 0.25
+            }
+          ],
+          "feasible": false,
+          "deployed_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "deployed_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "deployed_quantile": 0.0,
+          "uses_own_geometry": false,
+          "geometry_basis": "pooled geometry \u2014 the regime geometry failed the constraints on the full window",
+          "enabled": false,
+          "reason": "expectancy -0.104R worse than -0.050R over 240 trades",
+          "evaluations": 20
+        },
+        {
+          "regime": "HIGH_VOLATILITY",
+          "status": "searched",
+          "candidates": 567,
+          "baseline_within_regime": {
+            "trades": 161,
+            "win_rate": 0.3727,
+            "expectancy_r": -0.1569,
+            "avg_win_r": 0.4353,
+            "avg_loss_r": -0.5087,
+            "payoff": 0.856,
+            "profit_factor": 0.508,
+            "total_r": -25.264,
+            "max_dd_r": 26.319
+          },
+          "searched_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "searched_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "searched_quantile": 0.0,
+          "searched_in_sample": {
+            "trades": 109,
+            "win_rate": 0.3394,
+            "expectancy_r": -0.1676,
+            "avg_win_r": 0.5377,
+            "avg_loss_r": -0.53,
+            "payoff": 1.014,
+            "profit_factor": 0.521,
+            "total_r": -18.269,
+            "max_dd_r": 19.013
+          },
+          "searched_out_of_sample": {
+            "trades": 52,
+            "win_rate": 0.4423,
+            "expectancy_r": -0.1345,
+            "avg_win_r": 0.2705,
+            "avg_loss_r": -0.4557,
+            "payoff": 0.593,
+            "profit_factor": 0.471,
+            "total_r": -6.995,
+            "max_dd_r": 7.306
+          },
+          "searched_full_window": {
+            "trades": 161,
+            "win_rate": 0.3727,
+            "expectancy_r": -0.1569,
+            "avg_win_r": 0.4353,
+            "avg_loss_r": -0.5087,
+            "payoff": 0.856,
+            "profit_factor": 0.508,
+            "total_r": -25.264,
+            "max_dd_r": 26.319
+          },
+          "walk_forward": {
+            "in_sample_expectancy_r": -0.1676,
+            "out_of_sample_expectancy_r": -0.1345,
+            "in_sample_trades": 109,
+            "out_of_sample_trades": 52,
+            "edge_retention": null,
+            "is_profitable_in_sample": false,
+            "is_profitable_out_of_sample": false,
+            "generalises": false,
+            "note": "in-sample expectancy was not positive \u2014 no edge to retain"
+          },
+          "validation_folds": [
+            {
+              "fold": 1,
+              "entry_lo": 9971,
+              "entry_hi": 11395,
+              "trades": 24,
+              "expectancy_r": -0.017,
+              "total_r": -0.409,
+              "win_rate": 0.5833
+            },
+            {
+              "fold": 2,
+              "entry_lo": 11395,
+              "entry_hi": 12819,
+              "trades": 15,
+              "expectancy_r": -0.2671,
+              "total_r": -4.007,
+              "win_rate": 0.4
+            },
+            {
+              "fold": 3,
+              "entry_lo": 12819,
+              "entry_hi": 14245,
+              "trades": 8,
+              "expectancy_r": -0.2651,
+              "total_r": -2.121,
+              "win_rate": 0.25
+            }
+          ],
+          "feasible": false,
+          "deployed_geometry": {
+            "tp_r": 1.5,
+            "be_trigger_r": null,
+            "fast_cash_r": null,
+            "fast_cash_pct": 0.5,
+            "trail_atr": null,
+            "trail_activation_r": 2.0,
+            "max_bars": 200,
+            "min_score": 0.0
+          },
+          "deployed_geometry_key": "tp1.5_beoff_pcoffx0.5_troff@2_mb200_s0",
+          "deployed_quantile": 0.0,
+          "uses_own_geometry": false,
+          "geometry_basis": "pooled geometry \u2014 the regime geometry failed the constraints on the full window",
+          "enabled": false,
+          "reason": "expectancy -0.157R worse than -0.050R over 161 trades",
+          "evaluations": 20
+        }
+      ],
+      "policy": {
+        "enabled_regimes": [
+          "BREAKOUT"
+        ],
+        "disabled_regimes": [
+          "CONSOLIDATION",
+          "HIGH_VOLATILITY",
+          "LIQUIDITY_SWEEP",
+          "RANGE",
+          "TREND_BEAR",
+          "TREND_BULL",
+          "WEAK_TREND"
+        ],
+        "regimes_searched": 8,
+        "regimes_withheld": 0,
+        "regimes_with_own_geometry": [
+          "BREAKOUT"
+        ],
+        "regimes_on_pooled_geometry": [],
+        "out_of_sample": {
+          "trades": 24,
+          "win_rate": 0.5417,
+          "expectancy_r": 0.1582,
+          "avg_win_r": 0.48,
+          "avg_loss_r": -0.2221,
+          "payoff": 2.162,
+          "profit_factor": 2.555,
+          "total_r": 3.798,
+          "max_dd_r": 1.306
+        },
+        "full_window": {
+          "trades": 69,
+          "win_rate": 0.5362,
+          "expectancy_r": 0.0627,
+          "avg_win_r": 0.5056,
+          "avg_loss_r": -0.4493,
+          "payoff": 1.125,
+          "profit_factor": 1.301,
+          "total_r": 4.33,
+          "max_dd_r": 3.168
+        },
+        "validation_folds": [
+          {
+            "fold": 1,
+            "entry_lo": 9971,
+            "entry_hi": 11395,
+            "trades": 4,
+            "expectancy_r": 0.0819,
+            "total_r": 0.328,
+            "win_rate": 0.5
+          },
+          {
+            "fold": 2,
+            "entry_lo": 11395,
+            "entry_hi": 12819,
+            "trades": 8,
+            "expectancy_r": 0.4035,
+            "total_r": 3.228,
+            "win_rate": 0.75
+          },
+          {
+            "fold": 3,
+            "entry_lo": 12819,
+            "entry_hi": 14245,
+            "trades": 5,
+            "expectancy_r": 0.0853,
+            "total_r": 0.426,
+            "win_rate": 0.4
+          }
+        ]
+      },
+      "policy_vs_baseline": {
+        "baseline_expectancy_r": -0.0027,
+        "policy_expectancy_r": 0.1582,
+        "baseline_total_r": -2.536,
+        "policy_total_r": 3.798,
+        "baseline_trades": 954,
+        "policy_trades": 24,
+        "expectancy_delta_r": 0.1609,
+        "total_r_delta": 6.334,
+        "total_r_retention": -1.4976,
+        "trade_reduction": 0.9748,
+        "verdict": "policy improves both total R and expectancy out-of-sample"
+      },
+      "evaluations": 216,
+      "cache_hits": 3792
+    }
+  ],
+  "series": [
+    {
+      "symbol": "AUDUSD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 14250,
+      "candidates": 10567,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.719
+    },
+    {
+      "symbol": "BTCUSD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 19953,
+      "candidates": 15484,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.724
+    },
+    {
+      "symbol": "ETHUSD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 19953,
+      "candidates": 9323,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7454
+    },
+    {
+      "symbol": "EURUSD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 14252,
+      "candidates": 10461,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7151
+    },
+    {
+      "symbol": "GBPUSD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 14252,
+      "candidates": 10551,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7191
+    },
+    {
+      "symbol": "GER40",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 13296,
+      "candidates": 10267,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7191
+    },
+    {
+      "symbol": "NAS100",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 13604,
+      "candidates": 11148,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.724
+    },
+    {
+      "symbol": "NZDUSD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 14234,
+      "candidates": 10290,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7191
+    },
+    {
+      "symbol": "SOLUSD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 19953,
+      "candidates": 14735,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7481
+    },
+    {
+      "symbol": "UK100",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 13185,
+      "candidates": 10129,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.719
+    },
+    {
+      "symbol": "US30",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 13604,
+      "candidates": 10540,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7237
+    },
+    {
+      "symbol": "USDCAD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 14251,
+      "candidates": 10950,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7192
+    },
+    {
+      "symbol": "USDCHF",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 14244,
+      "candidates": 11197,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7256
+    },
+    {
+      "symbol": "USDJPY",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 14246,
+      "candidates": 11153,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7194
+    },
+    {
+      "symbol": "XAGUSD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 13621,
+      "candidates": 10504,
+      "since": "2026-08-11",
+      "score_min": 0.4038,
+      "score_max": 0.7433
+    },
+    {
+      "symbol": "XAUUSD",
+      "style": "SCALP",
+      "timeframe": "M5",
+      "bars": 13622,
+      "candidates": 10574,
+      "since": "2026-08-11",
+      "score_min": 0.4,
+      "score_max": 0.7191
+    }
+  ],
+  "elapsed_seconds": 2371.9,
+  "evaluations": 216,
+  "cache_hits": 3792,
+  "cache_hit_rate": 0.9461,
+  "command": "tools\\optimise_regime.py --days 95 --modes SCALP --objective expectancy_r --min-trades 30 --max-dd-r 20 --passes 3 --label scalp95",
+  "wall_seconds": 2392.6
+}

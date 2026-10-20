@@ -199,15 +199,30 @@ class TestDayTradingStopFloor(_InvariantMixin, unittest.TestCase):
 
 
 class TestSwingStopFloor(_InvariantMixin, unittest.TestCase):
-    """SWING block: pip_size=0.1 (XAUUSD), floor=0.5, d1_atr=0.25 (cap=0.70)."""
+    """SWING block on gold after the 2026-10 stop-widening.
+
+    The published XAU standard puts the stop 0.3-0.5 ATR beyond the structural
+    wick, and the old $6-$12 dollar clamps put it inside one H1 candle's normal
+    range, so every anchor-zone retest grazed the stop out. The engine now uses:
+
+      * `sl_buffer = spread + 0.45 * h1_atr` (gold-only; silver keeps 0.30),
+      * mineral floor  `1.20 * h1_atr + spread` (the $8 floor applies above
+        2.0 ATR, which the mocked context is below),
+      * asset cap      `min(max(9.0, 1.20 * h1_atr), 18.0)`.
+
+    With `h1_atr = 1.0` and no spread every tight structural stop comes out
+    at exactly `1.20 * 1.0 = 1.2` - the mineral floor is what binds - and
+    wide structural stops survive until they meet the 9.0 cap.
+    """
 
     PRICE = 2400.00
-    ATR = 0.25
-    FLOOR = 0.5
+    ATR = 1.0              # h1 ATR: the patched `_estimate_atr` value is d1 ATR
+    MINERAL_FLOOR = 1.2    # 1.20 * h1_atr, spread_dist = 0
+    WIDE_SPAN = 2.0        # structural distance 2.0: above the floor, below the cap
 
     def _run(self, bias, range_low, range_high):
         eng = InstitutionalEntryEngine()
-        ctx = _make_context("XAUUSD", self.PRICE, atr=1.0, spread_pips=0.0)
+        ctx = _make_context("XAUUSD", self.PRICE, atr=self.ATR, spread_pips=0.0)
         with patch.object(eng, "_estimate_atr", return_value=self.ATR), \
              patch.object(eng, "_get_htf_range", return_value=(range_low, range_high)), \
              patch.object(eng, "_find_htf_order_block", return_value=self.PRICE), \
@@ -217,59 +232,56 @@ class TestSwingStopFloor(_InvariantMixin, unittest.TestCase):
             )
 
     def test_buy_tight_structural_stop_is_floored(self):
-        # outer swing 0.1 below entry, buffer 0.40*atr=0.1 -> dist 0.2 < 0.5
+        # outer swing 0.1 below entry: struct dist 0.1 + 0.45 buffer = 0.55, floor 1.2 binds
         res = self._run("BUY", self.PRICE - 0.1, self.PRICE + 0.1)
-        self.assert_stop_invariant(res, "BUY", self.FLOOR, expect_floored=True)
+        self.assert_stop_invariant(res, "BUY", self.MINERAL_FLOOR, expect_floored=True)
 
     def test_buy_re_enforce_branch_is_floored(self):
-        # outer swing above entry -> re-enforce dist 1.20*atr=0.30 < floor
+        # outer swing above entry -> re-enforce dist 1.20*h1_atr = 1.2, floor binds
         res = self._run("BUY", self.PRICE + 1.0, self.PRICE + 2.0)
-        self.assert_stop_invariant(res, "BUY", self.FLOOR, expect_floored=True)
+        self.assert_stop_invariant(res, "BUY", self.MINERAL_FLOOR, expect_floored=True)
 
     def test_buy_wide_structural_stop_not_widened_or_capped(self):
-        # dist 0.6 > floor 0.5 and < max_risk_cap 0.70 -> left alone
-        res = self._run("BUY", self.PRICE - 0.5, self.PRICE + 0.5)
-        self.assert_stop_invariant(res, "BUY", self.FLOOR)
-        self.assertGreater(res["risk_dist"], self.FLOOR)
+        # structural distance 2.0: above the 1.2 mineral floor, below the 9.0 cap
+        res = self._run("BUY", self.PRICE - self.WIDE_SPAN, self.PRICE + 0.1)
+        self.assert_stop_invariant(res, "BUY", self.MINERAL_FLOOR)
+        self.assertGreater(res["risk_dist"], self.MINERAL_FLOOR)
 
     def test_sell_tight_structural_stop_is_floored(self):
         res = self._run("SELL", self.PRICE - 0.1, self.PRICE + 0.1)
-        self.assert_stop_invariant(res, "SELL", self.FLOOR, expect_floored=True)
+        self.assert_stop_invariant(res, "SELL", self.MINERAL_FLOOR, expect_floored=True)
 
     def test_sell_re_enforce_branch_is_floored(self):
         res = self._run("SELL", self.PRICE - 2.0, self.PRICE - 1.0)
-        self.assert_stop_invariant(res, "SELL", self.FLOOR, expect_floored=True)
+        self.assert_stop_invariant(res, "SELL", self.MINERAL_FLOOR, expect_floored=True)
 
     def test_sell_wide_structural_stop_not_widened_or_capped(self):
-        res = self._run("SELL", self.PRICE - 0.5, self.PRICE + 0.5)
-        self.assert_stop_invariant(res, "SELL", self.FLOOR)
-        self.assertGreater(res["risk_dist"], self.FLOOR)
+        res = self._run("SELL", self.PRICE - 0.1, self.PRICE + self.WIDE_SPAN)
+        self.assert_stop_invariant(res, "SELL", self.MINERAL_FLOOR)
+        self.assertGreater(res["risk_dist"], self.MINERAL_FLOOR)
 
 
 class TestSwingCapCannotUndercutFloor(_InvariantMixin, unittest.TestCase):
-    """The SWING `max_risk_cap` is applied AFTER the `pip_size * 5` floor and had
-    no floor of its own, so it could push `risk_dist` back below the floor.
+    """The gold asset cap (`min(max(9.0, 1.20*h1_atr), 18.0)`) now floats a 9.0
+    minimum, so unlike the pre-widening `2.80 * d1_atr` cap it can no longer be
+    dragged below the `pip_size * 5` floor by a degenerate near-flat frame:
+    9.0 is four orders of magnitude above that floor on XAUUSD. What CAN
+    undercut the cap-bound is nothing — but the PC degeneracy check still
+    matters for other buckets and the mineral floor still needs pinning here.
 
-    Reachability: the cap is `2.80 * d1_atr` for XAUUSD (gold/other bucket) and the
-    floor is `pip_size * 5` = 0.5, so the cap only undercuts the floor when
-    `d1_atr < 0.5 / 2.80`. `d1_atr` is a *daily* true range, so with real data this
-    never happens — but a degenerate near-flat D1 frame yielding a tiny positive
-    d1_atr slips past the `if d1_atr <= 0` guard and would produce a sub-5-pip stop
-    that MT5 rejects, while the sizer derives a huge lot size from the tiny
-    risk_dist (the same failure mode as the BTCUSD 0.06-risk -> 100-lot case).
-
-    These tests fail against the pre-fix engine, where `risk_dist` comes out at the
-    cap (0.14) instead of the floor (0.5).
+    These tests pin: with a degenerate d1 ATR the stop must still come out at
+    the mineral floor (`1.20 * h1_atr` = 1.2 in the mocked context), and with a
+    normal ATR the cap must still trim a runaway structural distance.
     """
 
     PRICE = 2400.00
-    D1_ATR = 0.05          # degenerate: 2.80 * 0.05 = 0.14 < floor 0.5
-    FLOOR = 0.5            # pip_size (0.1) * 5
+    D1_ATR = 0.05          # degenerate daily ATR (the old 2.80*x cap would be 0.14)
+    MINERAL_FLOOR = 1.2    # 1.20 * h1_atr, spread_dist = 0
 
-    def _run(self, bias, range_low, range_high):
+    def _run(self, bias, range_low, range_high, d1_atr=None):
         eng = InstitutionalEntryEngine()
         ctx = _make_context("XAUUSD", self.PRICE, atr=1.0, spread_pips=0.0)
-        with patch.object(eng, "_estimate_atr", return_value=self.D1_ATR), \
+        with patch.object(eng, "_estimate_atr", return_value=(d1_atr if d1_atr is not None else self.D1_ATR)), \
              patch.object(eng, "_get_htf_range", return_value=(range_low, range_high)), \
              patch.object(eng, "_find_htf_order_block", return_value=self.PRICE), \
              patch.object(eng, "_detect_choch", return_value=True):
@@ -277,29 +289,22 @@ class TestSwingCapCannotUndercutFloor(_InvariantMixin, unittest.TestCase):
                 ctx, _regime(), tentative_bias=bias, trade_style="SWING", mtf_data=None
             )
 
-    def test_cap_is_lifted_to_the_floor(self):
+    def test_degenerate_d1_atr_keeps_mineral_floor_buy(self):
         res = self._run("BUY", self.PRICE - 0.1, self.PRICE + 0.1)
-        self.assert_stop_invariant(res, "BUY", self.FLOOR, expect_floored=True)
-        self.assertGreaterEqual(res["risk_dist"], self.FLOOR - 1e-9)
+        self.assert_stop_invariant(res, "BUY", self.MINERAL_FLOOR, expect_floored=True)
+        self.assertGreaterEqual(res["risk_dist"], self.MINERAL_FLOOR - 1e-9)
 
-    def test_sell_cap_is_lifted_to_the_floor(self):
+    def test_degenerate_d1_atr_keeps_mineral_floor_sell(self):
         res = self._run("SELL", self.PRICE - 0.1, self.PRICE + 0.1)
-        self.assert_stop_invariant(res, "SELL", self.FLOOR, expect_floored=True)
-        self.assertGreaterEqual(res["risk_dist"], self.FLOOR - 1e-9)
+        self.assert_stop_invariant(res, "SELL", self.MINERAL_FLOOR, expect_floored=True)
+        self.assertGreaterEqual(res["risk_dist"], self.MINERAL_FLOOR - 1e-9)
 
     def test_cap_still_binds_above_the_floor(self):
-        """The clamp must not disable the cap: a normal D1 ATR still trims."""
-        eng = InstitutionalEntryEngine()
-        ctx = _make_context("XAUUSD", self.PRICE, atr=1.0, spread_pips=0.0)
-        with patch.object(eng, "_estimate_atr", return_value=1.0), \
-             patch.object(eng, "_get_htf_range", return_value=(self.PRICE - 5.0, self.PRICE + 5.0)), \
-             patch.object(eng, "_find_htf_order_block", return_value=self.PRICE), \
-             patch.object(eng, "_detect_choch", return_value=True):
-            res = eng.calculate_entry_and_levels(
-                ctx, _regime(), tentative_bias="BUY", trade_style="SWING", mtf_data=None
-            )
-        # Structural distance is ~5.0, cap is 2.80 * 1.0 = 2.80 -> the cap applies.
-        self.assertAlmostEqual(res["risk_dist"], 2.80, places=6)
+        """The clamp must not disable the cap: a normal H1 ATR still trims."""
+        # Structural distance is ~15.45; the gold cap is min(max(9.0, 1.2*1.0), 18.0)
+        # = 9.0 -> the cap applies.
+        res = self._run("BUY", self.PRICE - 15.0, self.PRICE + 15.0, d1_atr=1.0)
+        self.assertAlmostEqual(res["risk_dist"], 9.0, places=6)
 
 
 class TestEndToEndStopInvariant(_InvariantMixin, unittest.TestCase):

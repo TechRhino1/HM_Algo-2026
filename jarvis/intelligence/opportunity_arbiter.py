@@ -390,7 +390,18 @@ class UniversalOpportunityArbiter:
         # Actionability Determination: Require Grade A/A+ or solid Grade B with positive EV and passed/acceptable quality gate
         failing_reasons = getattr(decision_obj.quality_gate, "failing_reasons", []) if (decision_obj and getattr(decision_obj, "quality_gate", None)) else []
         critical_failures = [r for r in failing_reasons if any(c in r for c in ("Drawdown", "Spread", "Regime Viability", "Circuit Breaker"))]
-        gate_acceptable = (len(failing_reasons) <= 1 and len(critical_failures) == 0)
+        # A candidate with one failed gate used to stay actionable as long as the
+        # failure was not in `critical_failures` - measured on jarvis_history.db:
+        # THAT is how banned-strategy gold trades executed on 2026-10-13..16
+        # ("Strategy Viable" being the single failing reason) and how 00-06h
+        # gold trades fired under a closed session window ("Forex Prime
+        # Session" being the single failing reason). A HARD gate failure is
+        # never an acceptable residual: consult the same HARD_GATES set the
+        # adaptive gate policy enforces at decision time, so the two layers
+        # cannot disagree about what may still trade.
+        from jarvis.intelligence.gate_policy import HARD_GATES
+        hard_failures = [r for r in failing_reasons if r in HARD_GATES]
+        gate_acceptable = (len(failing_reasons) <= 1 and len(critical_failures) == 0 and len(hard_failures) == 0)
         decision_val = getattr(decision_obj, "decision", "")
 
         is_actionable = bool(

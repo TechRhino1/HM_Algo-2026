@@ -24,7 +24,8 @@
       "US500",
       "GER40",
       "UK100"
-    ]
+    ],
+    "use_calibrated_entry_policy": true
   },
   "risk": {
     "max_risk_per_trade_pct": 0.5,

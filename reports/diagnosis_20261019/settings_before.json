@@ -1,0 +1,40 @@
+{
+  "trading": {
+    "magic_number": 888999,
+    "default_mode": "demo",
+    "default_trade_style": "DAY_TRADING",
+    "primary_timeframe": "H1",
+    "macro_timeframe": "D1",
+    "allowed_symbols": [
+      "BTCUSD",
+      "ETHUSD",
+      "SOLUSD",
+      "XAUUSD",
+      "XAGUSD",
+      "WTI",
+      "EURUSD",
+      "GBPUSD",
+      "USDJPY",
+      "AUDUSD",
+      "USDCAD",
+      "USDCHF",
+      "NZDUSD",
+      "US30",
+      "NAS100",
+      "US500",
+      "GER40",
+      "UK100"
+    ]
+  },
+  "risk": {
+    "max_risk_per_trade_pct": 0.5,
+    "max_portfolio_risk_pct": 10.0,
+    "max_daily_loss_pct": 5.0,
+    "max_drawdown_pct": 15.0,
+    "max_open_positions": 4,
+    "max_symbol_exposure_count": 1,
+    "min_rr_ratio": 2.0,
+    "min_trade_score": 80.0,
+    "high_risk_trade_score": 88.0
+  }
+}

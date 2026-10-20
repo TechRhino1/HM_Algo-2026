@@ -432,16 +432,22 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
             "TREND_FOLLOWING": 0.0,
         },
         banned_strategies=["RANGE_MEAN_REVERSION", "TREND_FOLLOWING"],
-        sl_atr_multiplier=1.00,                # Institutional Gold SMC stop: tight anchor beyond swept swing (max 10-12 pts)
+        sl_atr_multiplier=1.50,                # XAUUSD structural stops beyond the swept wick + 1.5x ATR cushion (published XAu standard 0.3-0.5 ATR buffer; sub-1x ATR stops sit inside one candle's range and get swept)
         min_target_rr=2.0,
         asym_rr=3.8,
-        anti_wick_buffer_atr=0.25,
+        anti_wick_buffer_atr=0.45,
         fast_cash_r=1.50,
         fast_cash_volume_pct=0.33,
         be_trigger_r=1.80,
         runner_trail_atr=2.00,
         session_restriction=True,
-        allowed_utc_hours=(7, 19),
+        # NY data-driven hours: XAU volatility/liquidity peak sits 12:00-15:30 UTC
+        # (13:00 UTC is the widest hour at ~$24 range; 21:00 UTC rollover dies to
+        # ~$2.80). Our own live ledger agrees: the 12-14h block is the only
+        # consistently positive gold segment, while 15-17h and 06-08h were the
+        # two biggest bleeder clusters. Asia sessions are mostly uninformed
+        # flow (Tokyo dominance documented for metals) and are excluded.
+        allowed_utc_hours=(12, 16),
         contract_size=100.0,
         pip_size=0.1,
         pip_value_per_lot=10.0,
