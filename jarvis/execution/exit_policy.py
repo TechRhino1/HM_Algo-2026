@@ -86,6 +86,20 @@ class ExitPolicy:
     milestones: List[tuple] = field(
         default_factory=lambda: [(1.0, -0.35), (1.5, 0.25), (2.0, 0.60), (2.8, 1.25), (3.8, 2.25), (5.0, 3.50)]
     )
+    # Bridge protection (2026-10-21 master evaluation): the proven ladder
+    # above only engages at +1.00R, but the ledger's death zone sits BELOW
+    # that — trades that peaked around +0.6..0.9R and still died at the full
+    # -1.00R stop. The cap arms only when the trade is actively GIVING BACK
+    # its peak (peak minus current excursion >= peak_bridge_retrace_r): a
+    # healthy runner at its peak never meets the retrace condition, so no
+    # stop can ratchet prematurely (the historic defect the canonical policy
+    # tests pin: "no stop ratchet before the +2R breakeven trigger"). The
+    # cap itself locks a FIXED LOSS level (peak_bridge_lock_r, a negative R
+    # below entry): it never locks profit and only converts a -1R
+    # round-trip into a -0.25R controlled loss.
+    peak_bridge_activate_r: float = 0.60
+    peak_bridge_retrace_r: float = 0.45
+    peak_bridge_lock_r: float = -0.25
     # Time stop: a trade that has been alive longer than time_stop_minutes and
     # still sits below time_stop_min_r is flattened outright (a close decision,
     # not a stop move). 0 disables. See DEFAULT_* above for the audit basis.
@@ -190,6 +204,7 @@ def evaluate_exit(
     regime: Optional[str] = None,
     partial_executable: bool = True,
     hold_minutes: Optional[float] = None,
+    peak_favorable_dist: Optional[float] = None,
 ) -> ExitDecision:
     """Compute the stop-loss / partial-profit action for an open trade.
 
@@ -336,6 +351,30 @@ def evaluate_exit(
             elif (not is_buy) and (dec.new_sl == 0 or lock_price < dec.new_sl):
                 dec.new_sl = lock_price
                 dec.actions.append(f"MILESTONE_{lock_r:.1f}R")
+
+    # ── 3.6 Bridge protection (2026-10-21 master evaluation) ────────────────
+    # Arms only when the trade is actively giving back its peak (retrace >=
+    # peak_bridge_retrace_r): a runner sitting at its peak is untouched, so
+    # no premature ratchet can occur. The cap locks the fixed peak_bridge_lock_r
+    # level (a small controlled LOSS below entry) — it never locks profit, so
+    # it cannot choke a future runner, and the one-way invariant in stage 6
+    # keeps every ratchet already in place.
+    peak_dist_raw = favorable_dist
+    if peak_favorable_dist is not None:
+        peak_dist_raw = max(0.0, float(peak_favorable_dist))
+    peak_excursion_r = peak_dist_raw / risk_dist
+    current_excursion_r = favorable_dist / risk_dist
+    retrace_r = peak_excursion_r - current_excursion_r
+    cap_dist = risk_dist * policy.peak_bridge_lock_r
+    cap_price = round(entry + (cap_dist if is_buy else -cap_dist), digits)
+    cap_improves = (cap_price > dec.new_sl) if is_buy else (dec.new_sl == 0 or cap_price < dec.new_sl)
+    if (
+        peak_excursion_r >= policy.peak_bridge_activate_r
+        and retrace_r >= policy.peak_bridge_retrace_r
+        and cap_improves
+    ):
+        dec.new_sl = cap_price
+        dec.actions.append(f"BRIDGE_CAP_{policy.peak_bridge_lock_r:.2f}R")
 
     # ── 3.5 Progress-to-TP Ratchets (Institutional Target Proximity Protection) ─
     # Institutional rule (SKILL.md §8): Never let a trade reaching >= 65-80% of

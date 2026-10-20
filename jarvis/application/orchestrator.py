@@ -748,6 +748,51 @@ class JarvisOrchestrator:
             profile=profile,
         )
 
+    def _is_unsplittable_book(
+        self,
+        entry_price: float,
+        stop_loss: float,
+        equity: float,
+        spec: Any,
+        volume_min: float,
+    ) -> bool:
+        """True when the candidate book degrades to a single all-or-nothing lot.
+
+        A split needs the position to survive as partial + runner, which demands
+        the expected (post-shrink) volume to reach 2x the broker minimum. When
+        the risk-parity ideal — discounted by a representative anchor/confidence
+        shrink of 0.55 — falls below that floor, the trade executes as one
+        min-lot book: no partial can be banked, so sub-2R geometry cannot
+        compound (the measured 208 SL vs 52 TP failure mode).
+        """
+        try:
+            entry_price = float(entry_price)
+            stop_loss = float(stop_loss)
+            equity = float(equity)
+            volume_min = float(volume_min)
+            pip_value = float(getattr(spec, "pip_value_per_lot", 0.0) or 0.0)
+            pip_size = float(getattr(spec, "pip_size", 0.0) or 0.0)
+            if equity <= 0 or pip_value <= 0 or pip_size <= 0 or entry_price <= 0 or stop_loss <= 0:
+                return False
+            sl_pips = abs(entry_price - stop_loss) / pip_size
+            if sl_pips <= 0:
+                return False
+            base_pct = float(getattr(self.risk_engine, "max_risk_per_trade_pct", 0.5) or 0.5)
+            if equity < 250.0:
+                pct = min(base_pct * 3.0, 2.0)
+            elif equity < 500.0:
+                pct = min(base_pct * 2.0, 1.5)
+            elif equity < 1000.0:
+                pct = min(base_pct * 1.5, 1.0)
+            else:
+                pct = base_pct
+            budget = equity * (pct / 100.0)
+            ideal_lots = budget / (sl_pips * pip_value)
+            expected_lots = ideal_lots * 0.55
+            return expected_lots < 2.0 * max(volume_min, 0.01)
+        except Exception:
+            return False
+
     def run_cycle_for_symbol(self, symbol: str, trade_style: Optional[str] = None,
                              dry_run: bool = False) -> Dict[str, Any]:
         """Executes a single end-to-end analytical and decision cycle for a target symbol and trade style.
@@ -1668,6 +1713,34 @@ class JarvisOrchestrator:
                         "volume_step": 0.01
                     }
                 ctx = candidate.context
+
+                # ── Unsplittable-book dispatch floor (2026-10-21 master evaluation) ──
+                # When the whole candidate book would end up as a single
+                # all-or-nothing min-lot position (the measured 208 SL vs 52 TP
+                # book), sub-2R geometry cannot compound: there is no partial to
+                # bank, so the trade is a ratcheted runner against a full -1R
+                # stop. Enforce the institutional 2R dispatch floor for those
+                # books; split-capable books keep the standard 1.4R gate.
+                try:
+                    _vol_min = (
+                        float(sym_info.get("volume_min", 0.01) or 0.01)
+                        if isinstance(sym_info, dict)
+                        else float(getattr(sym_info, "volume_min", 0.01) or 0.01)
+                    )
+                    _equity = float(getattr(account, "equity", 0.0) or 0.0)
+                    _entry_px = float(getattr(decision, "price", 0.0) or 0.0)
+                    _sl_px = float(getattr(decision, "stop_loss", 0.0) or 0.0)
+                    if self._is_unsplittable_book(_entry_px, _sl_px, _equity, _spec, _vol_min):
+                        if decision.risk_reward_ratio < 2.00:
+                            logger.info(
+                                f"🚫 UNSPLIT_RR_GATE: {sym} {candidate.trade_style} {candidate.bias} "
+                                f"RR={decision.risk_reward_ratio:.2f} < 2.00 — all-or-nothing book; "
+                                f"sub-2R uncompoundable. Skipping."
+                            )
+                            continue
+                except Exception:
+                    pass
+
                 cur_spread = ctx.volatility.current_spread_pips if ctx and hasattr(ctx, "volatility") else _spec.typical_spread_pips
 
                 with self._execution_lock:

@@ -734,6 +734,7 @@ class PositionMonitorEngine:
                 regime=regime_str,
                 partial_executable=pos.volume >= 0.02,
                 hold_minutes=(open_dur_sec / 60.0) if open_dur_sec else None,
+                peak_favorable_dist=self._peak_mfe.get(pos.ticket),
             )
 
             if exit_dec.should_close:
