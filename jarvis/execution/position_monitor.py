@@ -319,11 +319,23 @@ class PositionMonitorEngine:
         # news-window bank is a scheduled-risk protection; never suppress
         # either with the entry grace period
         open_dur_sec = self._get_position_duration_sec(pos)
-        grace_exempt_reason = reason in ("PROXIMITY_TP_HARVEST", "NEWS_EVENT_BANK")
-        if not grace_exempt_reason and open_dur_sec < DISCRETIONARY_GRACE_PERIOD_SEC:
+        upper_reason = str(reason or "").upper()
+        grace_exempt_reason = (
+            reason in ("PROXIMITY_TP_HARVEST", "NEWS_EVENT_BANK")
+            or "REVERSAL" in upper_reason
+            or "STRUCTURAL" in upper_reason
+            or "DIRECTION" in upper_reason
+            or "PROFIT_BANK" in upper_reason
+            or "PROFIT_HARVEST" in upper_reason
+            or "FLIP" in upper_reason
+            or "MOMENTUM_EXHAUST" in upper_reason
+        )
+        is_scalp_trade = "SCALP" in str(getattr(pos, "comment", "")).upper()
+        effective_grace_sec = 30.0 if is_scalp_trade else DISCRETIONARY_GRACE_PERIOD_SEC
+        if not grace_exempt_reason and open_dur_sec < effective_grace_sec:
             logger.info(
                 f"🛡️ GRACE PERIOD: Discretionary exit '{reason}' suppressed for #{pos.ticket} "
-                f"({pos.symbol}) — age {open_dur_sec:.1f}s < {DISCRETIONARY_GRACE_PERIOD_SEC:.0f}s."
+                f"({pos.symbol}) — age {open_dur_sec:.1f}s < {effective_grace_sec:.0f}s."
             )
             return False
 
@@ -777,9 +789,11 @@ class PositionMonitorEngine:
             logger.warning(f"⚠️ Spread blowout {spread:.1f} pips on #{pos.ticket} — skipping modification.")
             return
 
-        # ── 180s Post-Entry Discretionary Grace Period (Spec v2.1 Refinement 3) ──
+        # ── 180s Post-Entry Discretionary Grace Period (Spec v2.1 Refinement 3, 30s for scalps) ──
         open_dur_sec = self._get_position_duration_sec(pos)
-        in_grace_period = (open_dur_sec < DISCRETIONARY_GRACE_PERIOD_SEC)
+        is_scalp_pos = "SCALP" in str(getattr(pos, "comment", "")).upper()
+        effective_grace = 30.0 if is_scalp_pos else DISCRETIONARY_GRACE_PERIOD_SEC
+        in_grace_period = (open_dur_sec < effective_grace)
 
         # ─────────────────────────────────────────────────────────────────────
         # EMERGENCY BRAKE: tighten everything to breakeven
@@ -2018,9 +2032,17 @@ class PositionMonitorEngine:
                     return current_sl, None, True, f"STRUCTURAL_THESIS_INVALIDATION({current_r:.2f}R | {sig_summary})"
                 return current_sl, None, False, None
 
-            # ── NORMAL BREATHING ROOM ZONE (+0.20R <= current_r < +0.50R) ─────────
-            # Trades under +0.50R are in normal early development; allow full breathing room.
+            # ── PHASE 0.5: Early Profit Protection (+0.20R <= current_r < +0.50R) ─
+            # When trade has positive gain and confirmed structural reversal forms:
+            # Lock breakeven or bank remaining profit so it never becomes a loss.
             if current_r < 0.50:
+                if has_structural_break and signal_count >= 3:
+                    return current_sl, None, True, f"DIRECTION_REVERSAL_PROFIT_HARVEST(+{current_r:.2f}R | {sig_summary})"
+                elif has_structural_break or signal_count >= 2:
+                    buf = policy.buffer_distance(risk_dist) if hasattr(policy, "buffer_distance") else min(atr * 0.10, risk_dist * 0.10)
+                    be_sl = round(pos.open_price + buf if is_buy else pos.open_price - buf, digits)
+                    if (is_buy and be_sl > current_sl) or ((not is_buy) and (current_sl == 0 or be_sl < current_sl)):
+                        return be_sl, f"REVERSAL_DEFENSE_BE@{be_sl:.4f}({sig_summary})", False, None
                 return current_sl, None, False, None
 
             # ── PHASE 3: High Profit Runner (current_r >= 1.80R) ──────────────────
@@ -2048,6 +2070,9 @@ class PositionMonitorEngine:
 
             # ── PHASE 1: Established Profit (+0.50R <= current_r < 1.0R) ─────────
             else:
+                # Discretionary market close on strong confluent reversal to bank profit
+                if signal_count >= 3 or (has_structural_break and any("MOMENTUM" in s or "SWEEP" in s or "ABSORPTION" in s for s in reversal_signals)):
+                    return current_sl, None, True, f"DIRECTION_REVERSAL_PROFIT_HARVEST(+{current_r:.2f}R | {sig_summary})"
                 # Ratchet to breakeven if there is an opposite structural shift or confluent reversal
                 if has_structural_break or signal_count >= 2:
                     buf = policy.buffer_distance(risk_dist) if hasattr(policy, "buffer_distance") else min(atr * 0.10, risk_dist * 0.10)

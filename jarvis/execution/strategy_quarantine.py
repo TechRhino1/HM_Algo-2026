@@ -38,6 +38,7 @@ import sqlite3
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timezone, timedelta
 
 try:
     from jarvis.data.database import TRADE_DB as _CANONICAL_DB
@@ -122,6 +123,8 @@ def _load_full(
 
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+        LOOKBACK_DAYS = 14
+        since_iso = (datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)).isoformat()
         try:
             rows = conn.execute(
                 """
@@ -131,8 +134,10 @@ def _load_full(
                 WHERE execution_mode = 'demo'
                   AND closed_at IS NOT NULL
                   AND realized_pnl IS NOT NULL
+                  AND closed_at >= ?
                 ORDER BY id ASC
-                """
+                """,
+                (since_iso,)
             ).fetchall()
         finally:
             conn.close()

@@ -793,6 +793,102 @@ class JarvisOrchestrator:
         except Exception:
             return False
 
+    def _apply_stop_and_reverse_if_eligible(
+        self,
+        decision: Any,
+        context: Optional[Any],
+        active_sym_positions: List[Any],
+        positions: List[Any],
+        canonical_sym: str,
+        entry_override: bool = False
+    ) -> Tuple[List[Any], List[Any], bool]:
+        """
+        Institutional Stop-and-Reverse (SAR) Protocol:
+        When the AI resolves a high-conviction setup in the OPPOSITE direction of an active trade,
+        and the opposing trade is in profit (to bank it) or failing (to cut loss early),
+        closes the opposing trade first and allows the reversal to execute cleanly.
+        """
+        def _get_pos_side(p: Any) -> str:
+            raw = getattr(p, "side", getattr(p, "type", "BUY"))
+            if isinstance(raw, int):
+                return "BUY" if raw == 0 else "SELL"
+            return str(raw or "BUY").upper()
+
+        opposing_positions = [
+            p for p in active_sym_positions
+            if _get_pos_side(p) != str(getattr(decision, "bias", "")).upper()
+        ]
+        if not opposing_positions:
+            return active_sym_positions, positions, False
+
+        opp_pos = opposing_positions[0]
+        opp_open_price = float(getattr(opp_pos, "open_price", 0.0) or 0.0)
+        opp_sl_price = float(getattr(opp_pos, "sl", 0.0) or 0.0)
+        atr_val = getattr(getattr(context, "volatility", None), "atr", 1.0) or 1.0 if context else 1.0
+        opp_risk_dist = abs(opp_open_price - opp_sl_price) if opp_sl_price > 0 else (atr_val * 2.0)
+        cur_price_val = float(getattr(context, "current_price", opp_open_price) or opp_open_price) if context else opp_open_price
+        opp_r = ((cur_price_val - opp_open_price) if _get_pos_side(opp_pos) == "BUY" else (opp_open_price - cur_price_val)) / max(opp_risk_dist, 1e-6)
+
+        opp_open_time = getattr(opp_pos, "open_time", None)
+        opp_age_sec = 0.0
+        if opp_open_time:
+            try:
+                if isinstance(opp_open_time, str):
+                    open_dt = datetime.fromisoformat(opp_open_time.replace("Z", "+00:00")) if "T" in opp_open_time else datetime.strptime(opp_open_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                elif isinstance(opp_open_time, datetime):
+                    open_dt = opp_open_time if opp_open_time.tzinfo else opp_open_time.replace(tzinfo=timezone.utc)
+                else:
+                    open_dt = None
+                if open_dt:
+                    opp_age_sec = max(0.0, (datetime.now(timezone.utc) - open_dt).total_seconds())
+            except Exception:
+                opp_age_sec = 0.0
+
+        opp_comment = str(getattr(opp_pos, "comment", "") or "").upper()
+        opp_is_swing = "SWNG" in opp_comment or "SWING" in opp_comment
+        opp_is_day = "DAY" in opp_comment or "INTRADAY" in opp_comment
+        new_is_scalp = str(getattr(decision, "trade_style", "")).upper() == "SCALP"
+
+        struct_choch = bool(getattr(getattr(context, "structure", None), "choch", False)) if context else False
+        has_breathing_room = (opp_age_sec >= (60.0 if new_is_scalp else 180.0)) or (opp_r <= -0.50) or struct_choch or (opp_r >= 0.20)
+        horizon_allowed = not (new_is_scalp and (opp_is_swing or opp_is_day))
+        conf_val = float(getattr(decision, "model_confidence", 0.0) or 0.0)
+        ev_val = float(getattr(decision, "expected_value", 0.0) or 0.0)
+        rr_val = float(getattr(decision, "risk_reward_ratio", 0.0) or 0.0)
+        grade_val = getattr(decision, "grade", getattr(decision, "setup_grade", "")) or ""
+        high_conviction = (
+            (conf_val >= 0.48 or entry_override is True or grade_val in ("GRADE_A_PLUS", "GRADE A+", "GRADE_A", "GRADE A", "GRADE_B", "GRADE B"))
+            and ev_val > 0.0
+            and rr_val >= 1.2
+        )
+        opp_is_failing_or_banking = (opp_r >= 0.20) or (opp_r <= -0.15) or struct_choch
+
+        is_flip_eligible = (
+            high_conviction
+            and has_breathing_room
+            and horizon_allowed
+            and opp_is_failing_or_banking
+        )
+        if not is_flip_eligible:
+            return active_sym_positions, positions, False
+
+        _flip_action = "PROFIT HARVEST" if opp_r >= 0.20 else ("STOP INVALIDATION" if opp_r <= -0.15 else "STRUCTURAL SHIFT")
+        logger.info(
+            f"🔄 STOP-AND-REVERSE ({_flip_action}): High-conviction {getattr(decision, 'bias', 'TRADE')} signal "
+            f"({conf_val*100:.1f}%, EV=${ev_val:.2f}) "
+            f"closes opposing #{opp_pos.ticket} {getattr(opp_pos, 'symbol', canonical_sym)} {getattr(opp_pos, 'type', '')} ({opp_r:+.2f}R, age={opp_age_sec:.0f}s). "
+            f"Executing clean position reversal into {getattr(decision, 'bias', '')}."
+        )
+        close_res = self.mt5_client.close_position(opp_pos.ticket)
+        if close_res and close_res.get("status") in ("CLOSED", "PARTIALLY_CLOSED"):
+            self.risk_engine.release_risk(canonical_sym)
+            active_sym_positions = [p for p in active_sym_positions if p.ticket != opp_pos.ticket]
+            positions = [p for p in positions if p.ticket != opp_pos.ticket]
+            self._last_execution_time[canonical_sym] = 0.0
+            return active_sym_positions, positions, True
+
+        return active_sym_positions, positions, False
+
     def run_cycle_for_symbol(self, symbol: str, trade_style: Optional[str] = None,
                              dry_run: bool = False) -> Dict[str, Any]:
         """Executes a single end-to-end analytical and decision cycle for a target symbol and trade style.
@@ -1154,13 +1250,19 @@ class JarvisOrchestrator:
         if not is_exec_style_match:
             auth_res = {"authorized": False, "reason": f"STYLE_FILTER: Opportunity style {active_trade_style} does not match active trading style {orch_style}"}
         elif entry_dec is not None:
+            # High-conviction elite setup bypass: If blended AI score is elite (>=80.0), quality gate passed, and positive EV (>=0.40R),
+            # allow entry authorization
+            is_elite_setup = float(getattr(decision, "ai_score", 0.0) or 0.0) >= 80.0 and gate_passed and decision.expected_value >= 0.40
+            is_auth = bool(entry_dec.allowed) or is_elite_setup
             auth_res = {
-                "authorized": bool(entry_dec.allowed),
-                "reason": None if entry_dec.allowed else f"CALIBRATED_ENTRY: {entry_dec.reason}",
+                "authorized": is_auth,
+                "reason": None if is_auth else f"CALIBRATED_ENTRY: {entry_dec.reason}",
             }
-            if not entry_dec.allowed:
+            if not is_auth:
                 decision.decision = "WAIT"
                 decision.execution_authorized = False
+            elif is_elite_setup and not entry_dec.allowed:
+                decision.decision = "EXECUTE"
         elif decision.decision == "EXECUTE" and decision.model_confidence < MIN_CONFIDENCE:
             decision.decision = "WAIT"
             decision.execution_authorized = False
@@ -1236,13 +1338,14 @@ class JarvisOrchestrator:
         if _is_premium_profile and wants_entry:
             try:
                 _p_window = getattr(_prof, "allowed_utc_hours", None)
-                _p_floor = float(getattr(_prof, "premium_out_of_window_min_ai_score", 0.0) or 0.0)
+                _raw_p_floor = float(getattr(_prof, "premium_out_of_window_min_ai_score", 0.0) or 0.0)
+                _p_floor = min(_raw_p_floor, 68.0) if _raw_p_floor > 0 else 65.0
                 _now_h = datetime.now(timezone.utc).hour
                 _in_window = bool(_p_window and _p_window[0] <= _now_h < _p_window[1])
                 _p_score = float(getattr(decision, "ai_score", 0.0) or 0.0)
                 # The single definition of an elite off-window setups used by
                 # both the cap bypass and the blackout bypass below: session
-                # closed, profile opted in, score above the premium floor.
+                # closed, profile opted in, score above the calibrated floor.
                 _premium_offwindow_elite = (
                     bool(_p_window)
                     and not _in_window
@@ -1268,84 +1371,17 @@ class JarvisOrchestrator:
                 logger.debug("premium cap gate failed open: %s", _cap_exc)
 
         # ── Institutional Stop-and-Reverse (SAR) / Position Flip Protocol ───────
-        # When the AI resolves a high-conviction setup in the OPPOSITE direction of an active trade,
-        # and the opposing trade is flat or in drawdown (< 0.50R), do NOT let Base Exposure (1 >= 1)
-        # block the reversal. Close the failing opposing trade first and execute the reversal cleanly.
-        def _get_pos_side(p: Any) -> str:
-            raw = getattr(p, "side", getattr(p, "type", "BUY"))
-            if isinstance(raw, int):
-                return "BUY" if raw == 0 else "SELL"
-            return str(raw or "BUY").upper()
-
-        opposing_positions = [
-            p for p in active_sym_positions
-            if _get_pos_side(p) != str(decision.bias).upper()
-        ]
-        if not dry_run and wants_entry and decision.decision == "EXECUTE" and opposing_positions:
-            opp_pos = opposing_positions[0]
-            opp_open_price = float(getattr(opp_pos, "open_price", 0.0) or 0.0)
-            opp_sl_price = float(getattr(opp_pos, "sl", 0.0) or 0.0)
-            opp_risk_dist = abs(opp_open_price - opp_sl_price) if opp_sl_price > 0 else (context.volatility.atr * 2.0)
-            cur_price_val = float(getattr(context, "current_price", opp_open_price) or opp_open_price)
-            opp_r = ((cur_price_val - opp_open_price) if _get_pos_side(opp_pos) == "BUY" else (opp_open_price - cur_price_val)) / max(opp_risk_dist, 1e-6)
-
-            # Check open duration of opposing trade to give it minimum breathing room
-            opp_open_time = getattr(opp_pos, "open_time", None)
-            opp_age_sec = 0.0
-            if opp_open_time:
-                try:
-                    if isinstance(opp_open_time, str):
-                        open_dt = datetime.fromisoformat(opp_open_time.replace("Z", "+00:00")) if "T" in opp_open_time else datetime.strptime(opp_open_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                    elif isinstance(opp_open_time, datetime):
-                        open_dt = opp_open_time if opp_open_time.tzinfo else opp_open_time.replace(tzinfo=timezone.utc)
-                    else:
-                        open_dt = None
-                    if open_dt:
-                        opp_age_sec = max(0.0, (datetime.now(timezone.utc) - open_dt).total_seconds())
-                except Exception:
-                    opp_age_sec = 0.0
-
-            # Style alignment: lower timeframe noise (e.g. SCALP) cannot flip higher timeframe positions (DAY / SWING)
-            opp_comment = str(getattr(opp_pos, "comment", "") or "").upper()
-            opp_is_swing = "SWNG" in opp_comment or "SWING" in opp_comment
-            opp_is_day = "DAY" in opp_comment or "INTRADAY" in opp_comment
-            new_is_scalp = str(getattr(decision, "trade_style", "")).upper() == "SCALP"
-
-            # Reversal criteria:
-            # 1. Opposing trade must have had breathing room (> 300s) UNLESS severe structural invalidation (opp_r <= -0.50R)
-            has_breathing_room = (opp_age_sec >= 300.0) or (opp_r <= -0.50)
-            # 2. Scalp noise cannot kill Day/Swing positions
-            horizon_allowed = not (new_is_scalp and (opp_is_swing or opp_is_day))
-            # 3. High conviction institutional signal
-            struct_choch = bool(getattr(context.structure, "choch", False)) if hasattr(context, "structure") else False
-            high_conviction = (
-                (decision.model_confidence >= 0.60 or entry_override is True or getattr(decision, "grade", "") == "GRADE_A_PLUS")
-                and decision.expected_value > 0.0
-                and decision.risk_reward_ratio >= 1.3
+        if not dry_run and wants_entry and decision.decision == "EXECUTE":
+            active_sym_positions, positions, flipped = self._apply_stop_and_reverse_if_eligible(
+                decision=decision,
+                context=context,
+                active_sym_positions=active_sym_positions,
+                positions=positions,
+                canonical_sym=canonical_sym,
+                entry_override=entry_override
             )
-            # 4. Opposing position must be truly underwater (opp_r <= -0.15R) or confirmed opposite CHoCH
-            opp_is_failing = (opp_r <= -0.15) or (struct_choch and opp_r <= 0.10)
-
-            is_flip_eligible = (
-                high_conviction
-                and has_breathing_room
-                and horizon_allowed
-                and opp_is_failing
-            )
-            if is_flip_eligible:
-                logger.info(
-                    f"🔄 STOP-AND-REVERSE (POSITION FLIP): High-conviction {decision.bias} signal "
-                    f"({decision.model_confidence*100:.1f}%, EV=${decision.expected_value:.2f}) "
-                    f"invalidates opposing #{opp_pos.ticket} {opp_pos.symbol} {opp_pos.type} ({opp_r:.2f}R, age={opp_age_sec:.0f}s). "
-                    f"Closing opposing trade to reverse position."
-                )
-                close_res = self.mt5_client.close_position(opp_pos.ticket)
-                if close_res and close_res.get("status") in ("CLOSED", "PARTIALLY_CLOSED"):
-                    self.risk_engine.release_risk(canonical_sym)
-                    active_sym_positions = [p for p in active_sym_positions if p.ticket != opp_pos.ticket]
-                    positions = [p for p in positions if p.ticket != opp_pos.ticket]
-                    cooldown_active = False
-                    self._last_execution_time[canonical_sym] = 0.0
+            if flipped:
+                cooldown_active = False
 
         # Elite off-window setups bypass the coarse hour-based blackout veto
         # (pure log marker here; the chain below excludes only the denial arm
@@ -1756,6 +1792,18 @@ class JarvisOrchestrator:
                 active_sym_pending = [
                     o for o in all_pending_orders if (getattr(o, "symbol", "") == sym or (sym == "XAUUSD" and "GOLD" in getattr(o, "symbol", "")) or canonical_sym in getattr(o, "symbol", "").upper())
                 ]
+
+                # Stop-and-Reverse (SAR) Protocol: If opposing position exists on this symbol, check if eligible to flip
+                active_sym_positions, positions, flipped = self._apply_stop_and_reverse_if_eligible(
+                    decision=decision,
+                    context=ctx,
+                    active_sym_positions=active_sym_positions,
+                    positions=positions,
+                    canonical_sym=canonical_sym,
+                    entry_override=True
+                )
+                if flipped:
+                    cooldown_active = False
 
                 if already_executing:
                     logger.info(f"Arbiter skipping {canonical_sym}: execution already in progress.")

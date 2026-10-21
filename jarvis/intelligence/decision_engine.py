@@ -37,12 +37,13 @@ from jarvis.risk.account_tier import is_micro_account, get_effective_min_ev
 from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config
 
 from jarvis.intelligence.meta_labeler import MetaLabeler
-from jarvis.intelligence.gate_policy import AdaptiveGatePolicy
+from jarvis.intelligence.gate_policy import AdaptiveGatePolicy, HARD_GATES
 from jarvis.intelligence.ai_dissector import AIDissector
 from jarvis.intelligence.realtime_optimizer import RealtimeOptimizer
 from jarvis.intelligence.master_confluence import MasterConfluenceEngine
 from jarvis.market.fair_value_gap import FairValueGapEngine
 from jarvis.intelligence.dynamic_levels import DynamicRiskAndLevelsEngine
+from jarvis.intelligence.regime_engine import validate_strategy_for_regime
 
 
 def _is_forex(symbol: str) -> bool:
@@ -191,39 +192,26 @@ class DecisionEngine:
     _QUARANTINE_MIN_EXPECTANCY_R: float = -0.25
 
     def _strategy_quarantined(self, symbol: str, strategy: str) -> bool:
-        """Consult the constructor's quarantine snapshot, refreshing on a TTL.
+        """Consult the strategy quarantine governor with graduation support.
 
-        Live: the snapshot re-reads the demo ledger at most every
-        ``_QUARANTINE_REFRESH_SEC`` — a closed trade per minute must not
-        re-decide every gate. Offline/backtest: the snapshot was frozen empty
-        at construction and this never reads live disk at all, so two
-        identical simulations stay identical.
+        Offline/backtest: never reads live disk at all.
+        Live: evaluates whether this (symbol, strategy) pair has demonstrated
+        a persistently negative expectancy on recent closed trades without graduation.
         """
         if not strategy or strategy == "?":
             return False
         if self._quarantine_offline:
             return False
-        now = time.monotonic()
-        if (now - self._quarantine_loaded_at) > self._QUARANTINE_REFRESH_SEC:
-            try:
-                from jarvis.execution.strategy_quarantine import (
-                    load_live_expectancy as _load_expectancy,
-                )
-
-                self._quarantine_stats = dict(_load_expectancy())
-                self._quarantine_loaded_at = now
-            except Exception:
-                # Keep the last good snapshot; a read outage must not
-                # silently un-quarantine or wholesale re-quarantine pairs.
-                pass
-        rec = self._quarantine_stats.get(
-            (str(symbol or "").upper().strip(), str(strategy).upper().strip())
-        )
-        if rec is None:
+        try:
+            from jarvis.execution.strategy_quarantine import is_quarantined
+            return is_quarantined(
+                str(symbol or "").upper().strip(),
+                str(strategy).upper().strip(),
+                min_trades=self._QUARANTINE_MIN_TRADES,
+                min_expectancy_r=self._QUARANTINE_MIN_EXPECTANCY_R
+            )
+        except Exception:
             return False
-        n, exp_r = rec
-        return (n >= self._QUARANTINE_MIN_TRADES
-                and exp_r <= self._QUARANTINE_MIN_EXPECTANCY_R)
 
     def _resolve_market_trend_and_bias(
         self,
@@ -871,13 +859,27 @@ class DecisionEngine:
                     mtf_counter_trend = True
 
         # Regime Trend Consistency Guard: Never open counter-trend trades unless validated reversal
+        # or intraday structural momentum/breakout alignment for SCALP/DAY_TRADING
+        is_intraday_style = any(x in t_style_check for x in ("SCALP", "DAY", "INTRADAY"))
+        has_intraday_struct_bull = (
+            getattr(context.structure, "bos_type", "") == "BULLISH"
+            or getattr(context.structure, "choch_type", "") == "BULLISH"
+            or mom_ts >= 18.0
+        )
+        has_intraday_struct_bear = (
+            getattr(context.structure, "bos_type", "") == "BEARISH"
+            or getattr(context.structure, "choch_type", "") == "BEARISH"
+            or mom_ts <= -18.0
+        )
         regime_trend_consistent = True
         if regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL):
-            if tentative_bias == "SELL" and not is_validated_reversal:
-                regime_trend_consistent = False
+            if tentative_bias == "SELL":
+                if not (is_validated_reversal or (is_intraday_style and has_intraday_struct_bear)):
+                    regime_trend_consistent = False
         elif regime.primary_regime in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR):
-            if tentative_bias == "BUY" and not is_validated_reversal:
-                regime_trend_consistent = False
+            if tentative_bias == "BUY":
+                if not (is_validated_reversal or (is_intraday_style and has_intraday_struct_bull)):
+                    regime_trend_consistent = False
 
         # 5. Dynamic RSI Exhaustion Bounds based on ADX and regime: 70 +- 15 * TrendPower
         adx_val = getattr(context.momentum, "adx", 20.0) if hasattr(context, "momentum") else 20.0
@@ -995,13 +997,20 @@ class DecisionEngine:
         elif is_jpy:
             is_prime_session_valid = kz_active or (context.session.is_prime_session if hasattr(context, "session") and context.session else False) or (spread <= spec.typical_spread_pips * 1.5) or is_micro_mode or "SCALP" in t_style_check
         else:
-            is_prime_session_valid = (
-                kz_active
-                or (context.session.is_prime_session if hasattr(context, "session") and context.session else False)
-                or is_micro_mode
-                or "SCALP" in t_style_check
-                or (spread <= spec.typical_spread_pips * 1.5 and ai_score >= 65.0)
-            )
+            cfg = get_symbol_profile_config(sym_name)
+            c_ts = getattr(context, "timestamp", None)
+            now_dt = c_ts if isinstance(c_ts, datetime) else datetime.now(timezone.utc)
+            if cfg and cfg.session_restriction and cfg.allowed_utc_hours:
+                start_h, end_h = cfg.allowed_utc_hours
+                is_prime_session_valid = (now_dt.weekday() < 5) and (start_h <= now_dt.hour < end_h)
+            else:
+                is_prime_session_valid = (
+                    kz_active
+                    or (context.session.is_prime_session if hasattr(context, "session") and context.session else False)
+                    or is_micro_mode
+                    or "SCALP" in t_style_check
+                    or (spread <= spec.typical_spread_pips * 1.5 and ai_score >= 65.0)
+                )
 
         # 6. Gold (XAUUSD) Directional Trend & Momentum Immunity Guard
         gold_trend_following_valid = True
@@ -1065,7 +1074,7 @@ class DecisionEngine:
                     if not (has_choch and has_sweep and st_zone == "DISCOUNT" and ai_score >= 85.0):
                         crypto_macro_trend_valid = False
 
-                if tentative_bias == "BUY" and not (has_sweep or st_zone in ("DISCOUNT", "EQUILIBRIUM") or has_choch or is_breakout_expansion or has_pa):
+                if tentative_bias == "BUY" and not (has_sweep or st_zone in ("DISCOUNT", "EQUILIBRIUM") or has_choch or is_breakout_expansion or has_pa or ts_val >= 30.0):
                     crypto_macro_trend_valid = False
                 elif tentative_bias == "SELL" and not (has_sweep or st_zone in ("PREMIUM", "EQUILIBRIUM") or has_choch or is_breakout_expansion or has_pa or ts_val <= -30.0):
                     crypto_macro_trend_valid = False
@@ -1162,6 +1171,17 @@ class DecisionEngine:
             if strategy in cfg.banned_strategies:
                 strategy_viable = False
             else:
+                # Regime-Strategy Compatibility validation
+                try:
+                    reg_str = regime.primary_regime.value if (regime and hasattr(regime, "primary_regime") and hasattr(regime.primary_regime, "value")) else str(getattr(regime, "primary_regime", ""))
+                    adx_val = float(getattr(context.momentum, "adx", 0.0) or 0.0) if hasattr(context, "momentum") else 0.0
+                    compat_ok, compat_reason = validate_strategy_for_regime(strategy, reg_str, adx=adx_val)
+                    if not compat_ok:
+                        strategy_viable = False
+                        logger.debug("Strategy Viability: %s x %s incompatible with regime %s: %s", sym_name, strategy, reg_str, compat_reason)
+                except Exception:
+                    pass
+
                 # Live-expectancy quarantine (2026-10-20 ledger audit): static
                 # ban lists cannot see an edge dying. A (symbol, strategy)
                 # pair that has burned >= 20 closed demo trades at <= -0.25R
@@ -1803,7 +1823,7 @@ class DecisionEngine:
                 decision_action = "NO_TRADE"
         elif scalp_res is not None and scalp_res.action == "WAIT":
             decision_action = "WAIT"
-        elif tentative_bias in ["BUY", "SELL"] and len(failing_reasons) <= 2 and quality_gate.checks.get("Regime Viability", False):
+        elif not any(r in HARD_GATES for r in failing_reasons) and tentative_bias in ["BUY", "SELL"] and len(failing_reasons) <= 2 and quality_gate.checks.get("Regime Viability", False):
             decision_action = "WAIT"
         else:
             decision_action = "NO_TRADE"

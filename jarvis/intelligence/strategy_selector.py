@@ -95,6 +95,9 @@ class StrategySelector:
                 "RANGE_MEAN_REVERSION": 1.0,
                 "CHOCH_STRUCTURAL_REVERSAL": 2.2
             }
+            # Enforce symbol-specific banned strategies immediately
+            for banned in cfg.banned_strategies:
+                prior_weights[banned] = 0.0
         else:
             # Symbol-specific configuration initialization
             prior_weights = {

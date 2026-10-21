@@ -205,6 +205,10 @@ def evaluate_entry(
         )
 
     threshold = float(getattr(profile.geometry, "min_score", 0.0) or 0.0)
+    # Prefer regime-calibrated min_score when available
+    reg_geom = (getattr(profile, "regime_geometry", None) or {}).get(regime)
+    if reg_geom is not None and getattr(reg_geom, "min_score", None) is not None:
+        threshold = float(reg_geom.min_score)
 
     # Regime policy learned from out-of-sample outcomes: a regime with no
     # demonstrated edge is switched off rather than traded at a lower size.

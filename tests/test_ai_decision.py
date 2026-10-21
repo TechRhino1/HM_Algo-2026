@@ -75,8 +75,8 @@ class TestAIDecisionEngine(unittest.TestCase):
             confidence=0.85
         )
         analyst_reports = {
-            "STRUCTURE": AnalystReport(role=AnalystRole.STRUCTURE, symbol="XAUUSD", bias="BULLISH", confidence=0.85, score=85.0, evidence=["BOS confirmed"]),
-            "MOMENTUM": AnalystReport(role=AnalystRole.MOMENTUM, symbol="XAUUSD", bias="BULLISH", confidence=0.80, score=80.0, evidence=["ADX 32"])
+            "STRUCTURE": AnalystReport(role=AnalystRole.STRUCTURE, symbol="XAUUSD", bias="BULLISH", confidence=0.75, score=75.0, evidence=["BOS confirmed"]),
+            "MOMENTUM": AnalystReport(role=AnalystRole.MOMENTUM, symbol="XAUUSD", bias="BULLISH", confidence=0.70, score=70.0, evidence=["ADX 32"])
         }
         devil_report = DevilAdvocateReport(
             symbol="XAUUSD",

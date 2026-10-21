@@ -165,5 +165,108 @@ class TestStopAndReverseAndSellFromTop(unittest.TestCase):
         self.assertEqual(utc_setup, now_utc, "time_setup must be converted to true UTC epoch")
 
 
+    def test_orchestrator_single_pass_applies_sar_flip(self):
+        """In _orchestration_loop_single_pass, an opposing trade is closed (profit banked/loss cut) and the reverse trade executes."""
+        from jarvis.application.orchestrator import JarvisOrchestrator
+        from jarvis.intelligence.opportunity_arbiter import CandidateOpportunity
+        from jarvis.data.schemas import TradeQualityGateResult
+
+        with patch("jarvis.application.orchestrator.MT5Client"), \
+             patch("jarvis.application.orchestrator.ExecutionEngine"):
+
+            orch = JarvisOrchestrator(symbols=["XAUUSD"], mode="paper", trade_style="DAY_TRADING")
+            orch.mt5_client.close_position = MagicMock(return_value={"status": "CLOSED", "ticket": 777123})
+            orch.mt5_client.get_pending_orders = MagicMock(return_value=[])
+            orch.mt5_client.get_symbol_trading_spec = MagicMock(return_value={
+                "name": "XAUUSD",
+                "trade_contract_size": 100.0,
+                "trade_tick_value": 1.0,
+                "trade_tick_size": 0.01,
+                "volume_min": 0.01,
+                "volume_max": 100.0,
+                "volume_step": 0.01,
+            })
+            orch.execution_engine.execute_decision = MagicMock(return_value={"status": "FILLED", "ticket": 888456})
+
+            # Existing opposing SELL trade in profit (+0.40R)
+            existing_pos = PositionSnapshot(
+                ticket=777123,
+                symbol="XAUUSD",
+                type="SELL",
+                volume=0.01,
+                open_price=2400.0,
+                current_price=2396.0,
+                sl=2410.0,
+                tp=2370.0,
+                profit=40.0,
+                swap=0.0,
+                commission=0.0,
+                open_time=(datetime.now(timezone.utc)).isoformat(),
+                magic=999999,
+                comment="HMA2_DAY_TRND",
+            )
+            orch.state_manager.positions = [existing_pos]
+            orch.state_manager.account = MagicMock(equity=10000.0, balance=10000.0, margin=100.0)
+
+            # Incoming BUY candidate from Arbiter
+            cand_dec = MagicMock()
+            cand_dec.symbol = "XAUUSD"
+            cand_dec.bias = "BUY"
+            cand_dec.decision = "EXECUTE"
+            cand_dec.price = 2400.0
+            cand_dec.entry_price = 2400.0
+            cand_dec.stop_loss = 2392.0
+            cand_dec.take_profit = 2420.0
+            cand_dec.risk_reward_ratio = 2.5
+            cand_dec.expected_value = 2.0
+            cand_dec.model_confidence = 0.75
+            cand_dec.ai_score = 85.0
+            cand_dec.trade_style = "DAY_TRADING"
+            cand_dec.pattern_sample_size = 50
+            cand_dec.adversarial_penalty = 0.0
+            cand_dec.calculated_risk_percent = 1.0
+            cand_dec.meta_label_prob = 0.80
+            cand_dec.dissection_score = 80.0
+            cand_dec.first_target_volume_pct = 0.5
+            cand_dec.first_target_price = 2410.0
+            cand_dec.runner_trail_distance_atr = 1.0
+            cand_dec.quality_gate = TradeQualityGateResult(passed=True, checks={}, failing_reasons=[])
+            cand_dec.regime = RegimeOutput(primary_regime=MarketRegime.TREND_BULL, probabilities={}, confidence=0.85)
+
+            cand = CandidateOpportunity(
+                symbol="XAUUSD",
+                trade_style="DAY_TRADING",
+                timeframe="H1/M15/M5",
+                strategy="BREAKOUT_EXPANSION",
+                bias="BUY",
+                entry_price=2400.0,
+                stop_loss=2392.0,
+                take_profit=2420.0,
+                risk_reward_ratio=2.5,
+                expected_value=2.0,
+                win_prob=75.0,
+                ml_prob=0.75,
+                confluence_score=80.0,
+                confluence_factors=[],
+                adversarial_penalty=0.0,
+                risk_factors=[],
+                regime="TREND_BULL",
+                regime_multiplier=1.2,
+                utility_score=2.2,
+                setup_grade="GRADE A+",
+                is_actionable=True,
+                decision_obj=cand_dec,
+                context=MagicMock(volatility=MagicMock(atr=8.0, current_spread_pips=1.5), current_price=2396.0)
+            )
+
+            orch.scan_all_modes = MagicMock(return_value=(cand, [cand], [("XAUUSD", "DAY_TRADING", {"decision": cand_dec})]))
+
+            orch._orchestration_loop_single_pass(dry_run=False)
+
+            # Assert opposing position was closed via SAR
+            orch.mt5_client.close_position.assert_called_once_with(777123)
+            # Assert reverse BUY trade was executed
+            orch.execution_engine.execute_decision.assert_called_once()
+
 if __name__ == "__main__":
     unittest.main()
