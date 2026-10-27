@@ -38,6 +38,7 @@ from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config
 
 from jarvis.intelligence.meta_labeler import MetaLabeler
 from jarvis.intelligence.gate_policy import AdaptiveGatePolicy, HARD_GATES
+from jarvis.intelligence.gate_registry import canonical_gate
 from jarvis.intelligence.ai_dissector import AIDissector
 from jarvis.intelligence.realtime_optimizer import RealtimeOptimizer
 from jarvis.intelligence.master_confluence import MasterConfluenceEngine
@@ -295,184 +296,174 @@ class DecisionEngine:
         of_data = getattr(context, "order_flow", {}) or {}
         delta_score = float(of_data.get("delta_score", 0.0)) if isinstance(of_data, dict) else getattr(of_data, "delta_score", 0.0)
 
+        metals_smt = getattr(context, "cross_market_smt", {}) or getattr(context, "metals_smt", {}) or {}
+        has_bull_smt = metals_smt.get("smt_active", False) and metals_smt.get("smt_type") == "BULLISH_SMT"
+        has_bear_smt = metals_smt.get("smt_active", False) and metals_smt.get("smt_type") == "BEARISH_SMT"
+
+        bull_structure_confirmed = bool(
+            getattr(st, "choch", False)
+            or getattr(st, "choch_type", "") == "BULLISH"
+            or getattr(st, "bos_type", "") == "BULLISH"
+            or has_bull_div
+            or has_bull_smt
+        )
+        bear_structure_confirmed = bool(
+            getattr(st, "choch", False)
+            or getattr(st, "choch_type", "") == "BEARISH"
+            or getattr(st, "bos_type", "") == "BEARISH"
+            or has_bear_div
+            or has_bear_smt
+        )
+        bull_reversal_trigger = bool(
+            (has_bull_sweep and bull_structure_confirmed)
+            or getattr(st, "choch", False)
+            or getattr(st, "choch_type", "") == "BULLISH"
+            or getattr(st, "bos_type", "") == "BULLISH"
+            or has_bull_smt
+        )
+        bear_reversal_trigger = bool(
+            (has_bear_sweep and bear_structure_confirmed)
+            or getattr(st, "choch", False)
+            or getattr(st, "choch_type", "") == "BEARISH"
+            or getattr(st, "bos_type", "") == "BEARISH"
+            or has_bear_smt
+        )
         authenticated_bull_reversal = (
-            (has_bull_sweep or st.choch_type == "BULLISH" or (st.bias == "BULLISH" and has_bull_div))
-            and (has_bull_div or dp_zone in ("DISCOUNT", "EQUILIBRIUM"))
-            and trend_score >= -80.0
+            bull_reversal_trigger
+            and (has_bull_div or has_bull_smt or dp_zone in ("DISCOUNT", "EQUILIBRIUM"))
+            and trend_score >= -85.0
         )
         authenticated_bear_reversal = (
-            (has_bear_sweep or st.choch_type == "BEARISH" or (st.bias == "BEARISH" and has_bear_div))
-            and (has_bear_div or dp_zone in ("PREMIUM", "EQUILIBRIUM"))
-            and trend_score <= 80.0
+            bear_reversal_trigger
+            and (has_bear_div or has_bear_smt or dp_zone in ("PREMIUM", "EQUILIBRIUM"))
+            and trend_score <= 85.0
         )
 
         # 5. Hierarchical Resolution
         # CASE 0: Volatility Breakout & Expansion (Momentum takes precedence over HTF lag)
         if is_breakout_regime:
-            if trend_score >= 10.0 or st.bias == "BULLISH" or primary_tf_bias == "BULLISH" or bull_votes > bear_votes:
-                return "BUY"
-            elif trend_score <= -10.0 or st.bias == "BEARISH" or primary_tf_bias == "BEARISH" or bear_votes > bull_votes:
+            if (d1_anchor_bias == "BEARISH" or htf_bias == "BEARISH") and trend_score <= 0.0:
                 return "SELL"
-            elif st.bos:
+            if (d1_anchor_bias == "BULLISH" or htf_bias == "BULLISH") and trend_score >= 0.0:
+                return "BUY"
+            if trend_score >= 20.0 and (st.bias == "BULLISH" or primary_tf_bias == "BULLISH" or bull_votes > bear_votes):
+                return "BUY"
+            elif trend_score <= -20.0 and (st.bias == "BEARISH" or primary_tf_bias == "BEARISH" or bear_votes > bull_votes):
+                return "SELL"
+            elif st.bos and abs(trend_score) >= 15.0:
                 return "BUY" if trend_score >= 0.0 else "SELL"
-            return "BUY" if bull_votes >= bear_votes else "SELL"
+            return "HOLD"
 
         # CASE A: Strong Bullish Macro / Structure / Regime / D1 Anchor
         if (
             (htf_bias == "BULLISH" and d1_anchor_bias != "BEARISH")
             or (d1_anchor_bias == "BULLISH" and htf_bias != "BEARISH")
             or (is_bull_regime and not (htf_bias == "BEARISH" and d1_anchor_bias == "BEARISH"))
-            or mtf_score >= 30.0
+            or mtf_score >= 25.0
         ):
             is_intraday = trade_style in ("SCALP", "DAY_TRADING")
 
             # 0. Intermarket Crypto Lead-Lag Guard: Never buy ETH when ETH/BTC ratio is breaking down
             eth_btc_trend = getattr(context, "crypto_lead_lag", {}).get("eth_btc_trend", "NEUTRAL") if hasattr(context, "crypto_lead_lag") else "NEUTRAL"
             if is_crypto and "ETH" in sym_name and eth_btc_trend == "BEARISH":
-                if not authenticated_bull_reversal:
-                    if trend_score <= -15.0 or st.bias == "BEARISH" or primary_tf_bias == "BEARISH" or st.bos_type == "BEARISH":
-                        return "SELL"
-                    return "HOLD"
+                return "HOLD"
 
-            # 1. Structural / Momentum Guard: If primary timeframe is breaking down with negative momentum, do NOT buy blindly!
+            if bear_votes >= 3 and bear_votes > bull_votes and trend_score <= 0.0:
+                return "SELL"
+
+            # 1. Authenticated Structural Reversal (ICT MSS / Bearish SMT / Liquidity Sweep at Lower High):
+            if authenticated_bear_reversal and (st.bias == "BEARISH" or trend_score <= 0.0):
+                return "SELL"
+
+            # 2. Structural / Momentum Guard: If primary timeframe is breaking down without confirmed reversal, do NOT short blindly!
             if (st.bias == "BEARISH" or st.bos_type == "BEARISH" or primary_tf_bias == "BEARISH") and (trend_score <= -10.0 or delta_score <= -20.0):
-                if (
-                    authenticated_bear_reversal
-                    or (trend_score <= -15.0 and (context_bias == "BEARISH" or st.bias == "BEARISH"))
-                    or (st.bos and trend_score <= 0.0)
-                    or (bear_votes >= 2 and bear_votes > bull_votes)
-                ):
-                    return "SELL"
                 return "HOLD"
 
-            # 1b. Momentum Exhaustion Top & Liquidity Sweep Guard:
-            # If buy-side liquidity was swept at a premium, or momentum is at an overbought extreme,
-            # buying is prohibited! Wait for pullback or flip to SELL if confirmed.
-            # In expansion/breakout regimes or on index expansion, allow momentum up to 98.0 without false exhaustion.
-            max_mom_bull = 98.0 if (is_breakout_regime or is_bull_regime or is_index_asset) else 80.0
-            if ((has_bear_sweep and dp_zone == "PREMIUM") or trend_score >= max_mom_bull) and not is_breakout_regime:
-                if authenticated_bear_reversal or (has_bear_sweep and (trend_score <= 30.0 or bear_votes > bull_votes)):
-                    return "SELL"
-                return "HOLD"
-
-            # 2. Authenticated reversal: allow SELL when lower TFs have flipped bearish
-            if authenticated_bear_reversal and (
-                mtf_score <= -15.0
-                or (trend_score <= -15.0 and context_bias == "BEARISH")
-                or primary_tf_bias == "BEARISH"
-            ):
-                return "SELL"
-
-            # 3. Strong analyst consensus override (>=3 bearish votes with negative momentum)
-            if bear_votes >= 3 and trend_score <= -10.0:
-                return "SELL"
-
-            # 4. In a macro bull trend, look for BUY continuation or pullback completion
-            if st.bos and trend_score >= 10.0:
+            # 3. Macro Bull Trend Continuation / Pullback Dip Buying:
+            # Look for BUY when price re-aligns with the macro trend
+            if st.bos and trend_score >= 5.0:
                 return "BUY"
             if st.bias == "BULLISH" or trend_score >= 10.0 or bull_votes > bear_votes:
                 return "BUY"
             if dp_zone in ("DISCOUNT", "EQUILIBRIUM") and (has_bull_sweep or bull_votes >= 1 or is_bull_regime):
                 return "BUY"
-            return "BUY" if ((htf_bias == "BULLISH" or d1_anchor_bias == "BULLISH") and (bull_votes >= 1 or not is_intraday) and trend_score >= 0.0) else "HOLD"
+            if ((htf_bias == "BULLISH" or d1_anchor_bias == "BULLISH") and (bull_votes >= 1 or not is_intraday) and trend_score >= 0.0):
+                return "BUY"
+            return "HOLD"
 
         # CASE B: Strong Bearish Macro / Structure / Regime
         elif (
             (htf_bias == "BEARISH" and d1_anchor_bias != "BULLISH")
             or (d1_anchor_bias == "BEARISH" and htf_bias != "BULLISH")
             or (is_bear_regime and not (htf_bias == "BULLISH" and d1_anchor_bias == "BULLISH"))
-            or mtf_score <= -30.0
+            or mtf_score <= -25.0
         ):
             is_intraday = trade_style in ("SCALP", "DAY_TRADING")
 
-            # 1. Structural / Momentum Guard for ALL STYLES (SCALP, DAY_TRADING, SWING):
-            # If the primary timeframe or HTF has bullish structure or active upward displacement,
-            # STRICTLY PROHIBIT selling! Either flip to BUY if confirmed, or HOLD.
-            has_bullish_structure = (
-                st.bias == "BULLISH"
-                or st.bos_type == "BULLISH"
-                or primary_tf_bias == "BULLISH"
-                or htf_bias == "BULLISH"
-                or d1_anchor_bias == "BULLISH"
-            )
-            has_bullish_expansion = (
-                trend_score >= 10.0
-                or delta_score >= 15.0
-                or (mom is not None and getattr(mom, "short_term_atr_disp", 0.0) >= 0.35)
-            )
-
-            if has_bullish_structure or has_bullish_expansion:
-                if (
-                    authenticated_bull_reversal
-                    or (trend_score >= 10.0 and (context_bias == "BULLISH" or st.bias == "BULLISH" or primary_tf_bias == "BULLISH"))
-                    or (st.bos and trend_score >= 0.0)
-                    or (bull_votes >= 2 and bull_votes > bear_votes)
-                ):
-                    return "BUY"
-                # If market is rallying upward or structure is bullish, NEVER SELL blindly!
-                return "HOLD"
-
-            # 1b. Momentum Exhaustion Bottom & Liquidity Sweep Guard:
-            # If sell-side liquidity was swept at a discount, or momentum is at an oversold extreme,
-            # selling is prohibited! Wait for pullback or flip to BUY if confirmed.
-            # In expansion/breakout regimes or on index expansion, allow momentum down to -98.0 without false exhaustion.
-            min_mom_bear = -98.0 if (is_breakout_regime or is_bear_regime or is_index_asset) else -80.0
-            if ((has_bull_sweep and dp_zone == "DISCOUNT") or trend_score <= min_mom_bear) and not is_breakout_regime:
-                if authenticated_bull_reversal or (has_bull_sweep and (trend_score >= -30.0 or bull_votes > bear_votes)):
-                    return "BUY"
-                return "HOLD"
-
-            # 2. Authenticated Reversal
-            if authenticated_bull_reversal and (
-                mtf_score >= 15.0
-                or (trend_score >= 15.0 and (context_bias == "BULLISH" or primary_tf_bias == "BULLISH"))
-                or (is_intraday and primary_tf_bias == "BULLISH")
-            ):
+            if bull_votes >= 3 and bull_votes > bear_votes and trend_score >= 0.0:
                 return "BUY"
 
-            # 3. Swing Trading Alignment:
-            # If trade_style is SWING and both HTF (D1) and Context (H4) are BEARISH,
-            # SWING trades the HTF downtrend only if primary structure is also aligned.
-            if not is_intraday and htf_bias == "BEARISH":
-                if not (st.bias == "BULLISH" or primary_tf_bias == "BULLISH" or trend_score > 0):
-                    if trend_score <= 5.0 or dp_zone in ("PREMIUM", "EQUILIBRIUM") or is_bear_regime:
-                        return "SELL"
+            # 1. Authenticated Structural Reversal (ICT MSS / Bullish SMT / Liquidity Sweep at Higher Low):
+            # For intraday Scalp / Day Trading, allow reversal BUY when confluence is validated
+            if authenticated_bull_reversal and (st.bias == "BULLISH" or trend_score >= 0.0):
+                return "BUY"
 
-            # 4. Sell Continuation / Retracement short:
-            # Strictly prohibit selling if D1 or HTF or primary structure is BULLISH
-            if htf_bias == "BULLISH" or d1_anchor_bias == "BULLISH" or st.bias == "BULLISH" or primary_tf_bias == "BULLISH":
+            # 2. Structural / Momentum Guard:
+            # If the primary timeframe has active upward displacement without confirmed reversal, wait for pullback to complete -- DO NOT BUY!
+            if primary_tf_bias == "BULLISH" or trend_score >= 15.0:
                 return "HOLD"
 
-            if trend_score <= -15.0 and st.bias == "BEARISH" and primary_tf_bias == "BEARISH":
-                if st.bos or bear_votes > bull_votes or is_bear_regime:
-                    return "SELL"
+            # 3. Macro Bear Trend Continuation / Retracement Selling:
+            # Look for SELL when price re-aligns with the macro downtrend
+            if st.bos and trend_score <= -5.0:
+                return "SELL"
+            if st.bias == "BEARISH" or trend_score <= -10.0 or bear_votes > bull_votes:
+                return "SELL"
+            if dp_zone in ("PREMIUM", "EQUILIBRIUM") and (has_bear_sweep or bear_votes >= 1 or is_bear_regime):
+                return "SELL"
+            if ((htf_bias == "BEARISH" or d1_anchor_bias == "BEARISH") and (bear_votes >= 1 or not is_intraday) and trend_score <= 0.0):
+                return "SELL"
             return "HOLD"
 
         # CASE C: Ranging / Compression / Consolidation
         elif is_range_regime or abs(trend_score) < 20.0:
-            if dp_zone in ("DISCOUNT", "EQUILIBRIUM") and (has_bull_sweep or (st.bias == "BULLISH" and (getattr(st, "choch", False) or trend_score >= 0)) or bull_votes > bear_votes):
-                return "BUY"
-            elif dp_zone in ("PREMIUM", "EQUILIBRIUM") and (has_bear_sweep or (st.bias == "BEARISH" and (getattr(st, "choch", False) or trend_score <= 0)) or bear_votes > bull_votes):
-                return "SELL"
-            elif st.bos and abs(trend_score) >= 20.0:
-                return "BUY" if trend_score > 0 else "SELL"
-            else:
+            # In a range or low momentum, respect macro anchor if one exists
+            if d1_anchor_bias == "BEARISH" or htf_bias == "BEARISH":
+                # Macro trend is down: ONLY SELL at Premium/Equilibrium resistance. Zero BUYs.
+                if dp_zone in ("PREMIUM", "EQUILIBRIUM") and (has_bear_sweep or st.bias == "BEARISH" or bear_votes > bull_votes or trend_score <= 0.0):
+                    return "SELL"
                 return "HOLD"
+            if d1_anchor_bias == "BULLISH" or htf_bias == "BULLISH":
+                # Macro trend is up: ONLY BUY at Discount/Equilibrium support. Zero SELLs.
+                if dp_zone in ("DISCOUNT", "EQUILIBRIUM") and (has_bull_sweep or st.bias == "BULLISH" or bull_votes > bear_votes or trend_score >= 0.0):
+                    return "BUY"
+                return "HOLD"
+            # Truly neutral market: trade boundary extremes only
+            if dp_zone == "DISCOUNT" and (has_bull_sweep or (st.bias == "BULLISH" and bull_votes > bear_votes)):
+                return "BUY"
+            elif dp_zone == "PREMIUM" and (has_bear_sweep or (st.bias == "BEARISH" and bear_votes > bull_votes)):
+                return "SELL"
+            elif st.bos and abs(trend_score) >= 25.0:
+                return "BUY" if trend_score > 0 else "SELL"
+            return "HOLD"
 
         # CASE D: Transitional / Neutral Market
         else:
-            if bull_votes >= 2 and bull_votes > bear_votes and trend_score > 0:
-                return "BUY"
-            elif bear_votes >= 2 and bear_votes > bull_votes and trend_score < 0:
-                return "SELL"
-            elif st.bos and trend_score >= 25.0:
-                return "BUY"
-            elif st.bos and trend_score <= -25.0:
-                return "SELL"
-            elif st.bias in ("BULLISH", "BEARISH"):
-                return "BUY" if st.bias == "BULLISH" else "SELL"
-            else:
+            if d1_anchor_bias == "BEARISH" or htf_bias == "BEARISH":
+                if bear_votes >= 2 and trend_score <= 0.0:
+                    return "SELL"
                 return "HOLD"
+            if d1_anchor_bias == "BULLISH" or htf_bias == "BULLISH":
+                if bull_votes >= 2 and trend_score >= 0.0:
+                    return "BUY"
+                return "HOLD"
+            if bull_votes >= 2 and bull_votes > bear_votes and trend_score >= 15.0:
+                return "BUY"
+            elif bear_votes >= 2 and bear_votes > bull_votes and trend_score <= -15.0:
+                return "SELL"
+            elif st.bos and abs(trend_score) >= 25.0:
+                return "BUY" if trend_score > 0 else "SELL"
+            return "HOLD"
 
     def _compute_bias_and_levels(
         self,
@@ -636,11 +627,12 @@ class DecisionEngine:
         est_lots = max(0.01, planned_risk_dollars / (max(risk_dist, 1e-4) * contract_size))
         pip_val_per_lot = spec.pip_value_per_lot
         spread_cost = context.volatility.current_spread_pips * pip_val_per_lot * est_lots
-        expected_slippage = (context.volatility.atr * 0.02) * est_lots
+        expected_slippage = (context.volatility.atr * 0.02) * contract_size * est_lots
 
-        ev = (final_win_p * planned_win_dollars) - (loss_p * planned_risk_dollars) - spread_cost - expected_slippage
-        ev = round(float(ev), 2)
-        return final_win_p, loss_p, ev, hypotheses, calibrated_win_p, honest_base_rate, raw_prob
+        ev_dollars = (final_win_p * planned_win_dollars) - (loss_p * planned_risk_dollars) - spread_cost - expected_slippage
+        ev_dollars = round(float(ev_dollars), 2)
+        ev_r = round(float(ev_dollars / max(planned_risk_dollars, 0.50)), 2)
+        return final_win_p, loss_p, ev_r, hypotheses, calibrated_win_p, honest_base_rate, raw_prob
 
     def _apply_quality_gate(
         self,
@@ -660,7 +652,10 @@ class DecisionEngine:
         risk_dist: float = 0.0,
         planned_risk_dollars: float = 0.0,
         strategy: str = "",
-        of_res: Optional[Dict[str, Any]] = None
+        of_res: Optional[Dict[str, Any]] = None,
+        strategy_triggered: bool = True,
+        trade_style: str = "SWING",
+        ev_dollars: Optional[float] = None,
     ) -> TradeQualityGateResult:
         is_micro_mode = is_micro_account(account_balance)
         effective_min_ev = get_effective_min_ev(account_balance, planned_risk_dollars)
@@ -671,7 +666,9 @@ class DecisionEngine:
         sym_name = str(context.symbol).upper()
         is_jpy = "JPY" in sym_name
         is_crypto = ("BTC" in sym_name) or spec.is_crypto
-        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name) or (getattr(spec, "asset_class", "") == "COMMODITY")
+        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name)
+        is_silver = ("XAG" in sym_name) or ("SILVER" in sym_name)
+        is_metal = is_gold or is_silver
         is_fx = _is_forex(context.symbol) and not is_jpy
         is_index_asset = getattr(spec, "asset_class", "") == "INDEX" or any(k in sym_name for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ30", "DJI", "DOW", "GER40", "UK100"])
         is_oil_asset = any(k in sym_name for k in ["WTI", "OIL", "CRUDE"])
@@ -716,7 +713,7 @@ class DecisionEngine:
         is_transition_reg = (regime.primary_regime in (MarketRegime.TRANSITION, MarketRegime.REVERSAL)) or getattr(regime, "regime_transition", False)
         spread_excess = max(0.0, spread_ratio - 1.0)
         confluence_adj = 4.0 if confluence_count >= 4 else 0.0
-        t_style_check = (getattr(context, "trade_style", None) or getattr(context, "style", "SWING") or "SWING").upper()
+        t_style_check = (trade_style or getattr(context, "trade_style", None) or getattr(context, "style", "SWING") or "SWING").upper()
 
         if "SCALP" in t_style_check or is_micro_mode:
             base_score = 58.0
@@ -826,16 +823,22 @@ class DecisionEngine:
             context_bias = mtf_align.get("H4", "NEUTRAL")
 
         # Authenticated Institutional Reversal Setup
+        metals_smt_rev = getattr(context, "metals_smt", {}) or {}
+        has_smt_rev = bool(metals_smt_rev.get("smt_active", False) and metals_smt_rev.get("smt_type") in ("BULLISH_SMT", "BEARISH_SMT"))
         is_validated_reversal = (
             strategy in ("LIQUIDITY_SWEEP_REVERSAL", "CHOCH_STRUCTURAL_REVERSAL")
-            and bool(getattr(context.liquidity, "sweep_detected", False))
-            and bool(getattr(context.structure, "choch", False))
             and (
-                (tentative_bias == "BUY" and (getattr(context.momentum, "bullish_divergence", False) or getattr(context.structure, "discount_premium_zone", "") == "DISCOUNT") and mom_ts >= -10.0) or
-                (tentative_bias == "SELL" and (getattr(context.momentum, "bearish_divergence", False) or getattr(context.structure, "discount_premium_zone", "") == "PREMIUM") and mom_ts <= 10.0)
+                bool(getattr(context.liquidity, "sweep_detected", False))
+                or bool(getattr(context.structure, "choch", False))
+                or has_smt_rev
+                or getattr(context.structure, "bias", "") in ("BULLISH", "BEARISH")
             )
-            and ai_score >= 74.0
-            and rr_ratio >= 1.8
+            and (
+                (tentative_bias == "BUY" and (getattr(context.momentum, "bullish_divergence", False) or has_smt_rev or getattr(context.structure, "discount_premium_zone", "") in ("DISCOUNT", "EQUILIBRIUM"))) or
+                (tentative_bias == "SELL" and (getattr(context.momentum, "bearish_divergence", False) or has_smt_rev or getattr(context.structure, "discount_premium_zone", "") in ("PREMIUM", "EQUILIBRIUM")))
+            )
+            and ai_score >= 68.0
+            and rr_ratio >= 1.5
         )
 
         d1_anchor_bias = mtf_align.get("D1", "NEUTRAL")
@@ -945,47 +948,23 @@ class DecisionEngine:
                 is_prime_session_valid = False
             else:
                 is_prime_session_valid = (spread <= spec.max_spread_pips) or (ai_score >= 70.0)
-        elif is_gold:
+        elif is_metal:
             cfg = get_symbol_profile_config(sym_name)
             c_ts = getattr(context, "timestamp", None)
             now_dt = c_ts if isinstance(c_ts, datetime) else datetime.now(timezone.utc)
+            has_choch_rev = bool(getattr(context.structure, "choch", False)) if hasattr(context, "structure") else False
             if cfg and cfg.session_restriction and cfg.allowed_utc_hours:
                 start_h, end_h = cfg.allowed_utc_hours
-                # Gold session gate (profile-driven, hard). Research + ledger
-                # measured on our own executed_trades: 15-17h UTC was the
-                # largest gold bleed cluster (129 live rows, -$522.73),
-                # 06-08h the second (-$252.44), while 12-14h was the only
-                # consistently profitable segment. NY data-driven hours carry
-                # the widest moves (13:00 UTC peak ~$24/h vs ~$2.80 at the
-                # 21:00 UTC rollover), and Asia flow is chiefly uninformed
-                # (Tokyo-dominance studies for the metals). The window is
-                # enforced by a dedicated HARD gate below - the generic soft
-                # "Forex Prime Session" slot is how 00-06h trades still fired
-                # under the old gate forgiveness.
-                #
-                # 2026-10-20 premium exception: when the profile opts into
-                # premium_window_exception, an off-window hour is still allowed
-                # through IF the blended analyst score is elite (>= the
-                # profile's premium floor, 88.0 for gold - above every normal
-                # hard gate band of 70-85). The weekday<5 term is kept outside
-                # the exception: a weekend is never premium, the book is shut.
                 _in_window = (start_h <= now_dt.hour < end_h)
-                if not _in_window and getattr(cfg, "premium_window_exception", False):
-                    _premium_floor = float(getattr(cfg, "premium_out_of_window_min_ai_score", 0.0) or 0.0)
-                    if _premium_floor > 0.0 and ai_score >= _premium_floor:
-                        if not hasattr(self, "_premium_gold_warned_at") or (time.time() - self._premium_gold_warned_at) > 900:
-                            logger.info(
-                                "GOLD premium out-of-window entry admitted: ai_score %.1f >= floor %.1f "
-                                "(window %02d:%02d UTC); off-session chaff remains filtered to elite scores.",
-                                ai_score, _premium_floor, start_h, end_h,
-                            )
-                            self._premium_gold_warned_at = time.time()
-                        is_prime_session_valid = True
-                        _in_window = True
-                is_prime_session_valid = (now_dt.weekday() < 5) and _in_window
+                _premium_off_window = bool(
+                    getattr(cfg, "premium_window_exception", False)
+                    and ai_score >= float(getattr(cfg, "premium_out_of_window_min_ai_score", 101.0) or 101.0)
+                )
+                is_prime_session_valid = (now_dt.weekday() < 5) and (_in_window or _premium_off_window)
             else:
-                is_prime_session_valid = (now_dt.weekday() < 5) and (7 <= now_dt.hour < 19)
-        elif is_oil_asset or ("XAG" in sym_name):
+                # 24/5 trading for metals without session restrictions per user mandate
+                is_prime_session_valid = (now_dt.weekday() < 5)
+        elif is_oil_asset:
             cfg = get_symbol_profile_config(sym_name)
             c_ts = getattr(context, "timestamp", None)
             now_dt = c_ts if isinstance(c_ts, datetime) else datetime.now(timezone.utc)
@@ -1228,8 +1207,12 @@ class DecisionEngine:
             "Regime Trend Consistency": regime_trend_consistent,
             "Directional Bias": tentative_bias in ["BUY", "SELL"],
             "Strategy Viable": strategy_viable,
+            "Strategy Triggered": strategy_triggered,
             "Risk/Reward >= 1.5": rr_ratio >= min_rr,
-            "Positive Expected Value": ev > 0 and ev >= effective_min_ev,
+            "Positive Expected Value": (
+                (ev_dollars if ev_dollars is not None else (ev * planned_risk_dollars if planned_risk_dollars > 0 and ev < 10.0 else ev)) >= effective_min_ev
+                and ev > 0.02
+            ) if strategy_triggered else True,
             "Spread Protection": spread <= max_spread and not context.volatility.is_excessive_spread,
             "Volatility Spike Circuit Breaker": not getattr(context.volatility, "volatility_spike_breaker", False),
             "AI Multi-Score Gate": ai_score >= min_score,
@@ -1371,6 +1354,18 @@ class DecisionEngine:
             elif of_res["institutional_activity"] and of_res["signal"] != "NEUTRAL":
                 ai_score = max(0.0, ai_score - (of_res["strength"] * 10.0))
                 logger.debug(f"[{context.symbol}] Institutional Order Flow opposes {tentative_bias}! Penalizing AI score to {ai_score:.1f}")
+
+        # Metals Smart Money Technique (SMT) Divergence Confluence
+        metals_smt = getattr(context, "metals_smt", {}) if hasattr(context, "metals_smt") else {}
+        is_metal_sym_check = any(k in str(context.symbol).upper() for k in ["XAU", "GOLD", "XAG", "SILVER"])
+        if is_metal_sym_check and isinstance(metals_smt, dict) and metals_smt.get("smt_active"):
+            smt_type = metals_smt.get("smt_type", "NONE")
+            if (tentative_bias == "BUY" and smt_type == "BULLISH_SMT") or (tentative_bias == "SELL" and smt_type == "BEARISH_SMT"):
+                ai_score = min(100.0, ai_score + float(metals_smt.get("score_bonus", 15.0)))
+                logger.info(f"[{context.symbol}] Institutional Metals SMT Divergence ALIGNS with {tentative_bias}! (+{metals_smt.get('score_bonus', 15.0)} AI boost)")
+            elif (tentative_bias == "BUY" and smt_type == "BEARISH_SMT") or (tentative_bias == "SELL" and smt_type == "BULLISH_SMT"):
+                ai_score = max(0.0, ai_score - 20.0)
+                logger.warning(f"[{context.symbol}] Institutional Metals SMT Divergence OPPOSES {tentative_bias}! (-20.0 AI penalty)")
 
         # AI10: `raw_prob` is the pre-calibration hypothesis probability — the value
         # `calibrator.calibrate_probability()` was actually applied to. It is carried out
@@ -1587,7 +1582,7 @@ class DecisionEngine:
         _spec = resolve_symbol(context.symbol)
         _est_lots = max(0.01, _risk_dollars / (max(risk_dist, 1e-4) * _spec.contract_size))
         _spread_cost = context.volatility.current_spread_pips * _spec.pip_value_per_lot * _est_lots
-        _slippage = (context.volatility.atr * 0.02) * _est_lots
+        _slippage = (context.volatility.atr * 0.02) * _spec.contract_size * _est_lots
 
         is_gold_asset = any(k in context.symbol.upper() for k in ["XAU", "GOLD"])
         is_oil_asset = any(k in context.symbol.upper() for k in ["WTI", "OIL", "CRUDE"])
@@ -1628,32 +1623,42 @@ class DecisionEngine:
 
             strat_loss_p = round(1.0 - strat_p, 2)
             strat_win_dollars = _risk_dollars * strat_rr
-            strat_ev = (strat_p * strat_win_dollars) - (strat_loss_p * _risk_dollars) - _spread_cost - _slippage
+            strat_ev_dlrs = (strat_p * strat_win_dollars) - (strat_loss_p * _risk_dollars) - _spread_cost - _slippage
+            strat_ev_r = round(float(strat_ev_dlrs / max(_risk_dollars, 0.50)), 2)
             
-            # Multi-objective fitness score: EV * (1 + (WinP - 0.50)/0.50) * StrategySuitabilityWeight
+            # Multi-objective fitness score: EV_R * (1 + (WinP - 0.50)/0.50) * StrategySuitabilityWeight
             prob_factor = max(0.5, 1.0 + (strat_p - 0.50) / 0.50)
             if strat_weight <= 0.001:
                 fitness = -1e9
             else:
-                fitness = strat_ev * prob_factor * strat_weight
+                fitness = strat_ev_r * prob_factor * strat_weight
 
             strategy_evaluations[strat] = {
                 "win_p": strat_p,
                 "rr": strat_rr,
-                "ev": round(strat_ev, 2),
+                "ev": strat_ev_r,
+                "ev_dollars": round(strat_ev_dlrs, 2),
                 "fitness": fitness,
                 "weight": strat_weight
             }
 
-        if not strategy_evaluations:
-            fallback_strat = "TREND_PULLBACK" if "TREND_PULLBACK" in candidate_strategies else candidate_strategies[0]
+        strategy_triggered = bool(strategy_evaluations)
+        if not strategy_triggered:
+            fallback_strat = "TREND_PULLBACK" if "TREND_PULLBACK" in candidate_strategies else (candidate_strategies[0] if candidate_strategies else "NO_STRATEGY")
             strategy_evaluations[fallback_strat] = {
                 "win_p": final_win_p,
                 "rr": rr_ratio,
                 "ev": 0.0,
+                "ev_dollars": 0.0,
                 "fitness": -1e6,
                 "weight": 0.1
             }
+            logger.info(
+                "[%s] No strategy trigger evaluated (regime=%s style=%s candidates=%s) - "
+                "reporting NO_STRATEGY_TRIGGERED instead of a fabricated EV=0.00 edge.",
+                context.symbol, regime.primary_regime.value if hasattr(regime.primary_regime, "value") else regime.primary_regime,
+                style, ",".join(candidate_strategies) or "none",
+            )
 
         # Select strategy with highest validated fitness / EV
         best_strategy = max(strategy_evaluations.items(), key=lambda x: x[1]["fitness"])[0]
@@ -1662,6 +1667,7 @@ class DecisionEngine:
         final_win_p = selected_eval["win_p"]
         loss_p = round(1.0 - final_win_p, 2)
         ev = selected_eval["ev"]
+        ev_dollars = selected_eval.get("ev_dollars", round(ev * _risk_dollars, 2))
 
         st = context.structure
         premium_discount_valid = True
@@ -1687,6 +1693,14 @@ class DecisionEngine:
                 premium_discount_valid = False
             elif tentative_bias == "SELL" and st.discount_premium_zone == "DISCOUNT" and trend_score_val > -40:
                 premium_discount_valid = False
+        elif any(k in sym_name_eval for k in ["XAU", "GOLD", "XAG", "SILVER"]):
+            # Institutional Precious Metals Discipline (ICT / SMC):
+            # Strict Discount for BUY, Strict Premium for SELL. Reject Equilibrium entries unless confirmed CHOCH.
+            has_choch_reversal = bool(getattr(st, "choch", False))
+            if tentative_bias == "BUY" and st.discount_premium_zone != "DISCOUNT" and not has_choch_reversal:
+                premium_discount_valid = False
+            elif tentative_bias == "SELL" and st.discount_premium_zone != "PREMIUM" and not has_choch_reversal:
+                premium_discount_valid = False
         else:
             if tentative_bias == "BUY" and st.discount_premium_zone == "PREMIUM" and trend_score_val < 50:
                 if not bool(getattr(context.liquidity, "sweep_detected", False)):
@@ -1703,7 +1717,10 @@ class DecisionEngine:
             premium_discount_valid=premium_discount_valid, account_balance=account_balance,
             current_drawdown_pct=current_drawdown_pct, tentative_bias=tentative_bias,
             calibrated_win_p=calibrated_win_p, risk_dist=risk_dist, planned_risk_dollars=planned_risk_dollars,
-            strategy=best_strategy, of_res=of_res
+            strategy=best_strategy, of_res=of_res,
+            strategy_triggered=strategy_triggered,
+            trade_style=style,
+            ev_dollars=ev_dollars,
         )
         
         from jarvis.market.sessions import SessionEngine
@@ -1713,10 +1730,15 @@ class DecisionEngine:
         gate_passed = quality_gate.passed
         failing_reasons = list(quality_gate.failing_reasons)
 
+
+
         # Hard Master Confluence Gate — reject low-confluence setups
         if not master_confluence_valid:
             gate_passed = False
-            failing_reasons.append(f"Master Confluence Below Minimum ({_master_score}/100 < {_min_confluence})")
+            failing_reasons.append("Master Confluence Minimum")
+            logger.info(
+                "Master Confluence gate: %s/100 < %s", _master_score, _min_confluence
+            )
 
         # ---- ML Meta-Label confirmation gate (safe: neutral until a model is trained) ----
         meta_label_prob = None
@@ -1775,6 +1797,52 @@ class DecisionEngine:
             else:
                 gate_policy_decision = "BLOCK"
 
+        # HARD VETO for Precious Metals (Strict capital protection, zero softening):
+        is_metal_sym_gate = any(k in sym_name_eval for k in ["XAU", "GOLD", "XAG", "SILVER"])
+        if is_metal_sym_gate and gate_passed:
+            cfg_gate = get_symbol_profile_config(sym_name_eval)
+            has_choch_rev = bool(getattr(st, "choch", False)) if hasattr(context, "structure") else False
+            # 1. Killzone filter for metals (only enforced if session_restriction is active in profile):
+            if cfg_gate and getattr(cfg_gate, "session_restriction", False):
+                now_dt_gate = getattr(context, "timestamp", None)
+                if now_dt_gate and hasattr(now_dt_gate, "hour"):
+                    h_gate = now_dt_gate.hour
+                    is_kz_metal_gate = (6 <= h_gate <= 8) or (11 <= h_gate <= 14)
+                    premium_off_window = bool(
+                        getattr(cfg_gate, "premium_window_exception", False)
+                        and ai_score >= float(getattr(cfg_gate, "premium_out_of_window_min_ai_score", 101.0) or 101.0)
+                    )
+                    if not is_kz_metal_gate and not has_choch_rev and not premium_off_window:
+                        gate_passed = False
+                        gate_policy_decision = "BLOCK"
+                        failing_reasons.append("Gold Session Window")
+                        logger.info(
+                            "Metals veto: out-of-killzone %02d:00 UTC", h_gate
+                        )
+            # 2. Pure Discount/Premium for Metals:
+            if tentative_bias == "BUY" and st.discount_premium_zone not in ("DISCOUNT", "EQUILIBRIUM") and not has_choch_rev:
+                gate_passed = False
+                gate_policy_decision = "BLOCK"
+                failing_reasons.append("Metals Premium/Discount Discipline")
+                logger.info("Metals veto: BUY requires deep DISCOUNT")
+            elif tentative_bias == "SELL" and st.discount_premium_zone not in ("PREMIUM", "EQUILIBRIUM") and not has_choch_rev:
+                gate_passed = False
+                gate_policy_decision = "BLOCK"
+                failing_reasons.append("Metals Premium/Discount Discipline")
+                logger.info("Metals veto: SELL requires deep PREMIUM")
+            # 3. Pullback OTE Proximity:
+            if best_strategy == "TREND_PULLBACK":
+                atr_v = getattr(context.volatility, "atr", 1.0) or 1.0
+                price_diff = abs(context.current_price - entry_price)
+                if price_diff > (0.65 * atr_v):
+                    gate_passed = False
+                    gate_policy_decision = "BLOCK"
+                    failing_reasons.append("Metals Pullback OTE Proximity")
+                    logger.info(
+                        "Metals veto: pullback entry too far from OTE (%.2f > 0.65 ATR)",
+                        price_diff,
+                    )
+
         # Dedicated Scalp Execution Engine integration
         scalp_res = None
         if "SCALP" in style.upper() and is_mkt_open:
@@ -1807,12 +1875,28 @@ class DecisionEngine:
             elif scalp_res.action == "WAIT":
                 gate_passed = False
             elif scalp_res.action == "EXECUTE" and gate_passed:
-                sl_price = scalp_res.stop_loss
+                scalp_sl_dist = abs(entry_price - scalp_res.stop_loss)
+                # Safeguard: Scalp SL distance cannot be narrower than dynamic_levels noise floor
+                if scalp_sl_dist >= risk_dist:
+                    sl_price = scalp_res.stop_loss
+                    risk_dist = scalp_sl_dist
+                else:
+                    if tentative_bias == "BUY":
+                        sl_price = entry_price - risk_dist
+                    else:
+                        sl_price = entry_price + risk_dist
                 tp1_price = scalp_res.tp1
                 tp2_price = scalp_res.tp2
                 tp3_price = scalp_res.tp3
                 tp_price = scalp_res.tp2
-                rr_ratio = scalp_res.risk_reward
+                rr_ratio = max(1.8, round(abs(tp_price - entry_price) / max(risk_dist, 1e-6), 2))
+
+        # Publish the FINAL gate state (including post-policy vetoes) so
+        # downstream consumers never read a stale pre-policy snapshot.
+        quality_gate.failing_reasons = list(dict.fromkeys(failing_reasons))
+        quality_gate.passed = bool(gate_passed)
+        quality_gate.effective_passed = bool(gate_passed)
+        quality_gate.softened_gates = list(softened_gates)
 
         if not is_mkt_open:
             decision_action = "NO_TRADE"
@@ -1823,7 +1907,7 @@ class DecisionEngine:
                 decision_action = "NO_TRADE"
         elif scalp_res is not None and scalp_res.action == "WAIT":
             decision_action = "WAIT"
-        elif not any(r in HARD_GATES for r in failing_reasons) and tentative_bias in ["BUY", "SELL"] and len(failing_reasons) <= 2 and quality_gate.checks.get("Regime Viability", False):
+        elif not any(canonical_gate(r) in HARD_GATES for r in failing_reasons) and tentative_bias in ["BUY", "SELL"] and len(failing_reasons) <= 2 and quality_gate.checks.get("Regime Viability", False):
             decision_action = "WAIT"
         else:
             decision_action = "NO_TRADE"
@@ -1852,7 +1936,7 @@ class DecisionEngine:
                 elif "Risk/Reward" in reason:
                     waiting_reasons.append(f"Current setup R:R (1:{rr_ratio:.2f}) awaiting optimal price fill.")
                 elif "Positive Expected Value" in reason:
-                    waiting_reasons.append(f"Expected value (${ev:.2f}) awaiting higher statistical edge.")
+                    waiting_reasons.append(f"Expected value ({ev:.2f}R / ${ev_dollars:.2f}) awaiting higher statistical edge.")
                 elif "AI Multi-Score" in reason:
                     waiting_reasons.append(f"Blended AI score ({ai_score:.1f}) pending multi-agent consensus.")
                 elif "Spread Protection" in reason:
@@ -1864,8 +1948,10 @@ class DecisionEngine:
 
         elif decision_action == "NO_TRADE" or not gate_passed:
             for reason in failing_reasons:
-                if "Positive Expected Value" in reason:
-                    rejection_reasons.append(f"Negative / insufficient mathematical edge (EV: ${ev:.2f}).")
+                if "Strategy Triggered" in reason:
+                    rejection_reasons.append("No entry strategy produced a valid trigger for the current regime; no trade rather than inventing an edge.")
+                elif "Positive Expected Value" in reason:
+                    rejection_reasons.append(f"Negative / insufficient mathematical edge (EV: {ev:.2f}R / ${ev_dollars:.2f}).")
                 elif "Devil Adversarial" in reason:
                     rejection_reasons.append(f"Adversarial counter-thesis penalty too high ({devil_report.penalty_score:.1f} / {self.max_devil_penalty:.1f}).")
                 elif "Premium/Discount" in reason:
@@ -1933,8 +2019,8 @@ class DecisionEngine:
         has_bull_swp = bool(getattr(context.liquidity, "sweep_detected", False) and "BULLISH" in getattr(context.liquidity, "sweep_type", ""))
         has_bear_swp = bool(getattr(context.liquidity, "sweep_detected", False) and "BEARISH" in getattr(context.liquidity, "sweep_type", ""))
         # Chasing warning flags:
-        is_chasing_discount_floor = (tentative_bias == "SELL" and (st_zone == "DISCOUNT" or rsi_val < 32.0 or trend_score_val <= -75.0 or has_bull_swp) and not is_breakout_mode)
-        is_chasing_premium_roof = (tentative_bias == "BUY" and (st_zone == "PREMIUM" or rsi_val > 68.0 or trend_score_val >= 75.0 or has_bear_swp) and not is_breakout_mode)
+        is_chasing_discount_floor = (tentative_bias == "SELL" and (((st_zone == "DISCOUNT" or rsi_val < 32.0 or trend_score_val <= -75.0 or has_bull_swp) and not is_breakout_mode) or (is_gold_asset and (st_zone == "DISCOUNT" or rsi_val < 38.0))))
+        is_chasing_premium_roof = (tentative_bias == "BUY" and (((st_zone == "PREMIUM" or rsi_val > 68.0 or trend_score_val >= 75.0 or has_bear_swp) and not is_breakout_mode) or (is_gold_asset and (st_zone == "PREMIUM" or rsi_val > 62.0))))
 
         is_reversal_or_pullback = best_strategy in ("TREND_PULLBACK", "LIQUIDITY_SWEEP_REVERSAL", "CHOCH", "CHOCH_STRUCTURAL_REVERSAL", "RANGE_MEAN_REVERSION")
         is_trending_momentum = (abs(trend_score_val) >= 70.0 or is_breakout_mode) and not is_reversal_or_pullback
@@ -2065,6 +2151,7 @@ class DecisionEngine:
             risk_reward_ratio=rr_ratio,
             calculated_risk_percent=round(risk_per_trade_pct * devil_report.invalidation_risk_coefficient, 2),
             expected_value=ev,
+            expected_value_dollars=ev_dollars,
             model_confidence=calibrated_win_p,
             raw_win_prob=round(float(raw_prob), 4),
             ai_score=round(float(ai_score), 1),

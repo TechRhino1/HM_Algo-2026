@@ -101,12 +101,30 @@ class MarketStructureEngine:
             elif bias == "BULLISH" and latest_close < ema20 and rebound_pct <= 0.50:
                 bias = "BEARISH" if (rebound_pct <= 0.35 or latest_close < ema50) else "NEUTRAL"
 
-        # Premium / Discount / Equilibrium Zones
+        # Micro Market Structure Shift (MSS) for Intraday Reversals:
+        # If price surges through EMA20 with local pivot break, confirm intraday CHOCH/MSS
+        lookback_micro = min(10, len(highs))
+        if lookback_micro >= 4:
+            micro_sh = float(highs[-lookback_micro:-1].max())
+            micro_sl = float(lows[-lookback_micro:-1].min())
+            if latest_close > micro_sh and rebound_pct >= 0.40 and latest_close > ema20:
+                choch_bullish = True
+                bias = "BULLISH"
+            elif latest_close < micro_sl and rebound_pct <= 0.60 and latest_close < ema20:
+                choch_bearish = True
+                bias = "BEARISH"
+
         recent_max = float(highs[-200:].max()) if len(highs) >= 200 else float(highs.max())
         recent_min = float(lows[-200:].min()) if len(lows) >= 200 else float(lows.min())
-        equilibrium = (recent_max + recent_min) / 2.0
-        range_span = recent_max - recent_min + 1e-9
-        position_pct = ((latest_close - recent_min) / range_span) * 100.0
+
+        # Premium / Discount / Equilibrium Zones
+        # Institutional SMC: Use the active swing dealing range (recent_sh, recent_sl) with 60-bar lookback
+        lookback_bars = min(60, len(highs))
+        swing_max = max(recent_sh, float(highs[-lookback_bars:].max()))
+        swing_min = min(recent_sl, float(lows[-lookback_bars:].min()))
+        equilibrium = (swing_max + swing_min) / 2.0
+        range_span = max(swing_max - swing_min, 1e-9)
+        position_pct = ((latest_close - swing_min) / range_span) * 100.0
 
         if position_pct <= 45.0:
             discount_premium_zone = "DISCOUNT"
@@ -262,6 +280,29 @@ class MarketStructureEngine:
             else:
                 channel_quarter = "MIDDLE"
 
+        # Dynamic Angled Trendline Projections (Support & Resistance)
+        dynamic_support_tl = 0.0
+        dynamic_resistance_tl = 0.0
+        current_bar_idx = len(df) - 1
+
+        if len(swing_lows) >= 2:
+            i_prev_sl = swing_lows[-2]["index"]
+            p_prev_sl = swing_lows[-2]["price"]
+            i_recent_sl = swing_lows[-1]["index"]
+            p_recent_sl = swing_lows[-1]["price"]
+            sl_span = max(i_recent_sl - i_prev_sl, 1)
+            support_slope = (p_recent_sl - p_prev_sl) / sl_span
+            dynamic_support_tl = round(p_recent_sl + support_slope * (current_bar_idx - i_recent_sl), 4)
+
+        if len(swing_highs) >= 2:
+            i_prev_sh = swing_highs[-2]["index"]
+            p_prev_sh = swing_highs[-2]["price"]
+            i_recent_sh = swing_highs[-1]["index"]
+            p_recent_sh = swing_highs[-1]["price"]
+            sh_span = max(i_recent_sh - i_prev_sh, 1)
+            resistance_slope = (p_recent_sh - p_prev_sh) / sh_span
+            dynamic_resistance_tl = round(p_recent_sh + resistance_slope * (current_bar_idx - i_recent_sh), 4)
+
         return StructureContext(
             bias=bias,
             higher_highs=hh,
@@ -284,5 +325,7 @@ class MarketStructureEngine:
             channel_lower=round(channel_lower, 4),
             channel_position_pct=channel_position_pct,
             channel_quarter=channel_quarter,
-            adaptive_pivot_window=w
+            adaptive_pivot_window=w,
+            dynamic_support_trendline=dynamic_support_tl,
+            dynamic_resistance_trendline=dynamic_resistance_tl
         )

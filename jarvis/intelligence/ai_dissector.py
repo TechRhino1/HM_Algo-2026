@@ -128,8 +128,8 @@ class AIDissector:
         elif rr_ratio >= 2.5: r += 5
         elif rr_ratio >= 2.0: r += 3
         elif rr_ratio >= 1.5: r += 1
-        if ev >= 5: r += 5
-        elif ev >= 1: r += 3
+        if ev >= 1.5: r += 5
+        elif ev >= 0.6: r += 3
         elif ev > 0: r += 1
         if ai_score >= 80: r += 3
         elif ai_score >= 70: r += 1

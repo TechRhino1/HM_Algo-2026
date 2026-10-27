@@ -38,6 +38,7 @@ from jarvis.backtesting.fills import entry_fill
 from jarvis.data.symbol_registry import resolve as resolve_symbol
 from jarvis.intelligence.decision_engine import DecisionEngine
 from jarvis.intelligence.gate_policy import HARD_GATES
+from jarvis.intelligence.gate_registry import canonical_gate
 from jarvis.intelligence.regime_engine import MarketRegimeClassifier
 from jarvis.market.market_context import MarketContextEngine
 
@@ -259,7 +260,7 @@ class SignalScanner:
                 continue
 
             failing = list(getattr(decision.quality_gate, "failing_reasons", []) or [])
-            hard_failed = [g for g in failing if g in HARD_GATES]
+            hard_failed = [g for g in failing if canonical_gate(g) in HARD_GATES]
             if hard_failed:
                 hard_gate_fail += 1
 

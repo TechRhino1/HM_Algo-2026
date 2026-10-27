@@ -143,10 +143,15 @@ class AutonomousLLMSystemController:
             spread_pips = float(getattr(ctx, "live_spread_pips", 0.0) or 0.0)
             typical_spread = 2.0
             try:
-                from jarvis.market.broker_symbols import resolve_symbol
-                typical_spread = float(resolve_symbol(sym).typical_spread_pips)
-            except Exception:
-                pass
+                # The old import targeted jarvis.market.broker_symbols, a module
+                # that does not exist. Every symbol silently fell back to 2.0
+                # pips, inflating BTC (1500), ETH (345), SOL (35) and XAG (4.0)
+                # spreads into permanent "spread spike" pauses.
+                from jarvis.data.symbol_registry import resolve
+
+                typical_spread = float(resolve(sym).typical_spread_pips)
+            except Exception as exc:
+                logger.debug("Governor spread baseline fallback for %s: %s", sym, exc)
 
             spread_ratio = spread_pips / max(0.1, typical_spread) if spread_pips > 0 else 1.0
 

@@ -14,6 +14,22 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
+
+@dataclass
+class StyleProfile:
+    trade_style: str  # 'SCALP', 'DAY_TRADING', 'SWING'
+    sl_atr_multiplier: float = 1.80
+    min_target_rr: float = 2.0
+    asym_rr: float = 3.5
+    anti_wick_buffer_atr: float = 0.35
+    fast_cash_r: float = 1.50
+    fast_cash_volume_pct: float = 0.33
+    be_trigger_r: float = 1.80
+    runner_trail_atr: float = 2.0
+    trail_activation_r: float = 2.0
+    time_stop_minutes: float = 120.0
+    milestones: List[Tuple[float, float]] = field(default_factory=list)
+
 @dataclass
 class SymbolProfileConfig:
     symbol: str
@@ -60,6 +76,7 @@ class SymbolProfileConfig:
     min_volume: float = 0.01
     volume_step: float = 0.01
     margin_pct: float = 0.5
+    style_profiles: Dict[str, StyleProfile] = field(default_factory=dict)
 
 
 # ─── SYMBOL-SPECIFIC INSTITUTIONAL CONFIGURATION MATRIX ──────────────────────────
@@ -73,23 +90,25 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         canonical="BTCUSD",
         asset_class="CRYPTO",
         strategy_weights={
-            "TREND_PULLBACK": 3.5,             # Deep pullbacks into discount/premium OTE
-            "CHOCH_STRUCTURAL_REVERSAL": 3.0,  # Confirmed structural shifts only
-            "TREND_FOLLOWING": 2.5,            # Institutional trend continuation
-            "RANGE_MEAN_REVERSION": 1.5,       # Demote range fades on macro trending crypto
-            "LIQUIDITY_SWEEP_REVERSAL": 0.5,   # Avoid counter-trend sweep fades in crypto
+            "TREND_PULLBACK": 4.0,             # Deep pullbacks into discount/premium OTE (proven +PnL on XM)
+            "CHOCH_STRUCTURAL_REVERSAL": 2.0,  # Confirmed structural shifts only
+            "TREND_FOLLOWING": 1.0,            # Conservative trend continuation (avoid breakout traps)
+            "RANGE_MEAN_REVERSION": 0.0,       # Ban range fades on volatile crypto
+            "LIQUIDITY_SWEEP_REVERSAL": 0.0,   # Avoid counter-trend sweep fades in crypto
             "BREAKOUT_EXPANSION": 0.0,         # Ban false breakout traps in crypto
         },
-        banned_strategies=["BREAKOUT_EXPANSION"],
-        sl_atr_multiplier=1.50,                # Calibrated for local structural execution
+        banned_strategies=["BREAKOUT_EXPANSION", "RANGE_MEAN_REVERSION", "LIQUIDITY_SWEEP_REVERSAL"],
+        sl_atr_multiplier=2.20,                # Calibrated for structural execution (absorbs $15 spread safely)
         min_target_rr=2.0,
         asym_rr=3.5,
-        anti_wick_buffer_atr=0.40,             # Calibrated to absorb crypto wicks
-        fast_cash_r=1.50,
-        fast_cash_volume_pct=0.33,
-        be_trigger_r=1.80,
+        anti_wick_buffer_atr=0.45,             # Calibrated to absorb crypto wicks
+        fast_cash_r=1.20,
+        fast_cash_volume_pct=0.50,
+        be_trigger_r=1.40,
         runner_trail_atr=1.80,                 # Calibrated runner trail
         session_restriction=False,
+        allowed_utc_hours=None,
+        premium_window_exception=False,
         contract_size=1.0,
         pip_size=0.01,
         pip_value_per_lot=0.01,
@@ -124,6 +143,8 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         be_trigger_r=1.80,
         runner_trail_atr=1.80,
         session_restriction=False,
+        allowed_utc_hours=None,
+        premium_window_exception=False,
         contract_size=1.0,
         pip_size=0.01,
         pip_value_per_lot=0.01,
@@ -397,14 +418,14 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         canonical="XAGUSD",
         asset_class="COMMODITY",
         strategy_weights={
-            "LIQUIDITY_SWEEP_REVERSAL": 3.5,
-            "CHOCH_STRUCTURAL_REVERSAL": 3.0,
-            "RANGE_MEAN_REVERSION": 2.5,
-            "TREND_PULLBACK": 0.0,
-            "TREND_FOLLOWING": 0.0,
+            "TREND_FOLLOWING": 3.5,            # Unbanned: primary trending driver on commodities
+            "TREND_PULLBACK": 3.0,             # Deep discount/premium retracements
+            "CHOCH_STRUCTURAL_REVERSAL": 1.5,  # Demoted from 5.0 to stop counter-trend traps
+            "LIQUIDITY_SWEEP_REVERSAL": 0.0,   # Ban counter-trend sweep fades on metals
+            "RANGE_MEAN_REVERSION": 0.0,
             "BREAKOUT_EXPANSION": 0.0,
         },
-        banned_strategies=["BREAKOUT_EXPANSION", "TREND_PULLBACK", "TREND_FOLLOWING"],
+        banned_strategies=["BREAKOUT_EXPANSION", "RANGE_MEAN_REVERSION", "LIQUIDITY_SWEEP_REVERSAL"],
         sl_atr_multiplier=1.40,
         min_target_rr=2.0,
         asym_rr=3.5,
@@ -413,8 +434,9 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         fast_cash_volume_pct=0.33,
         be_trigger_r=1.80,
         runner_trail_atr=2.20,
-        session_restriction=True,
-        allowed_utc_hours=(12, 19),
+        session_restriction=False,
+        allowed_utc_hours=None,
+        premium_window_exception=False,
         contract_size=5000.0,
         pip_size=0.01,
         pip_value_per_lot=50.0,
@@ -432,38 +454,28 @@ SYMBOL_PROFILES: Dict[str, SymbolProfileConfig] = {
         canonical="XAUUSD",
         asset_class="COMMODITY",
         strategy_weights={
-            "TREND_PULLBACK": 3.5,
-            "LIQUIDITY_SWEEP_REVERSAL": 3.5,
-            "CHOCH_STRUCTURAL_REVERSAL": 3.0,
-            "BREAKOUT_EXPANSION": 1.5,
+            "TREND_FOLLOWING": 3.5,            # Empirically proven: 42.9% WR / +$53.79 PnL (unbanned!)
+            "TREND_PULLBACK": 3.0,             # Deep discount/premium OTE retracements
+            "CHOCH_STRUCTURAL_REVERSAL": 1.5,  # Demoted from 5.0 (4.9% WR) to stop counter-trend traps
+            "LIQUIDITY_SWEEP_REVERSAL": 0.0,   # Ban counter-trend sweep fades (stops running into momentum)
+            "BREAKOUT_EXPANSION": 0.0,         # Ban late breakout chasing
             "RANGE_MEAN_REVERSION": 0.0,
-            "TREND_FOLLOWING": 0.0,
         },
-        banned_strategies=["RANGE_MEAN_REVERSION", "TREND_FOLLOWING"],
-        sl_atr_multiplier=1.50,                # XAUUSD structural stops beyond the swept wick + 1.5x ATR cushion (published XAu standard 0.3-0.5 ATR buffer; sub-1x ATR stops sit inside one candle's range and get swept)
+        banned_strategies=["RANGE_MEAN_REVERSION", "BREAKOUT_EXPANSION", "LIQUIDITY_SWEEP_REVERSAL"],
+        sl_atr_multiplier=1.60,                # XAUUSD structural stops with healthy buffer
         min_target_rr=2.0,
         asym_rr=3.8,
         anti_wick_buffer_atr=0.45,
-        fast_cash_r=1.50,
-        fast_cash_volume_pct=0.33,
-        be_trigger_r=1.80,
+        fast_cash_r=1.10,                      # Early harvest: bank 50% at 1.10R to protect positive MFE
+        fast_cash_volume_pct=0.50,
+        be_trigger_r=1.20,                     # Move to breakeven quickly at 1.20R
         runner_trail_atr=2.00,
-        session_restriction=True,
-        # NY data-driven hours: XAU volatility/liquidity peak sits 12:00-15:30 UTC
-        # (13:00 UTC is the widest hour at ~$24 range; 21:00 UTC rollover dies to
-        # ~$2.80). Our own live ledger agrees: the 12-14h block is the only
-        # consistently positive gold segment, while 15-17h and 06-08h were the
-        # two biggest bleeder clusters. Asia sessions are mostly uninformed
-        # flow (Tokyo dominance documented for metals) and are excluded.
-        allowed_utc_hours=(12, 16),
-        # 2026-10-20 premium exception: gold is still optimized for its NY
-        # peak window, but the user directive (and opportunity cost) says an
-        # elite setup elsewhere in the day must not be missed. Off-window
-        # scanning continues every cycle; entries outside 12-16 UTC now
-        # require a blended analyst score >= 88 (vs the normal hard gates at
-        # 70-85) so only genuinely A+ confluence trades gold off-hours.
+        session_restriction=False,
+        # Expanded trading window: London + NY (06:00 to 21:00 UTC)
+        # Prevents missing legitimate Gold trades during European and late US sessions.
+        allowed_utc_hours=(6, 21),
         premium_window_exception=True,
-        premium_out_of_window_min_ai_score=88.0,
+        premium_out_of_window_min_ai_score=80.0,
         contract_size=100.0,
         pip_size=0.1,
         pip_value_per_lot=10.0,
@@ -651,3 +663,220 @@ def get_symbol_profile_config(symbol: str) -> SymbolProfileConfig:
         pip_value_per_lot=10.0,
         digits=5
     )
+
+
+
+def get_style_profile(symbol: str, trade_style: str = "SWING") -> StyleProfile:
+    """Returns the calibrated, asset-class and symbol-specific execution profile
+    for a given trade style (SCALP, DAY_TRADING, SWING).
+    """
+    cfg = get_symbol_profile_config(symbol)
+    ts = str(trade_style or "SWING").upper().strip()
+
+    if "SCALP" in ts or "SCLP" in ts:
+        style_key = "SCALP"
+    elif any(k in ts for k in ("DAY", "INTRADAY")):
+        style_key = "DAY_TRADING"
+    else:
+        style_key = "SWING"
+
+    if style_key in getattr(cfg, "style_profiles", {}):
+        return cfg.style_profiles[style_key]
+
+    sym_name = str(symbol or "").upper()
+    is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name)
+    is_silver = ("XAG" in sym_name) or ("SILVER" in sym_name)
+    is_oil = ("WTI" in sym_name) or ("OIL" in sym_name)
+    asset_cls = str(getattr(cfg, "asset_class", "FOREX") or "FOREX").upper()
+    is_crypto = (asset_cls == "CRYPTO") or ("BTC" in sym_name) or ("ETH" in sym_name) or ("SOL" in sym_name)
+    is_index = (asset_cls == "INDEX") or any(k in sym_name for k in ("US500", "NAS100", "US30", "GER40", "UK100"))
+
+    # 1. SCALP: High velocity, tight breakeven lock, aggressive trailing, fast-cash harvest
+    if style_key == "SCALP":
+        if is_gold:
+            return StyleProfile(
+                trade_style="SCALP",
+                sl_atr_multiplier=1.10,
+                min_target_rr=1.8,
+                asym_rr=2.5,
+                anti_wick_buffer_atr=0.35,
+                fast_cash_r=1.00,
+                fast_cash_volume_pct=0.50,
+                be_trigger_r=1.10,
+                runner_trail_atr=1.20,
+                trail_activation_r=1.40,
+                time_stop_minutes=45.0,
+                milestones=[(0.8, 0.0), (1.0, 0.35), (1.2, 0.60), (1.5, 0.90), (2.0, 1.40)]
+            )
+        elif is_crypto:
+            return StyleProfile(
+                trade_style="SCALP",
+                sl_atr_multiplier=1.30,
+                min_target_rr=1.8,
+                asym_rr=2.5,
+                anti_wick_buffer_atr=0.40,
+                fast_cash_r=1.00,
+                fast_cash_volume_pct=0.50,
+                be_trigger_r=1.20,
+                runner_trail_atr=1.20,
+                trail_activation_r=1.40,
+                time_stop_minutes=60.0,
+                milestones=[(0.8, 0.0), (1.0, 0.35), (1.2, 0.60), (1.5, 0.90), (2.0, 1.40)]
+            )
+        elif is_index:
+            return StyleProfile(
+                trade_style="SCALP",
+                sl_atr_multiplier=1.20,
+                min_target_rr=1.8,
+                asym_rr=2.4,
+                anti_wick_buffer_atr=0.30,
+                fast_cash_r=1.00,
+                fast_cash_volume_pct=0.50,
+                be_trigger_r=1.15,
+                runner_trail_atr=1.00,
+                trail_activation_r=1.40,
+                time_stop_minutes=60.0,
+                milestones=[(0.8, 0.0), (1.0, 0.35), (1.2, 0.60), (1.5, 0.90), (2.0, 1.40)]
+            )
+        else:  # Forex & general commodities
+            return StyleProfile(
+                trade_style="SCALP",
+                sl_atr_multiplier=1.00,
+                min_target_rr=1.8,
+                asym_rr=2.4,
+                anti_wick_buffer_atr=0.25,
+                fast_cash_r=0.90 if any(k in sym_name for k in ("AUD", "CHF", "NZD")) else 1.00,
+                fast_cash_volume_pct=0.50,
+                be_trigger_r=1.10,
+                runner_trail_atr=0.90,
+                trail_activation_r=1.30,
+                time_stop_minutes=60.0,
+                milestones=[(0.8, 0.0), (1.0, 0.35), (1.2, 0.60), (1.5, 0.90), (2.0, 1.40)]
+            )
+
+    # 2. DAY_TRADING: Session structure, M15/H1 impulse alignment, balanced profit ratchet
+    elif style_key == "DAY_TRADING":
+        if is_gold:
+            # Strictly preserves validated Gold parameters
+            return StyleProfile(
+                trade_style="DAY_TRADING",
+                sl_atr_multiplier=cfg.sl_atr_multiplier,      # 1.60
+                min_target_rr=cfg.min_target_rr,              # 2.0
+                asym_rr=3.0,
+                anti_wick_buffer_atr=cfg.anti_wick_buffer_atr,# 0.45
+                fast_cash_r=cfg.fast_cash_r,                  # 1.10
+                fast_cash_volume_pct=cfg.fast_cash_volume_pct,# 0.50
+                be_trigger_r=cfg.be_trigger_r,                # 1.20
+                runner_trail_atr=1.80,
+                trail_activation_r=1.80,
+                time_stop_minutes=75.0,
+                milestones=[(1.0, -0.20), (1.1, 0.15), (1.5, 0.40), (2.0, 0.80), (3.0, 1.60)]
+            )
+        elif is_crypto:
+            return StyleProfile(
+                trade_style="DAY_TRADING",
+                sl_atr_multiplier=1.80,
+                min_target_rr=2.0,
+                asym_rr=3.0,
+                anti_wick_buffer_atr=0.45,
+                fast_cash_r=1.20,
+                fast_cash_volume_pct=0.40,
+                be_trigger_r=1.40,
+                runner_trail_atr=1.60,
+                trail_activation_r=1.80,
+                time_stop_minutes=120.0,
+                milestones=[(1.0, -0.20), (1.2, 0.20), (1.5, 0.50), (2.0, 0.90), (3.0, 1.80)]
+            )
+        elif is_index:
+            return StyleProfile(
+                trade_style="DAY_TRADING",
+                sl_atr_multiplier=1.60,
+                min_target_rr=2.0,
+                asym_rr=2.8,
+                anti_wick_buffer_atr=0.35,
+                fast_cash_r=1.40,
+                fast_cash_volume_pct=0.33,
+                be_trigger_r=1.60,
+                runner_trail_atr=1.50,
+                trail_activation_r=1.80,
+                time_stop_minutes=180.0,
+                milestones=[(1.0, -0.20), (1.4, 0.30), (1.8, 0.70), (2.5, 1.30), (3.5, 2.20)]
+            )
+        else:  # Forex & general
+            return StyleProfile(
+                trade_style="DAY_TRADING",
+                sl_atr_multiplier=1.50,
+                min_target_rr=2.0,
+                asym_rr=2.8,
+                anti_wick_buffer_atr=0.30,
+                fast_cash_r=1.30,
+                fast_cash_volume_pct=0.33,
+                be_trigger_r=1.50,
+                runner_trail_atr=1.30,
+                trail_activation_r=1.60,
+                time_stop_minutes=120.0,
+                milestones=[(1.0, -0.20), (1.4, 0.30), (1.8, 0.70), (2.5, 1.30), (3.5, 2.20)]
+            )
+
+    # 3. SWING: Macro H4/D1 trend persistence, wider stops, asymmetric extension (3.5R - 5.0R)
+    else:  # SWING
+        if is_gold:
+            return StyleProfile(
+                trade_style="SWING",
+                sl_atr_multiplier=1.80,
+                min_target_rr=2.5,
+                asym_rr=cfg.asym_rr,                          # 3.8
+                anti_wick_buffer_atr=cfg.anti_wick_buffer_atr,# 0.45
+                fast_cash_r=1.80,
+                fast_cash_volume_pct=0.33,
+                be_trigger_r=2.00,
+                runner_trail_atr=cfg.runner_trail_atr,        # 2.00
+                trail_activation_r=2.00,
+                time_stop_minutes=240.0,
+                milestones=[(1.2, -0.30), (1.8, 0.40), (2.2, 0.80), (3.0, 1.50), (4.5, 3.00)]
+            )
+        elif is_crypto:
+            return StyleProfile(
+                trade_style="SWING",
+                sl_atr_multiplier=cfg.sl_atr_multiplier,      # 2.20
+                min_target_rr=cfg.min_target_rr,              # 2.0
+                asym_rr=cfg.asym_rr,                          # 3.5
+                anti_wick_buffer_atr=cfg.anti_wick_buffer_atr,# 0.45
+                fast_cash_r=1.80,
+                fast_cash_volume_pct=0.25,
+                be_trigger_r=2.00,
+                runner_trail_atr=cfg.runner_trail_atr,        # 1.80
+                trail_activation_r=2.00,
+                time_stop_minutes=360.0,
+                milestones=[(1.2, -0.30), (1.8, 0.40), (2.2, 0.80), (3.0, 1.50), (4.5, 3.00)]
+            )
+        elif is_index:
+            return StyleProfile(
+                trade_style="SWING",
+                sl_atr_multiplier=2.00,
+                min_target_rr=2.2,
+                asym_rr=3.5,
+                anti_wick_buffer_atr=0.40,
+                fast_cash_r=2.00,
+                fast_cash_volume_pct=0.25,
+                be_trigger_r=2.20,
+                runner_trail_atr=2.00,
+                trail_activation_r=2.20,
+                time_stop_minutes=480.0,
+                milestones=[(1.2, -0.30), (1.8, 0.40), (2.2, 0.80), (3.0, 1.50), (4.5, 3.00)]
+            )
+        else:  # Forex & general
+            return StyleProfile(
+                trade_style="SWING",
+                sl_atr_multiplier=cfg.sl_atr_multiplier,      # 1.80
+                min_target_rr=cfg.min_target_rr,              # 2.0
+                asym_rr=cfg.asym_rr,                          # 3.5
+                anti_wick_buffer_atr=cfg.anti_wick_buffer_atr,# 0.35
+                fast_cash_r=cfg.fast_cash_r,                  # 1.50
+                fast_cash_volume_pct=cfg.fast_cash_volume_pct,# 0.33
+                be_trigger_r=cfg.be_trigger_r,                # 1.80
+                runner_trail_atr=cfg.runner_trail_atr,        # 2.00
+                trail_activation_r=2.00,
+                time_stop_minutes=240.0,
+                milestones=[(1.2, -0.30), (1.8, 0.40), (2.2, 0.80), (3.0, 1.50), (4.5, 3.00)]
+            )

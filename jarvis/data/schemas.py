@@ -117,6 +117,9 @@ class StructureContext:
     channel_position_pct: float = 50.0
     channel_quarter: str = "MIDDLE"  # "LOWER_QUARTER", "MIDDLE", "UPPER_QUARTER"
     adaptive_pivot_window: int = 5
+    # Dynamic Angled Trendline Projections (Support & Resistance)
+    dynamic_support_trendline: float = 0.0
+    dynamic_resistance_trendline: float = 0.0
 
 @dataclass
 class LiquidityContext:
@@ -197,6 +200,9 @@ class MarketContext:
     live_spread_pips: Optional[float] = None
     candlestick_pattern: Dict[str, Any] = field(default_factory=dict)
     crypto_lead_lag: Dict[str, Any] = field(default_factory=dict)
+    metals_smt: Dict[str, Any] = field(default_factory=dict)
+    intermarket_dxy: Dict[str, Any] = field(default_factory=dict)
+    cross_market_smt: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class RegimeOutput:
@@ -281,6 +287,10 @@ class TradeQualityGateResult:
     # history. A check that is missing from `checks` is otherwise indistinguishable
     # from one that passed, so "did not block" silently reads as "confirmed".
     not_evaluated: List[str] = field(default_factory=list)
+    # Adaptive policy telemetry: raw `passed` stays False when gates were
+    # softened; `effective_passed` is the boolean the execution path used.
+    softened_gates: List[str] = field(default_factory=list)
+    effective_passed: Optional[bool] = None
 
 @dataclass
 class DecisionObject:
@@ -337,6 +347,7 @@ class DecisionObject:
     tp3_price: Optional[float] = None
     as_limit_price: Optional[float] = None
     fallback_rung: str = "RUN"
+    expected_value_dollars: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -368,6 +379,7 @@ class DecisionObject:
             "risk_reward_ratio": self.risk_reward_ratio,
             "calculated_risk_percent": self.calculated_risk_percent,
             "expected_value": self.expected_value,
+            "expected_value_dollars": self.expected_value_dollars,
             "model_confidence": self.model_confidence,
             "adversarial_penalty": self.adversarial_penalty,
             "invalidation_levels": self.invalidation_levels,
@@ -471,5 +483,17 @@ class PositionSnapshot:
             "commission": self.commission,
             "open_time": self.open_time,
             "magic": self.magic,
-            "comment": self.comment
+            "comment": self.comment,
+            "style": self.style
         }
+
+    @property
+    def style(self) -> str:
+        comm = (self.comment or "").upper()
+        if "SCALP" in comm or "SCLP" in comm:
+            return "SCALP"
+        if "SWING" in comm or "SWNG" in comm:
+            return "SWING"
+        if "DAY" in comm or "INTRADAY" in comm:
+            return "DAY_TRADING"
+        return "DAY_TRADING" 

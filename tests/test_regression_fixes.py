@@ -20,7 +20,9 @@ from jarvis.data.schemas import (
     DecisionObject,
     DevilAdvocateReport,
     TradeQualityGateResult,
-    AccountSnapshot
+    AccountSnapshot,
+    AnalystReport,
+    AnalystRole,
 )
 from jarvis.execution.position_monitor import (
     PositionMonitorEngine,
@@ -762,7 +764,7 @@ class TestRegressionFixes(unittest.TestCase):
             current_price=2400.0,
             bid=2399.8,
             ask=2400.2,
-            structure=StructureContext(bias="BULLISH", choch=True, choch_type="BULLISH", demand_zone=(2390.0, 2392.0)),
+            structure=StructureContext(bias="BULLISH", choch=True, choch_type="BULLISH", demand_zone=(2390.0, 2392.0), discount_premium_zone="DISCOUNT"),
             liquidity=LiquidityContext(),
             volatility=VolatilityContext(atr=10.0, current_spread_pips=2.0),
             momentum=MomentumContext(trend_score=75.0, adx=32.0),
@@ -780,7 +782,7 @@ class TestRegressionFixes(unittest.TestCase):
             current_price=2400.0,
             bid=2399.8,
             ask=2400.2,
-            structure=StructureContext(bias="BULLISH", choch=True, choch_type="BULLISH", demand_zone=(2390.0, 2392.0)),
+            structure=StructureContext(bias="BULLISH", choch=True, choch_type="BULLISH", demand_zone=(2390.0, 2392.0), discount_premium_zone="DISCOUNT"),
             liquidity=LiquidityContext(),
             volatility=VolatilityContext(atr=10.0, current_spread_pips=2.0),
             momentum=MomentumContext(trend_score=10.0, adx=14.0),
@@ -792,13 +794,26 @@ class TestRegressionFixes(unittest.TestCase):
             confidence=0.80
         )
 
+        # A strict discount + a bullish analyst vote is the minimum confluence the
+        # direction engine now requires for a range BUY; without it the range case
+        # resolves HOLD and only one side of the TP comparison can be measured.
+        bullish_reports = {
+            "structure": AnalystReport(
+                role=AnalystRole.STRUCTURE,
+                symbol="XAUUSD",
+                bias="BULLISH",
+                score=72.0,
+                confidence=0.7,
+            )
+        }
+
         # 1. Compute levels for strong trend
         _, _, _, tp_trend, risk_trend, rr_trend, first_target_trend, _ = dec_engine._compute_bias_and_levels(
-            trend_ctx, trend_regime, {}
+            trend_ctx, trend_regime, bullish_reports
         )
         # 2. Compute levels for range regime
         _, _, _, tp_range, risk_range, rr_range, first_target_range, _ = dec_engine._compute_bias_and_levels(
-            range_ctx, range_regime, {}
+            range_ctx, range_regime, bullish_reports
         )
 
         self.assertLessEqual(risk_trend, risk_range, "Strong trend SL should be tighter or equal to ranging SL (P2 Adaptive SL)")

@@ -71,17 +71,25 @@ _TIME_STOP_MINUTES_BY_CLASS = {
 DEFAULT_TIME_STOP_MINUTES = 120.0
 
 
+
+# ── Resolved Policy In-Memory Memoization Cache ──────────────────────────────
+# (symbol, trade_style, regime, digits) -> ExitPolicy for O(1) zero-alloc lookups.
+_RESOLVED_POLICY_CACHE: dict = {}
+
 @dataclass
 class ExitPolicy:
     """Resolved, symbol-specific exit parameters expressed in R-multiples."""
 
     symbol: str = "UNKNOWN"
+    trade_style: str = "SWING"
     be_trigger_r: float = DEFAULT_BE_TRIGGER_R
     fast_cash_r: float = DEFAULT_FAST_CASH_R
     fast_cash_volume_pct: float = DEFAULT_FAST_CASH_VOLUME_PCT
     be_buffer_pct: float = DEFAULT_BE_BUFFER_PCT
     runner_trail_atr: float = DEFAULT_RUNNER_TRAIL_ATR
     trail_activation_r: float = DEFAULT_TRAIL_ACTIVATION_R
+    tp2_r: float = 2.0
+    tp3_r: float = 3.5
     # Milestone ratchets: (favorable R threshold, R level to lock in)
     milestones: List[tuple] = field(
         default_factory=lambda: [(1.0, -0.35), (1.5, 0.25), (2.0, 0.60), (2.8, 1.25), (3.8, 2.25), (5.0, 3.50)]
@@ -110,48 +118,86 @@ class ExitPolicy:
 
     # ── Construction ────────────────────────────────────────────────────────
     @classmethod
-    def for_symbol(cls, symbol: str, spec: Any = None) -> "ExitPolicy":
-        """Build a policy from the central symbol-profile matrix.
+    def for_symbol(
+        cls,
+        symbol: str,
+        spec: Any = None,
+        trade_style: str = "SWING",
+        regime: Optional[str] = None
+    ) -> "ExitPolicy":
+        """Build a dynamic, symbol-specific, style-specific, and regime-adaptive policy.
 
-        Falls back to conservative defaults when the profile is unavailable, so the
-        engine degrades gracefully instead of raising inside a monitoring loop.
+        Caches resolved policies for O(1) zero-alloc performance in the monitoring loop.
+        Falls back to conservative defaults when the profile is unavailable.
         """
         digits = int(getattr(spec, "digits", 5) or 5)
         pip_size = float(getattr(spec, "pip_size", 0.0001) or 0.0001)
+        sym_str = str(symbol or "UNKNOWN").upper().strip()
+        style_str = str(trade_style or "SWING").upper().strip()
+        reg_key = str(regime or "NORMAL").upper().strip()
+
+        cache_key = (sym_str, style_str, reg_key, digits)
+        if cache_key in _RESOLVED_POLICY_CACHE:
+            return _RESOLVED_POLICY_CACHE[cache_key]
 
         try:
-            from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config
+            from jarvis.intelligence.symbol_profile_config import get_style_profile, get_symbol_profile_config
 
             cfg = get_symbol_profile_config(symbol)
-            asset_cls = str(getattr(cfg, "asset_class", "") or "").upper()
-            sym_up = str(symbol or "").upper()
-            time_stop_minutes = _TIME_STOP_MINUTES_BY_CLASS.get(
-                asset_cls, DEFAULT_TIME_STOP_MINUTES
-            )
-            # Siloed metals pulse faster than indices/yen crosses; gold in
-            # particular is decided within the first hour by the M15 pulse.
-            if ("XAU" in sym_up or "GOLD" in sym_up) and asset_cls == "COMMODITY":
-                time_stop_minutes = 75.0
-            return cls(
+            sp = get_style_profile(symbol, trade_style)
+
+            be_trig = float(sp.be_trigger_r)
+            fast_cash_r = float(sp.fast_cash_r)
+            fast_cash_vol = float(sp.fast_cash_volume_pct)
+            runner_trail = float(sp.runner_trail_atr)
+            trail_act = float(sp.trail_activation_r)
+            time_stop_min = float(sp.time_stop_minutes)
+            milestones = list(sp.milestones) if sp.milestones else [(1.0, -0.35), (1.5, 0.25), (2.0, 0.60), (2.8, 1.25), (3.8, 2.25), (5.0, 3.50)]
+
+            # Apply Regime-Adaptive Modulators
+            is_ranging = any(k in reg_key for k in ("RANGE", "CONSOLIDATION", "COMPRESSION", "CHOP"))
+            is_trending = any(k in reg_key for k in ("TREND", "EXPANSION", "MOMENTUM"))
+            is_extreme = any(k in reg_key for k in ("EXTREME", "HIGH_VOLATILITY", "SHOCK"))
+
+            if is_ranging:
+                # In range/compression: bank early before range boundary bounce, advance BE, tighten trail
+                fast_cash_r = min(fast_cash_r, 1.00)
+                fast_cash_vol = max(fast_cash_vol, 0.50)
+                be_trig = min(be_trig, 1.15)
+                runner_trail = min(runner_trail, 1.00)
+                trail_act = min(trail_act, 1.30)
+                time_stop_min = time_stop_min * 0.75
+            elif is_trending:
+                # In trending: expand runner trail breathing room, defer partial to let runners ride
+                runner_trail = runner_trail * 1.15
+                if "SCALP" not in sp.trade_style:
+                    fast_cash_vol = min(fast_cash_vol, 0.33)
+            elif is_extreme:
+                # High volatility: tighten fast-cash profit lock once in money
+                fast_cash_r = min(fast_cash_r, 1.10)
+
+            pol = cls(
                 symbol=str(symbol),
-                be_trigger_r=float(getattr(cfg, "be_trigger_r", DEFAULT_BE_TRIGGER_R)),
-                fast_cash_r=float(getattr(cfg, "fast_cash_r", DEFAULT_FAST_CASH_R)),
-                fast_cash_volume_pct=float(
-                    getattr(cfg, "fast_cash_volume_pct", DEFAULT_FAST_CASH_VOLUME_PCT)
-                ),
+                trade_style=sp.trade_style,
+                be_trigger_r=be_trig,
+                fast_cash_r=fast_cash_r,
+                fast_cash_volume_pct=fast_cash_vol,
                 be_buffer_pct=float(getattr(cfg, "be_buffer_pct", DEFAULT_BE_BUFFER_PCT)),
-                runner_trail_atr=float(
-                    getattr(cfg, "runner_trail_atr", DEFAULT_RUNNER_TRAIL_ATR)
-                ),
-                trail_activation_r=float(
-                    getattr(cfg, "trail_activation_r", DEFAULT_TRAIL_ACTIVATION_R)
-                ),
-                time_stop_minutes=float(time_stop_minutes),
+                runner_trail_atr=runner_trail,
+                trail_activation_r=trail_act,
+                tp2_r=float(getattr(sp, "min_target_rr", 2.0) or 2.0),
+                tp3_r=float(getattr(sp, "asym_rr", 3.5) or 3.5),
+                milestones=milestones,
+                time_stop_minutes=time_stop_min,
                 digits=int(getattr(cfg, "digits", digits) or digits),
                 pip_size=float(getattr(cfg, "pip_size", pip_size) or pip_size),
             )
+            _RESOLVED_POLICY_CACHE[cache_key] = pol
+            return pol
         except Exception:
-            return cls(symbol=str(symbol), digits=digits, pip_size=pip_size)
+            fallback_pol = cls(symbol=str(symbol), trade_style=trade_style, digits=digits, pip_size=pip_size)
+            _RESOLVED_POLICY_CACHE[cache_key] = fallback_pol
+            return fallback_pol
 
     def buffer_distance(self, risk_dist: float) -> float:
         """Breakeven buffer as a price distance, floored to cover spread noise."""
@@ -244,6 +290,11 @@ def evaluate_exit(
         return dec
 
     r_multiple = favorable_dist / risk_dist
+    # Current excursion in R (negative when the trade is under water). The time
+    # stop used to test `r_multiple < 0`, but `favorable_dist` is a best-effort
+    # maximum and can never be negative, so the check was unreachable.
+    signed_move = (price - entry) if is_buy else (entry - price)
+    current_r = signed_move / max(risk_dist, 1e-6)
     buffer_dist = policy.buffer_distance(risk_dist)
     digits = policy.digits
 
@@ -271,11 +322,11 @@ def evaluate_exit(
         and hold_minutes is not None
         and hold_minutes >= policy.time_stop_minutes
         and not partial_already_taken
-        and r_multiple < policy.time_stop_min_r
+        and current_r < max(0.0, policy.time_stop_min_r)  # dead, not merely unlucky
     ):
         dec.close_position = True
         dec.close_reason = (
-            f"TIME_STOP_{hold_minutes:.0f}min<{policy.time_stop_min_r:.2f}R"
+            f"TIME_STOP_{hold_minutes:.0f}min_{current_r:+.2f}R"
             f"_{policy.time_stop_minutes:.0f}min_limit"
         )
         dec.actions.append("TIME_STOP")

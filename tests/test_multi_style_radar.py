@@ -138,30 +138,44 @@ class TestMultiStyleRadar(unittest.TestCase):
             self.assertTrue(is_match)
 
     def test_radar_levels_differentiation_between_styles(self):
-        """Verify SCALP, DAY_TRADING, and SWING have distinct SL and TP levels."""
+        """Verify SCALP, DAY_TRADING, and SWING have distinct SL and TP levels.
+
+        The style differentiation lives in the level engine, not in the feed.
+        Building one context per style used the synthetic fallback in offline
+        runs, where each timeframe is an independent random series -- so a
+        "SWING" frame could legitimately carry a smaller ATR than the "DAY"
+        frame and the ordering assertion measured the fixture, not the code.
+        One context, three styles, no structure bias: the style floors are the
+        only input that changes.
+        """
+        from jarvis.data.schemas import (
+            LiquidityContext,
+            MarketContext,
+            MomentumContext,
+            SessionContext,
+            StructureContext,
+            VolatilityContext,
+        )
         from jarvis.intelligence.dynamic_levels import DynamicRiskAndLevelsEngine
-        from jarvis.market.market_context import MarketContextEngine
-        from jarvis.market.data_feed import DataFeedEngine
 
-        feed = DataFeedEngine()
-        ctx_engine = MarketContextEngine()
         levels_engine = DynamicRiskAndLevelsEngine()
+        ctx = MarketContext(
+            symbol="EURUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=1.0850,
+            bid=1.0849,
+            ask=1.0851,
+            structure=StructureContext(bias="BULLISH"),
+            liquidity=LiquidityContext(),
+            volatility=VolatilityContext(atr=0.0010, current_spread_pips=1.0),
+            momentum=MomentumContext(trend_score=60.0, adx=28.0),
+            session=SessionContext(is_prime_session=True),
+        )
+        regime = RegimeOutput(primary_regime=MarketRegime.TREND_BULL, probabilities={}, confidence=0.85)
 
-        # Build context and levels for SCALP
-        scalp_mtf = feed.fetch_multi_timeframe("EURUSD", trade_style="SCALP", num_bars=50)
-        scalp_ctx = ctx_engine.build_context("EURUSD", scalp_mtf, trade_style="SCALP")
-        regime = RegimeOutput(primary_regime=MarketRegime.TREND_BULL, probabilities={}, confidence=0.8)
-        scalp_levels = levels_engine.calculate_levels(scalp_ctx, regime, tentative_bias="BUY", trade_style="SCALP")
-
-        # Build context and levels for DAY_TRADING
-        day_mtf = feed.fetch_multi_timeframe("EURUSD", trade_style="DAY_TRADING", num_bars=50)
-        day_ctx = ctx_engine.build_context("EURUSD", day_mtf, trade_style="DAY_TRADING")
-        day_levels = levels_engine.calculate_levels(day_ctx, regime, tentative_bias="BUY", trade_style="DAY_TRADING")
-
-        # Build context and levels for SWING
-        swing_mtf = feed.fetch_multi_timeframe("EURUSD", trade_style="SWING", num_bars=50)
-        swing_ctx = ctx_engine.build_context("EURUSD", swing_mtf, trade_style="SWING")
-        swing_levels = levels_engine.calculate_levels(swing_ctx, regime, tentative_bias="BUY", trade_style="SWING")
+        scalp_levels = levels_engine.calculate_levels(ctx, regime, tentative_bias="BUY", trade_style="SCALP")
+        day_levels = levels_engine.calculate_levels(ctx, regime, tentative_bias="BUY", trade_style="DAY_TRADING")
+        swing_levels = levels_engine.calculate_levels(ctx, regime, tentative_bias="BUY", trade_style="SWING")
 
         # SL and TP distances should be strictly differentiated across styles: SCALP < DAY_TRADING < SWING
         self.assertLess(scalp_levels["risk_dist"], day_levels["risk_dist"])

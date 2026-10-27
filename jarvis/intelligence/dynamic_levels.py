@@ -20,7 +20,7 @@ from jarvis.data.schemas import (
 )
 from jarvis.data.symbol_registry import resolve as resolve_symbol
 from jarvis.intelligence.institutional_entry_engine import InstitutionalEntryEngine, INSTITUTIONAL_ENTRY_ENGINE
-from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config
+from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config, get_style_profile
 
 
 class DynamicRiskAndLevelsEngine:
@@ -162,10 +162,8 @@ class DynamicRiskAndLevelsEngine:
 
         # Anti-Wick Shield: Asset-specific buffer to absorb stop-hunts and wick probes
         cfg = get_symbol_profile_config(sym_name)
-        if is_gold:
-            anti_wick_mult = 0.35  # Baseline gold buffer
-        else:
-            anti_wick_mult = cfg.anti_wick_buffer_atr
+        sp = get_style_profile(sym_name, style)
+        anti_wick_mult = sp.anti_wick_buffer_atr
 
         # Dynamic Volatility Adaptation: Scale anti-wick shield during volatility expansion / spikes
         vol_ratio_eff = getattr(vol, "volatility_ratio", atr_ratio) or atr_ratio
@@ -232,11 +230,7 @@ class DynamicRiskAndLevelsEngine:
             else:
                 ote_entry = min(ote_calc, eq_price)
 
-            # Only use live ask if current price is ALREADY inside the discount/equilibrium zone
-            if c_price <= (ote_entry + (0.15 * atr)) and c_price <= eq_price:
-                entry_price = round(context.ask, digits)
-            else:
-                entry_price = round(ote_entry, digits)
+            entry_price = round(context.ask, digits)
 
             # Support anchors strictly below entry
             candidate_anchors: List[float] = []
@@ -431,8 +425,8 @@ class DynamicRiskAndLevelsEngine:
             rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
 
             # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
-            # TP1: Initial scale-out milestone anchored to fast_cash_r (default 1.50R, preserved on Gold)
-            target_fast_cash_r = getattr(cfg, "fast_cash_r", 1.50) if not is_gold else 1.50
+            # TP1: Initial scale-out milestone anchored to style & regime-calibrated fast_cash_r
+            target_fast_cash_r = sp.fast_cash_r if not is_ranging else min(sp.fast_cash_r, 1.00)
             minor_resistance = [t for t in opposing_targets if entry_price + (risk_dist * (target_fast_cash_r * 0.85)) <= (t - front_run_buffer) < tp_price]
             if minor_resistance:
                 first_target_price = round(min(minor_resistance) - front_run_buffer, digits)
@@ -490,11 +484,7 @@ class DynamicRiskAndLevelsEngine:
             else:
                 ote_entry = max(ote_calc, eq_price)
 
-            # Only use live bid if current price is ALREADY inside the premium/equilibrium zone
-            if c_price >= (ote_entry - (0.15 * atr)) and c_price >= eq_price:
-                entry_price = round(context.bid, digits)
-            else:
-                entry_price = round(ote_entry, digits)
+            entry_price = round(context.bid, digits)
 
             # Resistance anchors strictly above entry
             candidate_anchors = []
@@ -687,8 +677,8 @@ class DynamicRiskAndLevelsEngine:
             rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
 
             # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
-            # TP1: Initial scale-out milestone anchored to fast_cash_r (default 1.50R, preserved on Gold)
-            target_fast_cash_r = getattr(cfg, "fast_cash_r", 1.50) if not is_gold else 1.50
+            # TP1: Initial scale-out milestone anchored to style & regime-calibrated fast_cash_r
+            target_fast_cash_r = sp.fast_cash_r if not is_ranging else min(sp.fast_cash_r, 1.00)
             minor_support = [t for t in opposing_targets if tp_price < (t + front_run_buffer + spread_dist) <= entry_price - (risk_dist * (target_fast_cash_r * 0.85))]
             if minor_support:
                 first_target_price = round(max(minor_support) + front_run_buffer + spread_dist, digits)
@@ -744,11 +734,11 @@ class DynamicRiskAndLevelsEngine:
         )
 
         if (is_strong_trend or vol_state in ("EXPANSION", "EXTREME")) and aligned_delta:
-            first_target_volume_pct = 0.25 if ("XAU" in sym_name or "GOLD" in sym_name) else getattr(cfg, "fast_cash_volume_pct", 0.33)
+            first_target_volume_pct = 0.25 if ((is_gold) and style == "SWING") else (sp.fast_cash_volume_pct if "SCALP" in style else min(sp.fast_cash_volume_pct, 0.33))
         elif is_ranging or vol_state == "COMPRESSION":
-            first_target_volume_pct = 0.50 if ("XAU" in sym_name or "GOLD" in sym_name) else 0.50
+            first_target_volume_pct = 0.50
         else:
-            first_target_volume_pct = getattr(cfg, "fast_cash_volume_pct", 0.33)
+            first_target_volume_pct = sp.fast_cash_volume_pct
 
         # 6. Runner Trailing Distance: 1.0 + 0.4 * 1_{EXPANSION} + 0.8 * 1_{EXTREME}
         is_expansion_val = 1.0 if vol_state == "EXPANSION" else 0.0

@@ -6,6 +6,7 @@ Features:
 - Session-Aware Macro Liquidity Bias
 """
 import time
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 from jarvis.data.schemas import MarketContext, RegimeOutput, AnalystReport, AnalystRole
 from jarvis.analysts.base_analyst import BaseAnalyst
@@ -64,7 +65,10 @@ class MacroAnalyst(BaseAnalyst):
         if self.news_calendar is None:
             try:
                 from jarvis.market.news import GLOBAL_NEWS_ENGINE
-                active_news = GLOBAL_NEWS_ENGINE.get_news_calendar(max_wait=1.5)
+                try:
+                    active_news = GLOBAL_NEWS_ENGINE.get_news_calendar(max_wait=1.5)
+                except TypeError:
+                    active_news = GLOBAL_NEWS_ENGINE.get_news_calendar(force_refresh=False)
             except Exception:
                 active_news = []
         else:
@@ -99,22 +103,32 @@ class MacroAnalyst(BaseAnalyst):
             event_name = str(item.get("event", "")).lower()
 
             if curr == "USD" and impact == "HIGH":
-                # Skip events that haven't released yet
+                # Pre-event buffer and upcoming event detection
                 if not actual_str or actual_str in ("Upcoming", "—", "", "Pending"):
-                    risk_factors.append(f"⏳ Upcoming HIGH-impact USD event: {item.get('event')} — volatility spike imminent.")
+                    _event_time_str = item.get("timestamp_iso") or item.get("datetime") or item.get("time") or ""
+                    is_imminent = False
+                    if _event_time_str:
+                        try:
+                            _evt_dt = datetime.fromisoformat(str(_event_time_str).replace("Z", "+00:00"))
+                            if _evt_dt.tzinfo is None:
+                                _evt_dt = _evt_dt.replace(tzinfo=timezone.utc)
+                            diff_sec = (_evt_dt - datetime.now(timezone.utc)).total_seconds()
+                            if 0 <= diff_sec <= 1800:  # <= 30 minutes
+                                is_imminent = True
+                                risk_factors.append(f"⚡ HIGH-impact USD event imminent ({diff_sec/60:.0f}m): {item.get('event')} — volatility freeze window active.")
+                        except Exception:
+                            pass
+                    if not is_imminent:
+                        risk_factors.append(f"⏳ Upcoming HIGH-impact USD event: {item.get('event')} — volatility spike imminent.")
                     score -= 5.0
                     continue
 
-                # ── Recency filter ───────────────────────────────────────────
-                # Only events within the last 6 hours should influence
-                # directional shock scoring.  Without this, a USD beat from
-                # Monday keeps usd_bull_shock=True all week, permanently
-                # biasing Gold SELL even when the market has reversed.
+                # ── Recency filter & Time Decay ───────────────────────────────
+                # Only events within the last 6 hours should influence directional shock scoring.
                 _event_time_str = item.get("timestamp_iso") or item.get("datetime") or item.get("time") or ""
                 _event_stale = False
                 if _event_time_str:
                     try:
-                        from datetime import datetime, timezone, timedelta
                         _evt_dt = datetime.fromisoformat(str(_event_time_str).replace("Z", "+00:00"))
                         if _evt_dt.tzinfo is None:
                             _evt_dt = _evt_dt.replace(tzinfo=timezone.utc)
@@ -132,6 +146,11 @@ class MacroAnalyst(BaseAnalyst):
                     if act is None or fcst is None:
                         raise ValueError("unparseable macro metric")
 
+                    # Calculate quantitative percentage surprise
+                    denom = abs(fcst) if abs(fcst) > 1e-4 else 1.0
+                    surprise_pct = ((act - fcst) / denom) * 100.0
+                    surprise_desc = f", surprise: {surprise_pct:+.1f}%" if abs(surprise_pct) >= 0.1 else ""
+
                     # Detect inverse indicators where higher actual = weaker USD
                     is_inverse = any(kw in event_name for kw in [
                         "jobless", "unemployment", "trade deficit", "deficit"
@@ -141,18 +160,18 @@ class MacroAnalyst(BaseAnalyst):
                         # Higher actual = weaker economy = bearish USD
                         if act > fcst:
                             usd_bear_shock = True
-                            evidence.append(f"Macro Shock: Weaker USD (inverse) ({item.get('event')} {actual_str} vs {fcst_str} fcst).")
+                            evidence.append(f"Macro Shock: Weaker USD (inverse) ({item.get('event')} {actual_str} vs {fcst_str} fcst{surprise_desc}).")
                         elif act < fcst:
                             usd_bull_shock = True
-                            evidence.append(f"Macro Shock: Stronger USD (inverse) ({item.get('event')} {actual_str} vs {fcst_str} fcst).")
+                            evidence.append(f"Macro Shock: Stronger USD (inverse) ({item.get('event')} {actual_str} vs {fcst_str} fcst{surprise_desc}).")
                     else:
                         # Standard indicators: higher actual = stronger USD
                         if act > fcst:
                             usd_bull_shock = True
-                            evidence.append(f"Macro Shock: Stronger USD Event ({item.get('event')} {actual_str} vs {fcst_str} fcst).")
+                            evidence.append(f"Macro Shock: Stronger USD Event ({item.get('event')} {actual_str} vs {fcst_str} fcst{surprise_desc}).")
                         elif act < fcst:
                             usd_bear_shock = True
-                            evidence.append(f"Macro Shock: Weaker USD Event ({item.get('event')} {actual_str} vs {fcst_str} fcst).")
+                            evidence.append(f"Macro Shock: Weaker USD Event ({item.get('event')} {actual_str} vs {fcst_str} fcst{surprise_desc}).")
                 except Exception:
                     # Cannot parse — do NOT default to any shock direction
                     risk_factors.append(f"⚠️ Unparseable USD event data: {item.get('event')}. No directional assumption made.")
@@ -179,10 +198,13 @@ class MacroAnalyst(BaseAnalyst):
                 score += 20.0
                 evidence.append(f"Macro Directional Forecast: Weaker USD triggers SELL bias on {sym}.")
 
-        # 3b. No macro shock: remain NEUTRAL
-        # Macro analyst only provides directional vote when genuine economic shocks or events occur.
+        # 3b. No macro shock: fall back to structure bias if present
         if bias == "NEUTRAL" and not usd_bull_shock and not usd_bear_shock:
-            evidence.append("Macro: No active macro news shocks detected — remaining NEUTRAL.")
+            if context.structure and getattr(context.structure, "bias", "NEUTRAL") != "NEUTRAL":
+                bias = context.structure.bias
+                evidence.append(f"No macro shock detected; aligning with {bias} structure bias.")
+            else:
+                evidence.append("Macro: No active macro news shocks detected — remaining NEUTRAL.")
 
         # 4. Check regime event risk / blackout window
         if regime.primary_regime.value == "EVENT_RISK":

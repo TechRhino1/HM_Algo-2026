@@ -54,6 +54,7 @@ class StrategyBandit:
         self.c = exploration_c
         self.gamma_decay = float(gamma_decay)
         self._lock = threading.Lock()
+        self._offline_rng: Optional[np.random.Generator] = None
         
         # Structure: priors[regime][style][strategy] = {"alpha": float, "beta": float, "pulls": int, "rewards": float}
         self.priors: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = {}
@@ -62,6 +63,30 @@ class StrategyBandit:
         self.rewards: Dict[str, Dict[str, float]] = {}
         
         self._load_state()
+
+    def _is_offline(self) -> bool:
+        try:
+            from jarvis.config.runtime import is_offline
+
+            return bool(is_offline())
+        except Exception:
+            return False
+
+    def _draw_beta(self, alpha: float, beta: float) -> float:
+        if self._is_offline():
+            if self._offline_rng is None:
+                self._offline_rng = np.random.default_rng(0)
+            return float(self._offline_rng.beta(alpha, beta))
+        return float(np.random.beta(alpha, beta))
+
+    def reset_for_backtest(self) -> None:
+        if not self._is_offline():
+            return
+        with self._lock:
+            self._offline_rng = np.random.default_rng(0)
+            self.priors = {}
+            self.counts = {}
+            self.rewards = {}
 
     def _canonical_strategy(self, strategy: str) -> str:
         strat_key = str(strategy or "").upper()
@@ -95,7 +120,7 @@ class StrategyBandit:
         """
         with self._lock:
             alpha, beta = self._get_alpha_beta(regime, style, strategy)
-            sample = np.random.beta(max(0.1, alpha), max(0.1, beta))
+            sample = self._draw_beta(max(0.1, alpha), max(0.1, beta))
             return round(float(sample), 4)
 
     def get_strategy_weights(self, regime: str = "GLOBAL", style: str = "SWING") -> Dict[str, float]:
@@ -107,7 +132,7 @@ class StrategyBandit:
             samples = {}
             for s in self.STRATEGIES:
                 alpha, beta = self._get_alpha_beta(regime, style, s)
-                samples[s] = float(np.random.beta(max(0.1, alpha), max(0.1, beta)))
+                samples[s] = self._draw_beta(max(0.1, alpha), max(0.1, beta))
             
             total = sum(samples.values()) or 1.0
             return {s: round(v / total, 4) for s, v in samples.items()}

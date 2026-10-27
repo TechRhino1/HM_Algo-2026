@@ -44,6 +44,12 @@ def _migration_1(conn: sqlite3.Connection) -> None:
 
 MIGRATIONS = {1: _migration_1}
 
+# Approved 2026-10-23 risk policy: de-risk from 2.5% daily loss, hard halt at
+# 5.0% (the configured limit), and a capped recovery window up to 6.5% that is
+# only usable through RiskEngine's "perfect setup" channel.
+DAILY_DERISK_START_PCT = 2.5
+DAILY_RECOVERY_MAX_PCT = 6.5
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -179,34 +185,10 @@ class DrawdownGuard:
             self.daily_start_equity = 0.0
             changed = True
 
-        # ── Auto-reanchor stale peak_equity ──────────────────────────────────
-        # If balance ≈ equity (no meaningful floating P&L) and the persisted
-        # peak is more than 1.15x current balance on small/micro accounts or 1.5x generally,
-        # the peak is from a prior account state — a withdrawal, a demo reset, or
-        # cross-mode DB contamination. A genuine trading session with 0 open positions
-        # should not be locked in a permanent circuit breaker from historical runs.
-        is_stale_peak = (
-            (self.peak_equity > current_balance * 1.5) or
-            (current_balance < 2500.0 and self.peak_equity > current_balance * 1.15)
-        )
-        if (
-            self.peak_equity > 0
-            and current_balance > 0
-            and current_equity > 0
-            and abs(current_balance - current_equity) / current_balance < 0.02  # <2% float
-            and is_stale_peak
-        ):
-            import logging
-            _logger = logging.getLogger("JARVIS_DrawdownGuard")
-            _logger.warning(
-                "AUTO-REANCHOR: peak_equity (%.2f) is %.2fx current balance (%.2f) with "
-                "no meaningful floating P&L. Reanchoring to current balance. "
-                "This indicates a withdrawal, demo reset, or stale DB state.",
-                self.peak_equity, self.peak_equity / current_balance, current_balance,
-            )
-            self.peak_equity = current_balance
-            self.daily_start_equity = current_equity
-            changed = True
+        # No automatic re-anchoring: a 40% loss and a 40% withdrawal are
+        # indistinguishable in a flat account, so guessing erased real losses
+        # (and the daily baseline with them). Use reset_baselines() explicitly
+        # when an operator has confirmed a deposit/withdrawal or demo reset.
 
         # Daily-loss baseline must be tracked on EQUITY consistently (not balance),
         # otherwise open positions make the daily-loss figure wrong.
@@ -226,28 +208,24 @@ class DrawdownGuard:
     def get_risk_multiplier(self, current_equity: float) -> float:
         """Tiered risk multiplier that scales position sizing down as drawdown deepens.
 
-        Tiers are derived from ``max_total_drawdown_pct`` (config/settings.json) so
-        the halt threshold matches the configured circuit-breaker limit instead of a
-        hardcoded 8% that silently overrode the declared 15% setting.
-
-        For micro accounts (equity < $2,500) the multiplier never drops below 0.15
-        so the minimum lot size can still be evaluated by the position sizer — the
-        sizer's own ``micro_cap`` check is the final gatekeeper.
+        The bands are proportions of the configured hard drawdown limit. A tight
+        10% limit stops adding risk at 80% of it (3 / 5 / 8); a 15% limit keeps
+        the legacy 3.75 / 7.5 / 11.25 ladder with a 0.25 floor and lets
+        ``check_limits`` perform the hard halt at 15%.
         """
         if self.peak_equity <= 0:
             return 1.0
 
         dd_pct = max(0.0, ((self.peak_equity - current_equity) / self.peak_equity) * 100.0)
 
-        # Derive tier boundaries from the configured max drawdown:
-        #   Tier 1 boundary:  25% of max  (default 15% → 3.75%)
-        #   Tier 2 boundary:  50% of max  (default 15% → 7.50%)
-        #   Tier 3 boundary:  75% of max  (default 15% → 11.25%)
-        #   Full halt:       100% of max  (default 15% → 15.0%)
-        max_dd = self.max_total_drawdown_pct  # default 15.0 from settings.json
-        t1 = max_dd * 0.25   # ~3.75%
-        t2 = max_dd * 0.50   # ~7.50%
-        t3 = max_dd * 0.75   # ~11.25%
+        max_dd = max(0.1, float(self.max_total_drawdown_pct or 10.0))
+        if max_dd <= 10.0:
+            # Tight 10% cap: 3 / 5 / 8, zero before the hard halt.
+            t1, t2, t3, floor = max_dd * 0.30, max_dd * 0.50, max_dd * 0.80, 0.0
+        else:
+            # Legacy 15% cap: 3.75 / 7.5 / 11.25 with a 0.25 minimum; the hard
+            # halt itself is enforced by check_limits at max_total_drawdown_pct.
+            t1, t2, t3, floor = max_dd * 0.25, max_dd * 0.50, max_dd * 0.75, 0.25
 
         if dd_pct < t1:
             mult = 1.0
@@ -256,16 +234,36 @@ class DrawdownGuard:
         elif dd_pct < t3:
             mult = 0.50
         else:
-            mult = 0.25  # Severely reduced but NOT zero
-
-        # Micro-account floor: never fully halt — let the position sizer decide
-        # whether the minimum lot at reduced risk is acceptable.
-        if current_equity < 2500.0:
-            mult = max(mult, 0.15)
+            mult = floor
 
         return mult
 
-    def check_limits(self, current_equity: float, current_balance: float) -> Dict[str, Any]:
+    def get_daily_risk_multiplier(self, current_equity: float) -> float:
+        """Cut size once the day is down 2.5%; the hard halt still fires at 5%.
+
+        This is separate from ``get_risk_multiplier`` (peak-to-equity drawdown):
+        a bad *day* inside a healthy peak should reduce risk without pretending
+        the account is in a deep peak drawdown.
+        """
+        if self.daily_start_equity <= 0:
+            return 1.0
+        daily_loss = max(
+            0.0,
+            ((self.daily_start_equity - current_equity) / self.daily_start_equity) * 100.0,
+        )
+        if daily_loss < min(DAILY_DERISK_START_PCT, self.max_daily_loss_pct):
+            return 1.0
+        if daily_loss < self.max_daily_loss_pct:
+            return 0.50
+        return 0.0
+
+    def check_limits(
+        self,
+        current_equity: float,
+        current_balance: float,
+        allow_recovery: bool = False,
+        recovery_max_pct: float = DAILY_RECOVERY_MAX_PCT,
+    ) -> Dict[str, Any]:
         self.update_equity_benchmarks(current_equity, current_balance)
 
         # Daily loss check
@@ -279,9 +277,21 @@ class DrawdownGuard:
             total_dd_pct = max(0.0, ((self.peak_equity - current_equity) / self.peak_equity) * 100.0)
 
         breaches = []
-        if daily_loss_pct >= self.max_daily_loss_pct:
+        daily_breached = daily_loss_pct >= self.max_daily_loss_pct
+        total_breached = total_dd_pct >= self.max_total_drawdown_pct
+
+        # A daily-loss breach may be waived ONLY by the RiskEngine's perfect-setup
+        # recovery channel, and never past the absolute 6.5% day cap. A portfolio
+        # drawdown breach is never waived.
+        recovery_zone = bool(
+            allow_recovery
+            and daily_breached
+            and not total_breached
+            and daily_loss_pct <= float(recovery_max_pct) + 1e-9
+        )
+        if daily_breached and not recovery_zone:
             breaches.append(f"Max Daily Loss breached ({daily_loss_pct:.2f}% >= {self.max_daily_loss_pct:.2f}%). Trading halted for today.")
-        if total_dd_pct >= self.max_total_drawdown_pct:
+        if total_breached:
             breaches.append(f"Max Portfolio Drawdown breached ({total_dd_pct:.2f}% >= {self.max_total_drawdown_pct:.2f}%). Circuit breaker triggered.")
 
         return {

@@ -12,7 +12,17 @@ Per the user's directive, gate strictness is decided automatically by the AI:
 If there is no performance evidence yet, the policy defaults to BLOCK (identical to
 today's behaviour), so it can never increase risk on an untuned system.
 """
+import logging
 from typing import List, Tuple, Optional, Dict
+
+from jarvis.intelligence.gate_registry import (
+    HARD_GATES,
+    SOFT_GATE_PENALTIES,
+    canonical_gate,
+    split_failures,
+)
+
+logger = logging.getLogger("JARVIS_GatePolicy")
 
 
 def _policy_thresholds() -> tuple:
@@ -37,48 +47,9 @@ def _policy_thresholds() -> tuple:
 
 
 
-# Gates that must always block when they fail (capital-protection / validity).
-HARD_GATES = {
-    "Market Session Open",
-    "Drawdown Safety Guard",
-    "Margin Capacity Limit",
-    "Regime Viability",
-    "Directional Bias",
-    "Strategy Viable",
-    "Gold Session Window",
-    "No Active Macro Shock",
-    "Risk/Reward >= 1.5",
-    "Valid Stop Loss Distance",
-    "Positive Expected Value",
-    "Volatility Spike Circuit Breaker",
-}
+# Gate names, severities and penalties are defined exactly once in
+# ``gate_registry``; this module only applies the policy.
 
-# Granular confidence penalties for soft gates
-SOFT_GATE_PENALTIES: Dict[str, float] = {
-    "Macro MTF Alignment": 0.05,
-    "Gold Trend Following Alignment": 0.04,
-    "Trend Not Exhausted": 0.03,
-    "Crypto Macro Trend Filter": 0.04,
-    "Premium/Discount Alignment": 0.03,
-    "AI Multi-Score Gate": 0.04,
-    "Devil Adversarial Guard": 0.04,
-    "Order Flow Alignment": 0.03,
-    "Order Flow Momentum": 0.03,
-    "No Order Flow Absorption Trap": 0.04,
-    "Forex Prime Session": 0.02,
-    "Forex Breakout Guard": 0.03,
-    "Index Trend Alignment": 0.04,
-    "Low-Beta FX Macro Alignment": 0.03,
-    "JPY Momentum Guard": 0.03,
-    "SOL Confluence Guard": 0.03,
-    "US30 Confluence Guard": 0.03,
-    "Risk/Reward >= 1.5": 0.03,
-    "Positive Expected Value": 0.04,
-    "Spread Protection": 0.03,
-    "Valid Stop Loss Distance": 0.03,
-    "Calibrated Win Prob >= 50%": 0.04,
-    "Regime Trend Consistency": 0.04,
-}
 
 
 class AdaptiveGatePolicy:
@@ -93,8 +64,18 @@ class AdaptiveGatePolicy:
 
         decision is one of: PASS, SOFTEN, BLOCK.
         """
-        hard = [g for g in failing_reasons if g in HARD_GATES]
-        soft = [g for g in failing_reasons if g not in HARD_GATES]
+        hard, soft, unknown = split_failures(failing_reasons)
+        if unknown:
+            unknown_names = set(unknown)
+            logged = set()
+            for raw in failing_reasons:
+                name = canonical_gate(raw)
+                if name in unknown_names and name not in logged:
+                    logged.add(name)
+                    logger.warning(
+                        "Gate policy: unknown gate failure %r (treated as soft, penalty 0.03)",
+                        raw,
+                    )
 
         if hard:
             return ("BLOCK", hard)
@@ -112,5 +93,5 @@ class AdaptiveGatePolicy:
         """Calculate aggregate confidence penalty based on specific softened gates (capped at 0.12)."""
         if not softened_gates:
             return 0.0
-        total_pen = sum(SOFT_GATE_PENALTIES.get(g, 0.03) for g in softened_gates)
+        total_pen = sum(SOFT_GATE_PENALTIES.get(canonical_gate(g), 0.03) for g in softened_gates)
         return min(0.12, round(total_pen, 3))

@@ -211,26 +211,32 @@ class TestMtfAlignment:
 
     @pytest.mark.parametrize("style,keys", [
         ("SWING", {"D1", "H4", "H1", "M15"}),
-        ("DAY_TRADING", {"H4", "H1", "M15", "M5"}),
-        ("SCALP", {"H1", "M15", "M5", "M1"}),
+        ("DAY_TRADING", {"D1", "H4", "H1", "M15", "M5"}),
+        ("SCALP", {"D1", "H1", "M15", "M5", "M1"}),
     ])
     def test_exactly_which_timeframes_appear_per_style(self, style, keys):
         ctx, _, _ = build(BY_TF, style=style)
         assert set(ctx.mtf_alignment) == keys
 
-    def test_scalp_has_no_h4_and_no_d1(self):
+    def test_scalp_has_no_h4_but_keeps_the_d1_anchor(self):
         """Round 25: `structure_analyst` read the absent H4 as divergence, so
         every SCALP decision carried a fabricated risk factor and its +10
-        confluence bonus was unreachable."""
+        confluence bonus was unreachable.
+
+        D1 is different: it is written for every style as the macro anchor the
+        direction engine reads (`mtf_alignment["D1"]`), even when SCALP does not
+        route a D1 frame through its structure stack.
+        """
         ctx, _, _ = build(BY_TF, style="SCALP")
         assert "H4" not in ctx.mtf_alignment
-        assert "D1" not in ctx.mtf_alignment
+        assert "D1" in ctx.mtf_alignment
 
-    def test_day_trading_has_h4_but_no_d1(self):
-        """So the +10 bonus needing BOTH H4 and D1 can never fire here either."""
+    def test_day_trading_has_h4_and_d1(self):
+        """DAY trades H4 as its macro frame and still needs the D1 anchor that
+        the direction engine reads for every style."""
         ctx, _, _ = build(BY_TF, style="DAY_TRADING")
         assert "H4" in ctx.mtf_alignment
-        assert "D1" not in ctx.mtf_alignment
+        assert "D1" in ctx.mtf_alignment
 
     def test_no_symbol_is_ever_a_key(self):
         """Round 26: the Devil's Advocate wanted an "EURUSD"/"GBPUSD" key in
@@ -259,7 +265,7 @@ class TestConfluenceScore:
 
     @pytest.mark.parametrize("style,weights", [
         ("SWING", {"D1": 0.40, "H4": 0.30, "H1": 0.20, "M15": 0.10}),
-        ("DAY_TRADING", {"H4": 0.40, "H1": 0.35, "M15": 0.25}),
+        ("DAY_TRADING", {"M15": 0.40, "H1": 0.35, "H4": 0.25}),
         ("SCALP", {"H1": 0.40, "M15": 0.30, "M5": 0.20, "M1": 0.10}),
     ])
     def test_all_bullish_is_plus_100_and_all_bearish_minus_100(self, style, weights):
@@ -271,13 +277,14 @@ class TestConfluenceScore:
 
     def test_the_weights_are_style_specific(self):
         """One bullish H4 in an otherwise neutral book: SWING weights it 0.30,
-        DAY_TRADING 0.40, and SCALP does not use it at all."""
+        DAY_TRADING 0.25 (H4 is its macro frame), and SCALP does not use it at
+        all."""
         biases = {"H4": "BULLISH"}
         swing, _, _ = build(BY_TF, style="SWING", biases=biases)
         day, _, _ = build(BY_TF, style="DAY_TRADING", biases=biases)
         scalp, _, _ = build(BY_TF, style="SCALP", biases=biases)
         assert swing.mtf_confluence_score == 30.0
-        assert day.mtf_confluence_score == 40.0
+        assert day.mtf_confluence_score == 25.0
         assert scalp.mtf_confluence_score == 0.0
 
     def test_neutral_frames_contribute_nothing(self):
@@ -290,16 +297,16 @@ class TestConfluenceScore:
         # 0.40 - 0.30 + 0.20 - 0.10 = 0.20
         assert ctx.mtf_confluence_score == 20.0
 
-    def test_the_docstring_disagrees_with_the_day_trading_weights(self):
-        """🔴 The docstring says DAY_TRADING/INTRADAY weights are "H1 (40%),
-        M15 (35%), M5 (25%)" — but the code (lines 121-134) weights **H4** 40%,
-        H1 35%, M15 25%, using `df_macro` (which defaults to the H4 frame). The
-        SCALP line in the docstring is correct. Pinned as-is: the code is what
-        runs, and every downstream consumer sees H4-weighted confluence."""
-        day, _, _ = build(BY_TF, style="DAY_TRADING", biases={"H4": "BULLISH"})
-        assert day.mtf_confluence_score == 40.0      # H4 is weighted 40%
-        assert "H4" in day.mtf_alignment             # and H1 is not 40%
-        assert day.mtf_alignment["H4"] == "BULLISH"
+    def test_the_day_trading_docstring_matches_the_weights(self):
+        """DOC-27: the docstring used to name "H1 (40%), M15 (35%), M5 (25%)"
+        while the code weighted the routed frames -- M15 (primary) 40%, H1
+        (context) 35%, H4 (macro) 25%. The docstring now follows the code, and
+        this test pins both: M15 carries 40% and H4 only 25%."""
+        m15 = build(BY_TF, style="DAY_TRADING", biases={"M15": "BULLISH"})[0]
+        h4 = build(BY_TF, style="DAY_TRADING", biases={"H4": "BULLISH"})[0]
+        assert m15.mtf_confluence_score == 40.0      # M15 is weighted 40%
+        assert h4.mtf_confluence_score == 25.0       # H4 is the macro frame
+        assert h4.mtf_alignment["H4"] == "BULLISH"
 
 
 # --------------------------------------------------------------------------
@@ -678,7 +685,7 @@ class TestReturnedContext:
         ctx, _, _ = build({}, style="SCALP")
         assert ctx.current_price == 0.0
         assert ctx.context_quality == 0.0
-        assert ctx.mtf_alignment == {"H1": "NEUTRAL", "M15": "NEUTRAL",
+        assert ctx.mtf_alignment == {"D1": "NEUTRAL", "H1": "NEUTRAL", "M15": "NEUTRAL",
                                      "M5": "NEUTRAL", "M1": "NEUTRAL"}
         assert ctx.mtf_confluence_score == 0.0
         assert ctx.vwap == 0.0

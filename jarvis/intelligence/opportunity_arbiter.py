@@ -10,6 +10,7 @@ import logging
 import numpy as np
 
 from jarvis.data.schemas import DecisionObject, MarketContext
+from jarvis.intelligence.gate_registry import HARD_GATES, canonical_gate
 
 logger = logging.getLogger("JARVIS_OpportunityArbiter")
 
@@ -283,6 +284,8 @@ class UniversalOpportunityArbiter:
         if getattr(decision_obj, "bear_case", None) and bias == "SELL":
             confluence_factors.extend(decision_obj.bear_case[:3])
 
+        risk_factors = list(getattr(decision_obj, "risk_factors", []) or [])
+
         # Adversarial Penalty (normalized 0.0 to 1.0)
         raw_penalty = float(getattr(decision_obj, "adversarial_penalty", 0.0) or 0.0)
         penalty_norm = min(0.60, max(0.0, raw_penalty / 100.0 if raw_penalty > 1.0 else raw_penalty))
@@ -299,6 +302,8 @@ class UniversalOpportunityArbiter:
         # Mathematical Utility Computation:
         # Utility = P_ML * E[V] * (1 + Confluence / 100) * (1 - Penalty) * RegimeMultiplier
         effective_ev = max(0.0, expected_value)
+        if effective_ev > 5.0:
+            effective_ev = min(3.5, round(effective_ev / 20.0, 2))
         confluence_term = 1.0 + (confluence_score / 100.0)
         penalty_term = max(0.20, 1.0 - penalty_norm)
 
@@ -317,8 +322,8 @@ class UniversalOpportunityArbiter:
         if not strat_compat:
             utility_score = 0.0
 
-        # Spread-to-Risk Friction Filter: Mode-adaptive friction handling
-        if context is not None and abs(entry_price - stop_loss) > 1e-9:
+        # Spread-to-Risk Friction Filter: Mode-adaptive friction handling (only evaluated on directional setups)
+        if bias in ("BUY", "SELL") and context is not None and abs(entry_price - stop_loss) > 1e-9:
             from jarvis.data.symbol_registry import resolve as resolve_symbol
             try:
                 sym_spec = resolve_symbol(symbol)
@@ -346,7 +351,10 @@ class UniversalOpportunityArbiter:
         try:
             sess_info = SessionEngine.get_current_session()
             is_crypto_asset = any(c in symbol.upper() for c in ("BTC", "ETH", "SOL", "CRYPTO"))
-            if sess_info.current_session == "OFF_HOURS" and not is_crypto_asset:
+            from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config
+            sym_prof_cfg = get_symbol_profile_config(symbol)
+            has_sess_rest = getattr(sym_prof_cfg, "session_restriction", True)
+            if sess_info.current_session == "OFF_HOURS" and not is_crypto_asset and has_sess_rest:
                 logger.debug(f"🛡️ Arbiter: OFF_HOURS session active -- suppressing new non-crypto entry for {symbol}")
                 utility_score = 0.0
         except Exception as e:
@@ -378,30 +386,75 @@ class UniversalOpportunityArbiter:
                 utility_score = round(utility_score * 0.45, 4)
                 logger.info(f"🛡️ Arbiter: Severely penalizing {symbol} BUY by 0.45x: M15 and M5 are actively BEARISH.")
 
-            # 2026-10-20: for GOLD the counter-flush signature is disqualifying,
-            # not merely penalized. The ledger shows the losing gold bucket IS
-            # this trade: an entry against M15+M5 while H1 (or D1) runs the
-            # other way -- 2026-10-20 09:15 BUY at 4123.44 with M1..H1 all
-            # BEARISH (stopped -8.17), 01:01 SELL at 4127.14 (stopped -13.27),
-            # 06:24 SELL 4123.52 (stopped -10.17), the whole -$330 cluster of
-            # flush-fades. A ×0.45 utility discount still left such candidates
-            # grade-handed and actionable. Now: when the HTF stack confirms the
-            # flush (H1 or D1 agrees with M15/M5), a gold counter-flush
-            # candidate is regraded out of action entirely; without that HTF
-            # corroboration the fade stays a (penalized) mean-reversion bet.
-            if counter_flush_active and ("XAU" in symbol.upper() or "GOLD" in symbol.upper()):
+            # Counter-flush signature is disqualifying across ALL symbols (Gold, Crypto, Indices, FX).
+            # An entry against M15+M5 while H1, H4 or D1 runs the other way is a fatal counter-trend trade.
+            if counter_flush_active:
                 stack_confirms = (
                     ("BEAR" in macro_h1_bias and bias == "BUY")
                     or ("BEAR" in macro_d1 and bias == "BUY")
+                    or ("BEAR" in macro_h4 and bias == "BUY")
                     or ("BULL" in macro_h1_bias and bias == "SELL")
                     or ("BULL" in macro_d1 and bias == "SELL")
+                    or ("BULL" in macro_h4 and bias == "SELL")
                 )
                 if stack_confirms:
                     is_counter_flush_kill = True
                     logger.info(
                         f"🛑 Arbiter: {symbol} {bias} candidate DISQUALIFIED — counter-flush into an "
-                        f"agreed HTF trend (D1={macro_d1 or 'NA'}, H1={macro_h1_bias or 'NA'}, M15={m15_bias}, M5={m5_bias})."
+                        f"agreed HTF trend (D1={macro_d1 or 'NA'}, H4={macro_h4 or 'NA'}, H1={macro_h1_bias or 'NA'}, M15={m15_bias}, M5={m5_bias})."
                     )
+        # Intermarket Macro Intelligence & SMT Cross-Market Multipliers
+        if context is not None and utility_score > 0.0:
+            # 1. Synthetic Dollar Index (DXY) alignment
+            dxy_info = getattr(context, "intermarket_dxy", {}) or {}
+            if isinstance(dxy_info, dict) and dxy_info.get("is_live"):
+                is_gold_asset = any(g in symbol.upper() for g in ("XAU", "GOLD"))
+                if is_gold_asset:
+                    g_impact = str(dxy_info.get("gold_impact", "")).upper()
+                    if bias == "BUY":
+                        if "CONFIRMS_BUY" in g_impact:
+                            utility_score = round(utility_score * 1.10, 4)
+                            confluence_factors.append(f"DXY confirms Gold BUY (DXY {dxy_info.get('trend')})")
+                        elif "OPPOSES_BUY" in g_impact:
+                            utility_score = round(utility_score * 0.85, 4)
+                            risk_factors.append(f"DXY opposes Gold BUY (DXY {dxy_info.get('trend')} momentum {dxy_info.get('momentum_score')})")
+                    elif bias == "SELL":
+                        if "CONFIRMS_SELL" in g_impact:
+                            utility_score = round(utility_score * 1.10, 4)
+                            confluence_factors.append(f"DXY confirms Gold SELL (DXY {dxy_info.get('trend')})")
+                        elif "OPPOSES_SELL" in g_impact:
+                            utility_score = round(utility_score * 0.85, 4)
+                            risk_factors.append(f"DXY opposes Gold SELL (DXY {dxy_info.get('trend')} momentum {dxy_info.get('momentum_score')})")
+                else:
+                    fx_bias_map = dxy_info.get("fx_bias", {})
+                    if isinstance(fx_bias_map, dict) and symbol in fx_bias_map:
+                        target_fx_bias = fx_bias_map[symbol]
+                        if target_fx_bias == bias:
+                            utility_score = round(utility_score * 1.08, 4)
+                            confluence_factors.append(f"DXY macro trend aligns with {symbol} {bias}")
+                        elif target_fx_bias in ("BUY", "SELL") and target_fx_bias != bias:
+                            utility_score = round(utility_score * 0.88, 4)
+                            risk_factors.append(f"DXY macro trend opposes {symbol} {bias}")
+
+            # 2. Cross-Market SMT Divergence alignment
+            smt_info = getattr(context, "cross_market_smt", {}) or getattr(context, "metals_smt", {}) or {}
+            if isinstance(smt_info, dict) and smt_info.get("smt_active"):
+                smt_type = str(smt_info.get("smt_type", "")).upper()
+                leader = smt_info.get("leader", "peer")
+                if "BULLISH" in smt_type:
+                    if bias == "BUY":
+                        utility_score = round(utility_score * 1.12, 4)
+                        confluence_factors.append(f"SMT Bullish Divergence accumulation ({leader} leading)")
+                    elif bias == "SELL":
+                        utility_score = round(utility_score * 0.80, 4)
+                        risk_factors.append(f"Opposing SMT Bullish Divergence active ({leader} leading)")
+                elif "BEARISH" in smt_type:
+                    if bias == "SELL":
+                        utility_score = round(utility_score * 1.12, 4)
+                        confluence_factors.append(f"SMT Bearish Divergence distribution ({leader} leading)")
+                    elif bias == "BUY":
+                        utility_score = round(utility_score * 0.80, 4)
+                        risk_factors.append(f"Opposing SMT Bearish Divergence active ({leader} leading)")
 
         # Setup Grade Assignment:
         # GRADE A+ if Utility >= 1.80, Win Prob >= 70%, Confluence >= 75, EV >= 0.85R
@@ -419,7 +472,21 @@ class UniversalOpportunityArbiter:
 
         # Actionability Determination: Require Grade A/A+ or solid Grade B with positive EV and passed/acceptable quality gate
         failing_reasons = getattr(decision_obj.quality_gate, "failing_reasons", []) if (decision_obj and getattr(decision_obj, "quality_gate", None)) else []
-        critical_failures = [r for r in failing_reasons if any(c in r for c in ("Drawdown", "Spread", "Regime Viability", "Circuit Breaker"))]
+        softened = {
+            canonical_gate(g)
+            for g in (getattr(decision_obj.quality_gate, "softened_gates", []) if decision_obj else [])
+        }
+        canonical_failures = [canonical_gate(r) for r in failing_reasons]
+        unsoftened_failures = [r for r in canonical_failures if r not in softened]
+        critical_names = {
+            "Drawdown Safety Guard",
+            "Spread Protection",
+            "Regime Viability",
+            "Volatility Spike Circuit Breaker",
+            "Market Session Open",
+            "Margin Capacity Limit",
+        }
+        critical_failures = [r for r in unsoftened_failures if r in critical_names]
         # A candidate with one failed gate used to stay actionable as long as the
         # failure was not in `critical_failures` - measured on jarvis_history.db:
         # THAT is how banned-strategy gold trades executed on 2026-10-13..16
@@ -429,9 +496,16 @@ class UniversalOpportunityArbiter:
         # never an acceptable residual: consult the same HARD_GATES set the
         # adaptive gate policy enforces at decision time, so the two layers
         # cannot disagree about what may still trade.
-        from jarvis.intelligence.gate_policy import HARD_GATES
-        hard_failures = [r for r in failing_reasons if r in HARD_GATES]
-        gate_acceptable = (len(failing_reasons) <= 1 and len(critical_failures) == 0 and len(hard_failures) == 0)
+        hard_failures = [r for r in unsoftened_failures if r in HARD_GATES]
+        effective_passed = getattr(decision_obj.quality_gate, "effective_passed", None) if decision_obj else None
+        if effective_passed is None:
+            effective_passed = bool(getattr(decision_obj.quality_gate, "passed", False)) if decision_obj else False
+        gate_acceptable = (
+            bool(effective_passed)
+            and len(set(unsoftened_failures)) <= 1
+            and len(critical_failures) == 0
+            and len(hard_failures) == 0
+        )
         decision_val = getattr(decision_obj, "decision", "")
 
         is_actionable = bool(
@@ -443,8 +517,6 @@ class UniversalOpportunityArbiter:
             decision_val in ("EXECUTE", "READY", "WAIT") and
             not is_counter_flush_kill
         )
-
-        risk_factors = getattr(decision_obj, "risk_factors", []) or []
 
         return CandidateOpportunity(
             symbol=symbol,

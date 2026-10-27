@@ -12,11 +12,9 @@
       "EURUSD",
       "GBPUSD",
       "GER40",
-      "NAS100",
       "NZDUSD",
       "SOLUSD",
       "UK100",
-      "US30",
       "US500",
       "USDCAD",
       "USDCHF",
@@ -25,7 +23,8 @@
       "XAGUSD",
       "XAUUSD"
     ],
-    "use_calibrated_entry_policy": true
+    "use_calibrated_entry_policy": true,
+    "max_daily_entries_per_symbol": 20
   },
   "risk": {
     "max_risk_per_trade_pct": 0.5,

@@ -268,5 +268,69 @@ class TestStopAndReverseAndSellFromTop(unittest.TestCase):
             # Assert reverse BUY trade was executed
             orch.execution_engine.execute_decision.assert_called_once()
 
+    def test_overbought_exhaustion_intraday_pullback_sell(self):
+        """In a bull regime, when RSI >= 75 at resistance and M5/lower TF shifts bearish, SCALP/DAY_TRADING resolves SELL."""
+        from jarvis.intelligence.decision_engine import DecisionEngine
+        from jarvis.data.schemas import (
+            MarketContext, StructureContext, LiquidityContext, VolatilityContext,
+            MomentumContext, SessionContext, RegimeOutput, MarketRegime, AnalystReport, AnalystRole
+        )
+
+        from datetime import datetime, timezone
+        engine = DecisionEngine()
+        ctx = MarketContext(
+            symbol="ETHUSD",
+            timestamp=datetime.now(timezone.utc),
+            current_price=2525.0,
+            bid=2524.5,
+            ask=2525.5,
+            structure=StructureContext(bias="BEARISH", bos=False, choch=True, choch_type="BEARISH", discount_premium_zone="PREMIUM"),
+            liquidity=LiquidityContext(sweep_detected=True, sweep_type="BEARISH_SWEEP"),
+            volatility=VolatilityContext(atr=15.0, current_spread_pips=1.0),
+            momentum=MomentumContext(trend_score=60.0, rsi=78.0),
+            session=SessionContext(current_session="NY", is_prime_session=True),
+            mtf_alignment={"M5": "BEARISH", "M15": "BEARISH", "H1": "BULLISH", "H4": "BULLISH"}
+        )
+        regime = RegimeOutput(
+            primary_regime=MarketRegime.TREND_BULL,
+            probabilities={"TREND_BULL": 0.80},
+            confidence=0.80
+        )
+        analyst_reports = {
+            "STRUCTURE": AnalystReport(role=AnalystRole.STRUCTURE, symbol="ETHUSD", bias="BEARISH", confidence=0.75, score=75.0, evidence=["M5 CHoCH"]),
+            "MOMENTUM": AnalystReport(role=AnalystRole.MOMENTUM, symbol="ETHUSD", bias="BEARISH", confidence=0.75, score=75.0, evidence=["RSI 78 exhaustion"])
+        }
+
+        bias = engine._resolve_market_trend_and_bias(
+            context=ctx,
+            regime=regime,
+            analyst_reports=analyst_reports,
+            trade_style="DAY_TRADING"
+        )
+        self.assertEqual(bias, "SELL", "Should resolve SELL on overbought exhaustion with lower timeframe bearish shift")
+
+    def test_micro_account_position_sizing_tight_stop(self):
+        """On a micro account ($413), a tight 10-point stop allows sizing above 0.01 lot."""
+        from jarvis.risk.position_sizing import PositionSizer
+
+        lots = PositionSizer.calculate_lot_size(
+            account_balance=413.0,
+            entry_price=2500.0,
+            sl_price=2490.0,  # 10 points stop
+            risk_pct=1.5,
+            symbol_info={
+                "name": "ETHUSD",
+                "trade_contract_size": 1.0,
+                "trade_tick_value": 0.01,
+                "trade_tick_size": 0.01,
+                "volume_min": 0.01,
+                "volume_max": 100.0,
+                "volume_step": 0.01
+            },
+            model_confidence=0.75,
+            target_rr=2.5
+        )
+        self.assertGreaterEqual(lots, 0.05, f"Expected lot size >= 0.05 for micro account on 10pt stop, got {lots}")
+
 if __name__ == "__main__":
     unittest.main()

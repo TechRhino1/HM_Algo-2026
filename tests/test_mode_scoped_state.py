@@ -176,6 +176,7 @@ def test_orchestrator_scopes_its_own_gate_and_passes_its_mode_to_risk_engine(tmp
     # each other.
     assert paper.risk_engine.drawdown_guard.db_path.endswith("jarvis_drawdown_state_paper.db")
 
+    monkeypatch.setenv("JARVIS_CONFIRM_LIVE", "1")
     live = JarvisOrchestrator(mode="live")
     assert live.mode == "live"
     assert live.risk_engine.mode == "live"

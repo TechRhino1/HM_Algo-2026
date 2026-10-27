@@ -58,6 +58,7 @@
       '<tr>' +
         '<th scope="col">Symbol</th>' +
         '<th scope="col">Side</th>' +
+        '<th scope="col">Style</th>' +
         '<th scope="col" class="tt-num">Vol</th>' +
         '<th scope="col" class="tt-num">Entry</th>' +
         '<th scope="col" class="tt-num">Now</th>' +
@@ -224,7 +225,7 @@
 
     var filtered = state.openPositions.filter(function (p) { return matchesFilter(p.symbol); });
     if (!filtered.length) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:36px; color:var(--machined-silver);">No open positions matching criteria</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:36px; color:var(--machined-silver);">No open positions matching criteria</td></tr>';
       return;
     }
 
@@ -237,9 +238,14 @@
       var pnlCls = pnl > 0 ? 'tt-up' : (pnl < 0 ? 'tt-down' : '');
       var ticket = p.ticket || p.id || '';
 
+      var styleVal = String(p.style || (p.comment && (p.comment.indexOf('SCLP') !== -1 || p.comment.indexOf('SCALP') !== -1) ? 'SCALP' : ((p.comment && (p.comment.indexOf('SWNG') !== -1 || p.comment.indexOf('SWING') !== -1)) ? 'SWING' : 'DAY_TRADING'))).toUpperCase();
+      var styleBadgeClass = styleVal === 'SCALP' ? 'badge-style-scalp' : (styleVal === 'SWING' ? 'badge-style-swing' : 'badge-style-day');
+      var styleLabel = styleVal === 'DAY_TRADING' ? 'DAY' : styleVal;
+
       return '<tr>' +
         '<td><span class="tt-symbol">' + esc(sym) + '</span></td>' +
         '<td><span class="tt-dir ' + dirCls + '">' + esc(side || '—') + '</span></td>' +
+        '<td><span class="badge ' + styleBadgeClass + '">' + esc(styleLabel) + '</span></td>' +
         '<td class="tt-num">' + vol + '</td>' +
         '<td class="tt-num">' + fmtPrice(p.entry || p.entry_price, sym) + '</td>' +
         '<td class="tt-num">' + fmtPrice(p.now || p.current_price, sym) + '</td>' +
@@ -326,9 +332,14 @@
       var stamp = t.closed_at || t.timestamp || '';
       var when = fmtTradeTime(parseTradeStamp(stamp));
 
+      var styleVal = String(p.style || (p.comment && (p.comment.indexOf('SCLP') !== -1 || p.comment.indexOf('SCALP') !== -1) ? 'SCALP' : ((p.comment && (p.comment.indexOf('SWNG') !== -1 || p.comment.indexOf('SWING') !== -1)) ? 'SWING' : 'DAY_TRADING'))).toUpperCase();
+      var styleBadgeClass = styleVal === 'SCALP' ? 'badge-style-scalp' : (styleVal === 'SWING' ? 'badge-style-swing' : 'badge-style-day');
+      var styleLabel = styleVal === 'DAY_TRADING' ? 'DAY' : styleVal;
+
       return '<tr>' +
         '<td><span class="tt-symbol">' + esc(sym) + '</span></td>' +
         '<td><span class="tt-dir ' + dirCls + '">' + esc(side || '—') + '</span></td>' +
+        '<td><span class="badge ' + styleBadgeClass + '">' + esc(styleLabel) + '</span></td>' +
         '<td class="tt-num">' + vol + '</td>' +
         '<td class="tt-num">' + fmtPrice(t.entry_price || t.entry, sym) + '</td>' +
         '<td class="tt-num">' + fmtPrice(t.exit_price || t.exit, sym) + '</td>' +

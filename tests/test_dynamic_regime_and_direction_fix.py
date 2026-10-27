@@ -63,7 +63,11 @@ def test_strategy_selector_dynamic_regime_mutual_exclusion():
 
 
 def test_gold_position_sizing_on_micro_account():
-    """Verify that a $418 account allows minimum 0.01 lot on Gold with ~$30 stop distance."""
+    """A $30 gold stop on a $418 account must be refused under the $12 cap.
+
+    The 0.01 minimum lot would force $30 (7.18%), far above both the calibrated
+    2.5% target and the approved $12 absolute per-trade ceiling.
+    """
     sizer = PositionSizer()
     sym_info = {
         "name": "GOLD.i#",
@@ -83,7 +87,7 @@ def test_gold_position_sizing_on_micro_account():
         risk_pct=1.0,
         symbol_info=sym_info
     )
-    assert lots == 0.01, f"Expected 0.01 lots for Gold on $418 account, got {lots}"
+    assert lots == 0.0, f"Expected rejection for $30 gold risk, got {lots}"
 
 
 def test_decision_engine_breakout_direction():

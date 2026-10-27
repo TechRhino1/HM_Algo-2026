@@ -16,11 +16,11 @@ These tests assert the contract, not the arithmetic: the multipliers a caller
 passes may only REDUCE risk below the ceiling, never inflate past it. They are
 pure-function tests — `calculate_lot_size` touches no broker.
 
-The one documented exception is the broker minimum-lot floor: when the risk
-budget cannot buy even `volume_min`, the sizer either refuses the trade or
-accepts the minimum lot, and it allows that only while the forced risk stays
-within `min(3.0, 2 * effective_risk_pct)`. That 2x allowance is deliberate and
-is asserted here so it cannot silently widen.
+The one documented exception is the broker minimum-lot floor: on accounts
+below $2,500 the approved policy allows the forced minimum lot only while the
+absolute risk stays at or below $12 (and within the 1.25–2.5% calibrated
+target, whichever is wider). Standard accounts keep the 0.5% ceiling and may
+use the minimum lot while its percentage risk is no worse than that ceiling.
 """
 
 from __future__ import annotations
@@ -43,9 +43,18 @@ GEOMETRY = [
 
 EQUITIES = [200.0, 500.0, 1000.0, 4500.0, 25000.0, 100000.0]
 
-# The configured limit, and the widest the min-lot floor may stretch it.
+# Approved 2026-10-23 micro policy: calibrated 1.25–2.5% target on accounts
+# below $2,500, with a $12 absolute per-trade ceiling. Standard accounts keep
+# the configured 0.5% ceiling.
 CEILING_PCT = 0.5
-MIN_LOT_FLOOR_MULTIPLE = 2.0
+MICRO_TARGET_MAX_PCT = 2.5
+ABSOLUTE_MICRO_RISK_USD = 12.0
+
+
+def _allowed_pct(equity: float) -> float:
+    if equity < 2500.0:
+        return max(MICRO_TARGET_MAX_PCT, ABSOLUTE_MICRO_RISK_USD / equity * 100.0)
+    return CEILING_PCT
 
 
 def _symbol_info(symbol: str) -> dict:
@@ -82,13 +91,13 @@ class TestTheCeilingBinds:
     def test_risk_never_exceeds_the_ceiling_or_the_min_lot_floor(
         self, symbol, entry, sl, equity
     ):
-        """No size may risk more than the ceiling, except the documented
-        min-lot floor, which may stretch it by at most 2x."""
+        """No size may risk more than the approved micro target/$12 cap, or
+        the 0.5% ceiling on a standard account."""
         pct = _risk_pct(equity, symbol, entry, sl)
-        allowed = CEILING_PCT * MIN_LOT_FLOOR_MULTIPLE
+        allowed = _allowed_pct(equity)
         assert pct <= allowed + 1e-6, (
             f"{symbol} at ${equity:,.0f} risked {pct:.2f}% "
-            f"(ceiling {CEILING_PCT}%, min-lot floor allowance {allowed}%)"
+            f"(allowed {allowed:.2f}%)"
         )
 
     def test_the_live_outlier_no_longer_oversizes(self):

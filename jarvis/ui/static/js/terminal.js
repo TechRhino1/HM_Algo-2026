@@ -1934,7 +1934,7 @@
         if (el.positionsCount) el.positionsCount.textContent = `${positions.length} Open`;
 
         if (positions.length === 0) {
-            el.positionsTbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:var(--text-dim); padding:16px;">No Active MT5 Positions Open</td></tr>';
+            el.positionsTbody.innerHTML = '<tr><td colspan="12" style="text-align:center; color:var(--text-dim); padding:16px;">No Active MT5 Positions Open</td></tr>';
             _lastPositionsSnapshot = "";
             return;
         }
@@ -1957,6 +1957,10 @@
             const slVal = p.sl !== undefined ? p.sl : (p.stop_loss || 0);
             const tpVal = p.tp !== undefined ? p.tp : (p.take_profit || 0);
 
+            const styleVal = String(p.style || (p.comment && (p.comment.indexOf('SCLP') !== -1 || p.comment.indexOf('SCALP') !== -1) ? 'SCALP' : ((p.comment && (p.comment.indexOf('SWNG') !== -1 || p.comment.indexOf('SWING') !== -1)) ? 'SWING' : 'DAY_TRADING'))).toUpperCase();
+            const styleBadgeClass = styleVal === 'SCALP' ? 'badge-style-scalp' : (styleVal === 'SWING' ? 'badge-style-swing' : 'badge-style-day');
+            const styleLabel = styleVal === 'DAY_TRADING' ? 'DAY' : styleVal;
+
             let progressPct = 50;
             if (slVal && tpVal && slVal !== tpVal) {
                 const total = Math.abs(tpVal - slVal);
@@ -1969,6 +1973,7 @@
                     <td style="color:var(--text-dim);">#${p.ticket}</td>
                     <td><b style="color:#ffffff;">${escapeHtml(p.symbol)}</b></td>
                     <td><span class="badge ${isBuy ? 'badge-ready-buy' : 'badge-ready-sell'}" style="font-size:8.5px; padding:1px 5px;">${escapeHtml(p.type)}</span></td>
+                    <td><span class="badge ${styleBadgeClass}">${styleLabel}</span></td>
                     <td class="mono-number" style="font-weight:700;">${Number(volumeVal).toFixed(2)}</td>
                     <td class="mono-number">${formatPrice(openPrice, p.symbol)}</td>
                     <td class="mono-number">${formatPrice(currentPrice, p.symbol)}</td>

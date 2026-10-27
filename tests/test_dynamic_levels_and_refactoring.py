@@ -91,8 +91,8 @@ class TestDynamicLevelsAndRefactoring(unittest.TestCase):
         reg_trend = RegimeOutput(primary_regime=MarketRegime.TREND_BULL, probabilities={}, confidence=0.85)
         levels_exp = self.levels_engine.calculate_levels(ctx_exp, reg_trend, tentative_bias="BUY")
 
-        # In strong expansion with positive volume delta: first_target_volume_pct = 0.35, runner_trail = 1.4 ATR
-        self.assertEqual(levels_exp["first_target_volume_pct"], 0.35)
+        # In strong expansion with positive volume delta: first_target_volume_pct = 0.33, runner_trail = 1.4 ATR
+        self.assertEqual(levels_exp["first_target_volume_pct"], 0.33)
         self.assertAlmostEqual(levels_exp["runner_trail_distance_atr"], 1.40, places=2)
 
         ctx_comp = MarketContext(
@@ -110,8 +110,8 @@ class TestDynamicLevelsAndRefactoring(unittest.TestCase):
         reg_range = RegimeOutput(primary_regime=MarketRegime.RANGE, probabilities={}, confidence=0.80)
         levels_comp = self.levels_engine.calculate_levels(ctx_comp, reg_range, tentative_bias="BUY")
 
-        # In range / compression: first_target_volume_pct = 0.65, runner_trail = 1.0 ATR
-        self.assertEqual(levels_comp["first_target_volume_pct"], 0.65)
+        # In range / compression: first_target_volume_pct = 0.50, runner_trail = 1.0 ATR
+        self.assertEqual(levels_comp["first_target_volume_pct"], 0.50)
         self.assertAlmostEqual(levels_comp["runner_trail_distance_atr"], 1.00, places=2)
 
     def test_decision_engine_dynamic_rsi_exhaustion_bounds(self):

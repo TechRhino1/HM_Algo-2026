@@ -1,4 +1,4 @@
-"""Step 0/1 — the real per-bar spread is carried and *reported*, never priced.
+"""The real per-bar spread is carried, reported, and consumed by the gates.
 
 The live path used to feed every caller the registry constant
 (`_spec.typical_spread_pips`), so `spread_ratio` was structurally 1.0 and the
@@ -6,13 +6,13 @@ trade journal recorded the constant rather than the spread actually quoted.
 The real spread is available — MT5's `copy_rates_from_pos` returns a per-bar
 `spread` column (in **points**) that `data_feed` projected away.
 
-This file pins the reporting-only wiring of that real spread:
+This file pins the wiring of that real spread (2026-10-23 P0 audit):
 
 * `data_feed.fetch_rates` keeps the `spread` column when the broker provides it.
-* `MarketContextEngine.build_context` converts it to pips into the new
-  `MarketContext.live_spread_pips`, and changes **nothing else** — bid, ask and
-  `volatility.current_spread_pips` are bit-identical whether or not the column
-  is present.
+* `MarketContextEngine.build_context` converts it to pips into
+  `MarketContext.live_spread_pips` and uses it for `ask` and
+  `volatility.current_spread_pips`, so spread gates see what the broker is
+  actually quoting. It falls back to the registry constant when absent.
 * `execution_engine` records the live spread in `TRADE_DB.log_trade`.
 * a context that predates the field still works.
 
@@ -53,7 +53,7 @@ class _Structure:
 
 
 class _Liquidity:
-    def analyze_liquidity(self, df):
+    def analyze_liquidity(self, df, **kwargs):
         return LiquidityContext()
 
 
@@ -209,41 +209,40 @@ class TestUnusableSpread:
 
 
 # --------------------------------------------------------------------------
-# 3. the regression guard — the decision path did not move
+# 3. the regression guard — live spread must reach every spread consumer
 # --------------------------------------------------------------------------
 
-class TestDecisionPathUnchanged:
+class TestDecisionPathUsesLiveSpread:
 
-    def test_bid_ask_and_current_spread_are_identical_with_and_without_the_column(self):
-        """The whole point of Step 0/1: an extra `spread` column must not move
-        a single price or the spread the volatility engine is handed. Strict
-        equality — not approx — so any accidental wiring shows up here."""
+    def test_bid_is_stable_but_ask_and_volatility_use_the_live_spread(self):
+        """An extra `spread` column must move the quoted ask and the spread the
+        volatility engine is handed, while the close-derived bid stays put."""
+        spec = resolve_symbol("EURUSD")
         with_col, vol_with = build("EURUSD", spread=19, price=1.1234, spread_arg=0.7)
         without, vol_without = build("EURUSD", spread=None, price=1.1234, spread_arg=0.7)
 
         assert with_col.bid == without.bid
-        assert with_col.ask == without.ask
         assert with_col.current_price == without.current_price
-        assert (with_col.volatility.current_spread_pips
-                == without.volatility.current_spread_pips)
-        assert vol_with.kwargs[0] == vol_without.kwargs[0]
+        assert with_col.ask == pytest.approx(1.1234 + 1.9 * spec.pip_size)
+        assert without.ask == pytest.approx(1.1234 + 0.7 * spec.pip_size)
+        assert with_col.volatility.current_spread_pips == pytest.approx(1.9)
+        assert without.volatility.current_spread_pips == pytest.approx(0.7)
+        assert vol_with.kwargs[0]["current_spread_pips"] == pytest.approx(1.9)
+        assert vol_without.kwargs[0]["current_spread_pips"] == pytest.approx(0.7)
 
-        # ...and yet the live field really did change, so the guard is not
-        # vacuous.
         assert with_col.live_spread_pips == pytest.approx(1.9)
         assert without.live_spread_pips is None
 
-    def test_the_volatility_engine_still_gets_the_registry_constant(self):
-        """`current_spread_pips` is passed through untouched even when a real
-        spread column is present."""
+    def test_the_volatility_engine_gets_the_live_spread(self):
+        """The measured spread wins over the registry constant."""
         ctx, vol = build("EURUSD", spread=19, spread_arg=0.7)
-        assert vol.kwargs[0]["current_spread_pips"] == 0.7
-        assert ctx.volatility.current_spread_pips == 0.7
+        assert vol.kwargs[0]["current_spread_pips"] == pytest.approx(1.9)
+        assert ctx.volatility.current_spread_pips == pytest.approx(1.9)
 
-    def test_the_ask_still_uses_the_passed_spread_not_the_live_one(self):
+    def test_the_ask_uses_the_live_spread(self):
         spec = resolve_symbol("EURUSD")
         ctx, _ = build("EURUSD", spread=19, price=1.1000, spread_arg=0.7)
-        assert ctx.ask == pytest.approx(1.1000 + 0.7 * spec.pip_size)
+        assert ctx.ask == pytest.approx(1.1000 + 1.9 * spec.pip_size)
 
 
 # --------------------------------------------------------------------------

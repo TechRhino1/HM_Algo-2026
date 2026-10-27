@@ -28,6 +28,11 @@ class MarketContextEngine:
         candlestick_engine: Optional[CandlestickPriceActionEngine] = None
     ):
         self.structure_engine = structure_engine or MarketStructureEngine()
+        # A dedicated instance for the D1 macro anchor. The injected/shared
+        # structure engine is called once per routed frame; reusing it for the
+        # anchor appended an extra call and made the routing tests (and any
+        # caller reading the engine's call log) see a frame it never routed.
+        self._anchor_structure_engine = MarketStructureEngine()
         self.liquidity_engine = liquidity_engine or LiquidityEngine()
         self.volatility_engine = volatility_engine or VolatilityEngine()
         self.momentum_engine = momentum_engine or MomentumEngine()
@@ -104,6 +109,31 @@ class MarketContextEngine:
         except Exception:
             return {}
 
+    def _compute_metals_smt(self, symbol: str):
+        try:
+            from jarvis.market.smt_divergence import MetalsSMTEngine
+            if not MetalsSMTEngine.is_metal(symbol):
+                return {}
+            if not hasattr(self, "_smt_engine"):
+                self._smt_engine = MetalsSMTEngine(cache_ttl_seconds=20.0)
+            return self._smt_engine.detect_smt(symbol)
+        except Exception:
+            return {}
+
+    def _compute_intermarket_dxy(self, symbol: str) -> Dict[str, Any]:
+        try:
+            from jarvis.market.intermarket import get_intermarket_dxy_report
+            return get_intermarket_dxy_report().to_dict()
+        except Exception:
+            return {}
+
+    def _compute_cross_market_smt(self, symbol: str) -> Dict[str, Any]:
+        try:
+            from jarvis.market.smt_divergence import GLOBAL_SMT_ENGINE
+            return GLOBAL_SMT_ENGINE.detect_smt(symbol)
+        except Exception:
+            return {}
+
     @staticmethod
     def _live_spread_pips_from_frame(df: pd.DataFrame, spec) -> Optional[float]:
         """MT5 points → pips, using the canonical conversion.
@@ -145,13 +175,14 @@ class MarketContextEngine:
         Synthesizes multi-timeframe market data into a unified MarketContext object.
         Dynamically weights MTF confluence based on trade style:
         - SWING: D1 (40%), H4 (30%), H1 (20%), M15 (10%)
-        - DAY_TRADING / INTRADAY: H4 (40%), H1 (35%), M15 (25%)
+        - DAY_TRADING / INTRADAY: M15 primary (40%), H1 context (35%), H4 macro (25%)
         - SCALP: H1 (40%), M15 (30%), M5 (20%), M1 (10%)
 
-        The DAY_TRADING row previously read "H1 (40%), M15 (35%), M5 (25%)",
-        which named the wrong frames: `df_macro` resolves to the **H4** frame
-        for this style, and M5 is written into `mtf_alignment` but carries no
-        weight. Corrected 2026-09-18 — the code was always self-consistent.
+        The DAY_TRADING weights follow the routed frames: M15 is the primary
+        (execution) frame at 40%, H1 the context frame at 35%, H4 the macro
+        frame at 25%. M5 is written into `mtf_alignment` but carries no weight.
+        The earlier row named H1/M15/M5, which were not the frames that were
+        actually weighted.
         """
         style = (trade_style or "SWING").upper()
         if style in ("DAY_TRADING", "INTRADAY", "DAY"):
@@ -188,9 +219,18 @@ class MarketContextEngine:
         if live_spread_pips is None:
             live_spread_pips = self._live_spread_pips_from_frame(df_primary, _spec)
 
+        # The execution gates must see the spread the market is actually
+        # quoting. `current_spread_pips` defaults to the registry constant (a
+        # model), so a 10x broker spread on a quiet registered symbol used to
+        # pass every spread gate. Use the measured per-bar spread when present,
+        # and fall back to the registry constant only when the feed has none.
+        effective_spread_pips = float(current_spread_pips or 0.0)
+        if live_spread_pips is not None and float(live_spread_pips) > 0:
+            effective_spread_pips = float(live_spread_pips)
+
         latest_close = float(df_primary["close"].iloc[-1]) if not df_primary.empty else 0.0
         bid = latest_close
-        ask = latest_close + (current_spread_pips * _spec.pip_size)
+        ask = latest_close + (effective_spread_pips * _spec.pip_size)
 
         # 1. Structural Analysis (Primary & Setup timeframes)
         structure_primary = self.structure_engine.analyze_structure(df_primary)
@@ -205,7 +245,7 @@ class MarketContextEngine:
         # 3. Volatility & Spread Feasibility
         volatility = self.volatility_engine.analyze_volatility(
             df_primary,
-            current_spread_pips=current_spread_pips,
+            current_spread_pips=effective_spread_pips,
             max_allowed_spread_pips=max_allowed_spread_pips
         )
 
@@ -244,7 +284,12 @@ class MarketContextEngine:
                 c_last = float(c.iloc[-1])
                 ema20 = float(c.ewm(span=20, adjust=False).mean().iloc[-1])
                 ema50 = float(c.ewm(span=min(50, len(df)), adjust=False).mean().iloc[-1])
-                if bias == "BEARISH":
+                # Direct moving average trend direction (prevents neutral blindness in clear trends)
+                if c_last < min(ema20, ema50) and ema20 <= ema50:
+                    return "BEARISH"
+                elif c_last > max(ema20, ema50) and ema20 >= ema50:
+                    return "BULLISH"
+                elif bias == "BEARISH":
                     if c_last > max(ema20, ema50) and ema20 > ema50:
                         return "BULLISH"
                     elif c_last > ema20:
@@ -254,7 +299,17 @@ class MarketContextEngine:
                         return "BEARISH"
                     elif c_last < ema20:
                         return "NEUTRAL"
+                elif bias == "NEUTRAL":
+                    if c_last < ema20 and ema20 <= ema50:
+                        return "BEARISH"
+                    elif c_last > ema20 and ema20 >= ema50:
+                        return "BULLISH"
             return bias
+
+        # D1 Anchor Evaluation across ALL styles
+        df_d1_anchor = mtf_data.get("anchor", mtf_data.get("D1", pd.DataFrame()))
+        raw_d1_anchor = self._anchor_structure_engine.analyze_structure(df_d1_anchor).bias if not df_d1_anchor.empty else "NEUTRAL"
+        d1_anchor_eval = _refine_bias_with_ema(df_d1_anchor, raw_d1_anchor) if not df_d1_anchor.empty else "NEUTRAL"
 
         if style in ("DAY_TRADING", "INTRADAY", "DAY"):
             # When trade_style == "DAY_TRADING": M15 primary (40%), H1 context (35%), H4 macro (25%)
@@ -268,6 +323,7 @@ class MarketContextEngine:
             m15_bias = _refine_bias_with_ema(df_primary, raw_m15)
             m5_bias = _refine_bias_with_ema(df_timing, raw_m5)
 
+            mtf_alignment["D1"] = d1_anchor_eval
             mtf_alignment["H4"] = h4_bias
             mtf_alignment["H1"] = h1_bias
             mtf_alignment["M15"] = m15_bias
@@ -289,6 +345,7 @@ class MarketContextEngine:
             m5_bias = _refine_bias_with_ema(df_primary, raw_m5)
             m1_bias = _refine_bias_with_ema(df_timing, raw_m1)
 
+            mtf_alignment["D1"] = d1_anchor_eval
             mtf_alignment["H1"] = h1_bias
             mtf_alignment["M15"] = m15_bias
             mtf_alignment["M5"] = m5_bias
@@ -302,7 +359,7 @@ class MarketContextEngine:
                 _score_bias(m1_bias) * 0.10
             )
         else:  # SWING (default): D1 (40%), H4 (30%), H1 (20%), M15 (10%)
-            raw_d1 = self.structure_engine.analyze_structure(df_macro).bias if not df_macro.empty else "NEUTRAL"
+            raw_d1 = self.structure_engine.analyze_structure(df_macro).bias if not df_macro.empty else raw_d1_anchor
             raw_h4 = self.structure_engine.analyze_structure(df_context).bias if not df_context.empty else "NEUTRAL"
             raw_h1 = structure_primary.bias if not df_primary.empty else "NEUTRAL"
             raw_m15 = (
@@ -311,7 +368,7 @@ class MarketContextEngine:
                 )
             )
 
-            d1_bias = _refine_bias_with_ema(df_macro, raw_d1)
+            d1_bias = _refine_bias_with_ema(df_macro if not df_macro.empty else df_d1_anchor, raw_d1)
             h4_bias = _refine_bias_with_ema(df_context, raw_h4)
             h1_bias = _refine_bias_with_ema(df_primary, raw_h1)
             m15_bias = _refine_bias_with_ema(df_timing if not df_timing.empty else df_setup, raw_m15)
@@ -327,7 +384,6 @@ class MarketContextEngine:
                 _score_bias(h1_bias) * 0.20 +
                 _score_bias(m15_bias) * 0.10
             )
-
         mtf_confluence_pct = round(weighted_score * 100.0, 1)
 
         # 7. VWAP Calculation
@@ -358,6 +414,13 @@ class MarketContextEngine:
         # 11. Intermarket Crypto Lead-Lag Analysis (ETH/BTC relative strength)
         crypto_lead_lag = self._compute_crypto_lead_lag(symbol)
 
+        # 12. Cross-Market SMT Divergence (Metals, Indices, Forex)
+        cross_market_smt = self._compute_cross_market_smt(symbol)
+        metals_smt = self._compute_metals_smt(symbol)
+
+        # 13. Synthetic Dollar Index (DXY) Intermarket Intelligence
+        intermarket_dxy = self._compute_intermarket_dxy(symbol)
+
         return MarketContext(
             symbol=symbol,
             timestamp=bar_timestamp,
@@ -377,5 +440,8 @@ class MarketContextEngine:
             trade_style=style,
             live_spread_pips=live_spread_pips,
             candlestick_pattern=candlestick_pattern,
-            crypto_lead_lag=crypto_lead_lag
+            crypto_lead_lag=crypto_lead_lag,
+            metals_smt=metals_smt,
+            intermarket_dxy=intermarket_dxy,
+            cross_market_smt=cross_market_smt
         )

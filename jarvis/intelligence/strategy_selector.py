@@ -84,34 +84,19 @@ class StrategySelector:
         # Retrieve dedicated symbol-specific profile configuration
         cfg = get_symbol_profile_config(symbol_name)
         
-        if is_gold:
-            # 100% UNCHANGED AND PRESERVED GOLD PARAMETERS
-            prior_weights = {
-                "MICRO_ACCOUNT_ADAPTIVE": 0.0,
-                "TREND_FOLLOWING": 1.5,
-                "TREND_PULLBACK": 2.2,
-                "BREAKOUT_EXPANSION": 1.0,
-                "LIQUIDITY_SWEEP_REVERSAL": 2.5,
-                "RANGE_MEAN_REVERSION": 1.0,
-                "CHOCH_STRUCTURAL_REVERSAL": 2.2
-            }
-            # Enforce symbol-specific banned strategies immediately
-            for banned in cfg.banned_strategies:
-                prior_weights[banned] = 0.0
-        else:
-            # Symbol-specific configuration initialization
-            prior_weights = {
-                "MICRO_ACCOUNT_ADAPTIVE": 0.0,
-                "TREND_FOLLOWING": cfg.strategy_weights.get("TREND_FOLLOWING", 1.0),
-                "TREND_PULLBACK": cfg.strategy_weights.get("TREND_PULLBACK", 1.0),
-                "BREAKOUT_EXPANSION": cfg.strategy_weights.get("BREAKOUT_EXPANSION", 1.0),
-                "LIQUIDITY_SWEEP_REVERSAL": cfg.strategy_weights.get("LIQUIDITY_SWEEP_REVERSAL", 1.0),
-                "RANGE_MEAN_REVERSION": cfg.strategy_weights.get("RANGE_MEAN_REVERSION", 1.0),
-                "CHOCH_STRUCTURAL_REVERSAL": cfg.strategy_weights.get("CHOCH_STRUCTURAL_REVERSAL", 1.0)
-            }
-            # Enforce symbol-specific banned strategies immediately
-            for banned in cfg.banned_strategies:
-                prior_weights[banned] = 0.0
+        # Symbol-specific configuration initialization from SYMBOL_PROFILES
+        prior_weights = {
+            "MICRO_ACCOUNT_ADAPTIVE": 0.0,
+            "TREND_FOLLOWING": cfg.strategy_weights.get("TREND_FOLLOWING", 1.0),
+            "TREND_PULLBACK": cfg.strategy_weights.get("TREND_PULLBACK", 1.0),
+            "BREAKOUT_EXPANSION": cfg.strategy_weights.get("BREAKOUT_EXPANSION", 1.0),
+            "LIQUIDITY_SWEEP_REVERSAL": cfg.strategy_weights.get("LIQUIDITY_SWEEP_REVERSAL", 1.0),
+            "RANGE_MEAN_REVERSION": cfg.strategy_weights.get("RANGE_MEAN_REVERSION", 1.0),
+            "CHOCH_STRUCTURAL_REVERSAL": cfg.strategy_weights.get("CHOCH_STRUCTURAL_REVERSAL", 1.0)
+        }
+        # Enforce symbol-specific banned strategies immediately
+        for banned in cfg.banned_strategies:
+            prior_weights[banned] = 0.0
 
         canonical_sym = getattr(cfg, "canonical", symbol_name).upper()
         # Asset-Class Prior Calibration (Fallback only if symbol not explicitly profiled in SYMBOL_PROFILES)
@@ -357,7 +342,7 @@ class StrategySelector:
                 prior_weights["TREND_FOLLOWING"] = 0.0
 
         # Master-Trader Strategy Weighting Calibration (Fallback for unprofiled symbols or Gold preservation):
-        if canonical_sym not in SYMBOL_PROFILES or is_gold:
+        if canonical_sym not in SYMBOL_PROFILES:
             if is_jpy:
                 prior_weights["TREND_FOLLOWING"] = max(prior_weights.get("TREND_FOLLOWING", 0.0), 2.6)
                 prior_weights["TREND_PULLBACK"] = max(prior_weights.get("TREND_PULLBACK", 0.0), 2.4)
@@ -396,10 +381,9 @@ class StrategySelector:
             if style_key != "SCALP":
                 prior_weights["RANGE_MEAN_REVERSION"] = 0.0
 
-        # Strict symbol profile banned strategy enforcement (Gold remains 100% untouched)
-        if not is_gold:
-            for banned in cfg.banned_strategies:
-                prior_weights[banned] = 0.0
+        # Strict symbol profile banned strategy enforcement
+        for banned in cfg.banned_strategies:
+            prior_weights[banned] = 0.0
 
         # 2.6 Reinforcement Learning Bandit Boosts & Contextual Thompson Sampling
         reg_key = getattr(r, "value", str(r)).upper()

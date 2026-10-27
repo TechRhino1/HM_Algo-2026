@@ -427,23 +427,24 @@ class ScalpExecutionEngine:
 
         # 6. Adaptive Structural SL & Multi-Stage TP Calculation
         pip_size = getattr(spec, "pip_size", 0.0001) or 0.0001
+        digits = getattr(spec, "digits", 5) or 5
         st = context.structure
-        
-        # Stop loss placed beyond sweep extreme or micro swing extreme
+        spread_dist = spread_pips * pip_size
+
         if tentative_bias == "BUY":
             swing_low = getattr(st, "swing_low", None) or (c_price - 1.2 * atr)
-            sl_price = round(min(swing_low, c_price - 1.0 * atr) - (spread_pips * pip_size * 0.5), 5)
+            sl_price = round(min(swing_low, c_price - 1.0 * atr) - spread_dist * 0.5, digits)
             risk_dist = max(c_price - sl_price, atr * 0.5)
-            tp1 = round(c_price + (1.0 * risk_dist), 5)  # 1.0R scale out 50%
-            tp2 = round(c_price + (1.8 * risk_dist), 5)  # Opposing liquidity / micro target
-            tp3 = round(c_price + (2.8 * risk_dist), 5)  # Runner
+            tp1 = round(c_price + (1.0 * risk_dist), digits)
+            tp2 = round(c_price + (1.8 * risk_dist), digits)
+            tp3 = round(c_price + (2.8 * risk_dist), digits)
         elif tentative_bias == "SELL":
             swing_high = getattr(st, "swing_high", None) or (c_price + 1.2 * atr)
-            sl_price = round(max(swing_high, c_price + 1.0 * atr) + (spread_pips * pip_size * 0.5), 5)
+            sl_price = round(max(swing_high, c_price + 1.0 * atr) + spread_dist * 0.5, digits)
             risk_dist = max(sl_price - c_price, atr * 0.5)
-            tp1 = round(c_price - (1.0 * risk_dist), 5)
-            tp2 = round(c_price - (1.8 * risk_dist), 5)
-            tp3 = round(c_price - (2.8 * risk_dist), 5)
+            tp1 = round(c_price - (1.0 * risk_dist), digits)
+            tp2 = round(c_price - (1.8 * risk_dist), digits)
+            tp3 = round(c_price - (2.8 * risk_dist), digits)
         else:
             sl_price = 0.0
             tp1 = tp2 = tp3 = 0.0

@@ -116,7 +116,14 @@ class TestResultShape:
         r = run(decision(verdict="HOLD", bias="BUY", stop_loss=1.2, take_profit=1.0),
                 acct=account(trade_allowed=False), spread=EURUSD_CAP * 10)
         assert r["passed"] is False
-        assert len(r["reasons"]) == 5
+        assert len(r["reasons"]) == 6
+        joined = " ".join(r["reasons"])
+        assert "EXECUTE" in joined
+        assert "permissions" in joined
+        assert "Spread" in joined
+        assert "Stop loss" in joined
+        assert "Take profit" in joined
+        assert "Risk:Reward" in joined
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +173,7 @@ class TestAccountPermissions:
         assert run(decision(), acct=account(trade_allowed=True))["passed"] is True
 
     def test_permission_failure_is_independent_of_geometry(self):
-        r = run(decision(bias="BUY", stop_loss=1.2), acct=account(trade_allowed=False))
+        r = run(decision(bias="BUY", stop_loss=1.2, take_profit=1.46), acct=account(trade_allowed=False))
         assert len(r["reasons"]) == 2
 
 
@@ -293,7 +300,7 @@ class TestAsianWindowHourSource:
 
 class TestStopLossGeometry:
     def test_buy_with_a_stop_below_entry_passes(self):
-        assert run(decision(bias="BUY", entry=1.1, stop_loss=1.09))["passed"] is True
+        assert run(decision(bias="BUY", entry=1.1, stop_loss=1.09, take_profit=1.12))["passed"] is True
 
     def test_buy_with_a_stop_above_entry_is_rejected(self):
         r = run(decision(bias="BUY", entry=1.1, stop_loss=1.11))
@@ -304,7 +311,7 @@ class TestStopLossGeometry:
         assert run(decision(bias="BUY", entry=1.1, stop_loss=1.1))["passed"] is False
 
     def test_sell_with_a_stop_above_entry_passes(self):
-        assert run(decision(bias="SELL", entry=1.1, stop_loss=1.11, take_profit=1.09))["passed"] is True
+        assert run(decision(bias="SELL", entry=1.1, stop_loss=1.11, take_profit=1.08))["passed"] is True
 
     def test_sell_with_a_stop_below_entry_is_rejected(self):
         r = run(decision(bias="SELL", entry=1.1, stop_loss=1.09, take_profit=1.09))
@@ -336,7 +343,7 @@ class TestTakeProfitGeometry:
         assert run(decision(bias="BUY", entry=1.1, take_profit=1.1))["passed"] is False
 
     def test_sell_with_a_target_below_entry_passes(self):
-        assert run(decision(bias="SELL", entry=1.1, stop_loss=1.11, take_profit=1.09))["passed"] is True
+        assert run(decision(bias="SELL", entry=1.1, stop_loss=1.11, take_profit=1.08))["passed"] is True
 
     def test_sell_with_a_target_above_entry_is_rejected(self):
         r = run(decision(bias="SELL", entry=1.1, stop_loss=1.11, take_profit=1.12))
@@ -350,7 +357,7 @@ class TestTakeProfitGeometry:
         assert "Take profit" in r["reasons"][0]
 
     def test_both_sides_wrong_gives_two_reasons(self):
-        r = run(decision(bias="BUY", entry=1.1, stop_loss=1.2, take_profit=1.0))
+        r = run(decision(bias="BUY", entry=1.1, stop_loss=1.11, take_profit=1.08))
         assert len(r["reasons"]) == 2
 
 
@@ -460,7 +467,7 @@ class TestNonPositivePrices:
     def test_a_genuinely_positive_decision_still_passes(self):
         """The positivity requirement must not narrow the guard for real prices."""
         assert run(decision(bias="BUY", entry=1.1, stop_loss=1.09, take_profit=1.12))["passed"] is True
-        assert run(decision(bias="SELL", entry=1.1, stop_loss=1.11, take_profit=1.09))["passed"] is True
+        assert run(decision(bias="SELL", entry=1.1, stop_loss=1.11, take_profit=1.08))["passed"] is True
 
 
 # ---------------------------------------------------------------------------

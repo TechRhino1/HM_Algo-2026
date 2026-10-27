@@ -1187,9 +1187,14 @@
         '<span style="display:block; font-size:10px; opacity:0.85;">(' + (r_mult >= 0 ? '+' : '') + num(r_mult, 2) + 'R)</span>' +
       '</span>';
 
+      var styleVal = String(p.style || (p.comment && (p.comment.indexOf('SCLP') !== -1 || p.comment.indexOf('SCALP') !== -1) ? 'SCALP' : ((p.comment && (p.comment.indexOf('SWNG') !== -1 || p.comment.indexOf('SWING') !== -1)) ? 'SWING' : 'DAY_TRADING'))).toUpperCase();
+      var styleBadgeClass = styleVal === 'SCALP' ? 'badge-style-scalp' : (styleVal === 'SWING' ? 'badge-style-swing' : 'badge-style-day');
+      var styleLabel = styleVal === 'DAY_TRADING' ? 'DAY' : styleVal;
+
       tr.innerHTML =
         '<td><span class="tt-symbol">' + esc(p.symbol) + '</span></td>' +
         '<td><span class="tt-dir ' + dirCls + '">' + esc(side || '—') + '</span></td>' +
+        '<td><span class="badge ' + styleBadgeClass + '">' + esc(styleLabel) + '</span></td>' +
         '<td class="tt-num">' + num(p.volume, 2) + '</td>' +
         '<td class="tt-num">' + formatPrice(p.open_price, p.symbol) + '</td>' +
         '<td class="tt-num">' + formatPrice(p.current_price, p.symbol) + '</td>' +
@@ -1394,7 +1399,7 @@
   function setPosTab(name) {
     state.posTab = name;
     var headCols = {
-      open:    '<th>Symbol</th><th>Side</th><th class="tt-num">Vol</th><th class="tt-num">Entry</th>' +
+      open:    '<th>Symbol</th><th>Side</th><th>Style</th><th class="tt-num">Vol</th><th class="tt-num">Entry</th>' +
                '<th class="tt-num">Now</th><th class="tt-num">SL</th><th class="tt-num">TP</th>' +
                '<th class="tt-num">MFE / MAE</th><th class="tt-num">P&amp;L (R)</th><th class="tt-pos-actions-col">Actions</th>',
       history: '<th>Symbol</th><th>Side</th><th class="tt-num">Vol</th><th class="tt-num">Entry</th>' +

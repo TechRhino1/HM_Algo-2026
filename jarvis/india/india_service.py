@@ -23,6 +23,7 @@ from jarvis.india.options_signal_engine import OPTION_SIGNALS
 from jarvis.india.nse_rules import NSE_RULES
 from jarvis.india.news_analyzer import INDIA_NEWS
 from jarvis.india.risk_engine import INDIA_RISK
+from jarvis.india.prediction_engine import INDIA_PREDICTIONS
 
 logger = logging.getLogger("jarvis.india_service")
 
@@ -428,6 +429,29 @@ class IndiaMarketsService:
                     include_indices=inc_idx
                 )
                 self._send_json(handler, res)
+                return True
+
+            elif path in ["/api/india/live_indices", "/api/india/live_cards"]:
+                cards = INDIA_PREDICTIONS.get_live_indices_cards()
+                self._send_json(handler, {"cards": cards, "count": len(cards), "timestamp": time.strftime("%H:%M:%S IST")})
+                return True
+
+            elif path in ["/api/india/predictions", "/api/india/signals/predictions"]:
+                preds = INDIA_PREDICTIONS.get_market_predictions()
+                self._send_json(handler, preds)
+                return True
+
+            elif path in ["/api/india/options/ai_advisor", "/api/india/options_advisor"]:
+                sym = query.get("symbol", ["NIFTY"])[0].upper().strip()
+                user_q = query.get("query", [None])[0]
+                strat = query.get("strategy", [None])[0]
+                adv = INDIA_PREDICTIONS.get_options_expert_advisor(symbol=sym, query=user_q, strategy_type=strat)
+                self._send_json(handler, adv)
+                return True
+
+            elif path in ["/api/india/scanner_views", "/api/india/scanner/views"]:
+                views = INDIA_PREDICTIONS.get_scanner_views()
+                self._send_json(handler, views)
                 return True
 
             elif path == "/api/india/indices":

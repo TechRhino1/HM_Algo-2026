@@ -164,22 +164,56 @@ class DevilAdvocateAnalyst:
             invalidation_triggers.append(f"H1 candle close above supply zone {st.supply_zone[1]}.")
             invalidation_triggers.append("Bullish displacement breaking recent swing high.")
 
-        # Concrete obstacle / threat price level detection (§B-5)
+        # Concrete obstacle / threat price level detection across ALL symbols (§B-5)
+        # Checks supply/demand zones, key pivot levels, and dynamic trendline/channel boundaries
         threat_price_level = None
+        c_price = context.current_price
+        atr_val = getattr(vol, "atr", 1.0) or 1.0
+
         if is_buy:
-            if st.supply_zone[0] > context.current_price:
-                threat_price_level = st.supply_zone[0]
-            elif hasattr(st, "key_levels") and st.key_levels:
-                res_levels = [kl["price"] for kl in st.key_levels if kl.get("price", 0) > context.current_price]
-                if res_levels:
-                    threat_price_level = min(res_levels)
+            candidate_res = []
+            if st.supply_zone[0] > c_price:
+                candidate_res.append(st.supply_zone[0])
+            if getattr(st, "channel_upper", 0.0) > c_price:
+                candidate_res.append(st.channel_upper)
+            if getattr(st, "dynamic_resistance_trendline", 0.0) > c_price:
+                candidate_res.append(st.dynamic_resistance_trendline)
+            if hasattr(st, "key_levels") and st.key_levels:
+                res_levels = [kl["price"] for kl in st.key_levels if kl.get("price", 0) > c_price]
+                candidate_res.extend(res_levels)
+            if candidate_res:
+                threat_price_level = min(candidate_res)
+                # Check for immediate ceiling collision (buying directly into overhead resistance/trendline)
+                dist_to_res = threat_price_level - c_price
+                if dist_to_res < (0.50 * atr_val):
+                    col_penalty = 30.0 if dist_to_res < (0.25 * atr_val) else 20.0
+                    penalty_score += col_penalty
+                    threats.append(
+                        f"Immediate overhead resistance/trendline collision at {threat_price_level:.2f} "
+                        f"({dist_to_res:.1f} pts / {dist_to_res/max(atr_val,1e-6):.2f}R runway) — high rejection/reversal risk."
+                    )
         else:
-            if st.demand_zone[1] > 0 and st.demand_zone[1] < context.current_price:
-                threat_price_level = st.demand_zone[1]
-            elif hasattr(st, "key_levels") and st.key_levels:
-                sup_levels = [kl["price"] for kl in st.key_levels if 0 < kl.get("price", 0) < context.current_price]
-                if sup_levels:
-                    threat_price_level = max(sup_levels)
+            candidate_sup = []
+            if 0 < st.demand_zone[1] < c_price:
+                candidate_sup.append(st.demand_zone[1])
+            if 0 < getattr(st, "channel_lower", 0.0) < c_price:
+                candidate_sup.append(st.channel_lower)
+            if 0 < getattr(st, "dynamic_support_trendline", 0.0) < c_price:
+                candidate_sup.append(st.dynamic_support_trendline)
+            if hasattr(st, "key_levels") and st.key_levels:
+                sup_levels = [kl["price"] for kl in st.key_levels if 0 < kl.get("price", 0) < c_price]
+                candidate_sup.extend(sup_levels)
+            if candidate_sup:
+                threat_price_level = max(candidate_sup)
+                # Check for immediate floor collision (selling directly into dynamic trendline support)
+                dist_to_sup = c_price - threat_price_level
+                if dist_to_sup < (0.50 * atr_val):
+                    col_penalty = 30.0 if dist_to_sup < (0.25 * atr_val) else 20.0
+                    penalty_score += col_penalty
+                    threats.append(
+                        f"Immediate dynamic support/trendline collision at {threat_price_level:.2f} "
+                        f"({dist_to_sup:.1f} pts / {dist_to_sup/max(atr_val,1e-6):.2f}R runway) — high bounce/reversal risk."
+                    )
 
         # Critique Confidence based on context quality & data completeness
         critique_conf = round(max(0.40, min(1.0, (context.context_quality / 100.0))), 2)

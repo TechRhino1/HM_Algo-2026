@@ -98,6 +98,10 @@
     .positions-search-input,
     .positions-search-input:focus { width: 100%; }
   }
+
+  .badge-style-scalp { background: rgba(13, 202, 240, 0.18) !important; color: #0dcaf0 !important; border: 1px solid rgba(13, 202, 240, 0.45) !important; border-radius: 4px; font-size: 8.5px; padding: 2px 6px; font-weight: 700; text-transform: uppercase; }
+  .badge-style-day { background: rgba(13, 110, 253, 0.18) !important; color: #3b82f6 !important; border: 1px solid rgba(13, 110, 253, 0.45) !important; border-radius: 4px; font-size: 8.5px; padding: 2px 6px; font-weight: 700; text-transform: uppercase; }
+  .badge-style-swing { background: rgba(168, 85, 247, 0.18) !important; color: #c084fc !important; border: 1px solid rgba(168, 85, 247, 0.45) !important; border-radius: 4px; font-size: 8.5px; padding: 2px 6px; font-weight: 700; text-transform: uppercase; }
 </style>
 </head>
 <body class="bugatti-theme">
@@ -247,6 +251,7 @@
           <tr>
             <th scope="col">Symbol</th>
             <th scope="col">Side</th>
+            <th scope="col">Style</th>
             <th scope="col" class="tt-num">Vol</th>
             <th scope="col" class="tt-num">Entry</th>
             <th scope="col" class="tt-num">Now</th>
@@ -257,7 +262,7 @@
           </tr>
         </thead>
         <tbody id="positions-live-tbody">
-          <tr><td colspan="9" style="text-align:center; padding:32px; color:var(--machined-silver);">Connecting to broker telemetry...</td></tr>
+          <tr><td colspan="10" style="text-align:center; padding:32px; color:var(--machined-silver);">Connecting to broker telemetry...</td></tr>
         </tbody>
       </table>
     </div>

@@ -476,3 +476,60 @@ class TestGetRiskMultiplier:
     def test_the_multiplier_is_never_negative(self):
         g = anchored(1000.0)
         assert g.get_risk_multiplier(0.0) >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# Daily de-risk tier and the capped, opt-in recovery window
+# ---------------------------------------------------------------------------
+
+class TestDailyRiskMultiplier:
+    @pytest.mark.parametrize("equity,expected", [
+        (1000.0, 1.0), (975.1, 1.0),     # below 2.5%
+        (975.0, 0.50), (951.0, 0.50),    # 2.5% - 5.0%
+        (950.0, 0.0), (900.0, 0.0),      # at/after the 5% halt
+    ])
+    def test_the_bands(self, equity, expected):
+        g = anchored(1000.0, max_daily_loss_pct=5.0)
+        assert g.get_daily_risk_multiplier(equity) == expected
+
+    def test_it_is_independent_of_the_peak_baseline(self):
+        """A 2.6% day inside a flat peak still de-risks; it is not a DD call."""
+        g = anchored(1000.0, max_daily_loss_pct=5.0, max_total_drawdown_pct=15.0)
+        assert g.get_risk_multiplier(974.0) == 1.0
+        assert g.get_daily_risk_multiplier(974.0) == 0.50
+
+    def test_an_unset_daily_baseline_does_not_de_risk(self):
+        assert guard().get_daily_risk_multiplier(100.0) == 1.0
+
+
+class TestRecoveryWindow:
+    def test_a_daily_breach_inside_the_cap_passes_only_when_allowed(self):
+        g = anchored(1000.0, max_daily_loss_pct=5.0, max_total_drawdown_pct=15.0)
+        assert g.check_limits(945.0, 945.0)["passed"] is False
+        assert g.check_limits(945.0, 945.0, allow_recovery=True)["passed"] is True
+
+    @pytest.mark.parametrize("equity,allowed", [
+        (935.0, True),      # 6.50% - exactly at the recovery cap
+        (934.9, False),     # 6.51% - past the cap
+    ])
+    def test_the_recovery_cap_is_inclusive_and_absolute(self, equity, allowed):
+        g = anchored(1000.0, max_daily_loss_pct=5.0, max_total_drawdown_pct=15.0)
+        r = g.check_limits(equity, equity, allow_recovery=True)
+        assert r["passed"] is allowed
+
+    def test_a_total_drawdown_breach_is_never_waived(self):
+        """Daily 6% is recoverable, but the portfolio breaker still owns the call."""
+        g = anchored(1050.0, max_daily_loss_pct=5.0, max_total_drawdown_pct=10.0)
+        g.set_clock(lambda: DAY1)
+        g.update_equity_benchmarks(1000.0, 1000.0)
+        r = g.check_limits(940.0, 940.0, allow_recovery=True)
+        assert r["daily_loss_pct"] == 6.0
+        assert r["total_dd_pct"] > 10.0
+        assert r["passed"] is False
+        assert any("Portfolio Drawdown" in b for b in r["breaches"])
+
+    def test_recovery_does_not_change_the_result_contract(self):
+        g = anchored(1000.0, max_daily_loss_pct=5.0, max_total_drawdown_pct=15.0)
+        r = g.check_limits(945.0, 945.0, allow_recovery=True)
+        assert set(r) == {"passed", "daily_loss_pct", "total_dd_pct", "breaches"}
+        assert r["breaches"] == []

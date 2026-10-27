@@ -684,6 +684,30 @@ class PositionMonitorEngine:
 
     # ─── Single-Position Logic ──────────────────────────────────────────────────
 
+
+    def _extract_position_trade_style(self, pos: PositionSnapshot) -> str:
+        """Extract trade style (SCALP, DAY_TRADING, SWING) from position comment or state."""
+        comment = str(getattr(pos, "comment", "") or "").upper()
+        if "SCLP" in comment or "SCALP" in comment:
+            return "SCALP"
+        if "SWNG" in comment or "SWING" in comment:
+            return "SWING"
+        if "DAY" in comment or "INTRADAY" in comment:
+            return "DAY_TRADING"
+
+        # Fallback to decision object if available
+        decision_obj = self.state_manager.latest_decisions.get(pos.symbol) if (self.state_manager and hasattr(self.state_manager, "latest_decisions")) else None
+        if decision_obj:
+            d_style = str(getattr(decision_obj, "trade_style", "") or "").upper()
+            if "SCALP" in d_style or "SCLP" in d_style:
+                return "SCALP"
+            if "DAY" in d_style or "INTRADAY" in d_style:
+                return "DAY_TRADING"
+            if "SWING" in d_style or "SWNG" in d_style:
+                return "SWING"
+
+        return "SWING"
+
     def _manage_single_position(
         self,
         pos: PositionSnapshot,
@@ -807,7 +831,9 @@ class PositionMonitorEngine:
             # ── 0. Partial Profit-Taking (§B-2 / §B-3, Suppressed in Grace Period) ──
             if not in_grace_period and (not is_manual or effective_manual_mode == "FULL") and pos.ticket not in self._partially_closed_tickets and pos.volume >= 0.02:
                 decision_obj = self.state_manager.latest_decisions.get(symbol)
-                _p = self._exit_policy.get(pos.ticket) or ExitPolicy.for_symbol(symbol, spec)
+                pos_style = self._extract_position_trade_style(pos)
+                reg_name = (regime.primary_regime.value if hasattr(regime, "primary_regime") else str(regime)) if regime else None
+                _p = self._exit_policy.get(pos.ticket) or ExitPolicy.for_symbol(symbol, spec, trade_style=pos_style, regime=reg_name)
                 first_target = self._coerce_positive_float(
                     getattr(decision_obj, "first_target_price", None)
                 )
@@ -826,9 +852,16 @@ class PositionMonitorEngine:
 
                 is_target_hit = (c_price >= first_target) if pos.type == "BUY" else (c_price <= first_target)
                 if is_target_hit:
-                    close_volume = round(pos.volume * target_pct, 2)
+                    spec = self.mt5_client.get_symbol_trading_spec(pos.symbol) if hasattr(self.mt5_client, "get_symbol_trading_spec") else {}
+                    vol_min = spec.get("volume_min", 0.01) if isinstance(spec, dict) else 0.01
+                    vol_step = spec.get("volume_step", 0.01) if isinstance(spec, dict) else 0.01
+                    if not isinstance(vol_min, (int, float)) or vol_min <= 0:
+                        vol_min = 0.01
+                    if not isinstance(vol_step, (int, float)) or vol_step <= 0:
+                        vol_step = 0.01
+                    close_volume = round(round((pos.volume * target_pct) / vol_step) * vol_step, 2)
                     remaining_volume = round(pos.volume - close_volume, 2)
-                    if close_volume >= 0.01 and remaining_volume >= 0.01:
+                    if close_volume >= vol_min and remaining_volume >= vol_min:
                         p_res = self.mt5_client.close_position(pos.ticket, volume=close_volume)
                         if p_res and p_res.get("status") in ("PARTIALLY_CLOSED", "CLOSED"):
                             self._partially_closed_tickets.add(pos.ticket)
@@ -849,6 +882,9 @@ class PositionMonitorEngine:
                             elif pos.type == "SELL" and (new_sl == 0 or cushion_sl < new_sl) and cushion_sl > c_price:
                                 new_sl = cushion_sl
                                 actions.append(f"PARTIAL_DERISK_SL@{new_sl:.4f}")
+                    else:
+                        # Cannot split position without violating broker min lot (e.g. 0.04 < min 0.05)
+                        self._partially_closed_tickets.add(pos.ticket)
 
             # ── 1.5 Adversarial Order Flow Shield (Suppressed in Grace Period) ────
             if not in_grace_period:
@@ -903,15 +939,19 @@ class PositionMonitorEngine:
                 _d_unit = (_pip_val / max(_p_sz, 1e-9)) if _p_sz > 0 else 100_000.0
                 self._initial_risk_usd[pos.ticket] = risk_dist * _d_unit * pos.volume
 
+            pos_style = self._extract_position_trade_style(pos)
+            reg_name = (regime.primary_regime.value if hasattr(regime, "primary_regime") else str(regime)) if regime else None
             if pos.ticket not in self._exit_policy:
-                self._exit_policy[pos.ticket] = ExitPolicy.for_symbol(symbol, spec)
+                self._exit_policy[pos.ticket] = ExitPolicy.for_symbol(symbol, spec, trade_style=pos_style, regime=reg_name)
             policy = self._exit_policy[pos.ticket]
 
             if pos.ticket not in self._position_milestones:
                 # 3-Tier AI Milestone initialization (TP1: Scale-Out / Fast Cash, TP2: Structure / Take Profit, TP3: Macro Runner)
                 m_tp1 = (pos.open_price + (risk_dist * policy.fast_cash_r)) if pos.type == "BUY" else (pos.open_price - (risk_dist * policy.fast_cash_r))
-                m_tp2 = pos.tp if pos.tp > 0 else ((pos.open_price + (risk_dist * 2.0)) if pos.type == "BUY" else (pos.open_price - (risk_dist * 2.0)))
-                m_tp3 = (pos.open_price + (risk_dist * 3.5)) if pos.type == "BUY" else (pos.open_price - (risk_dist * 3.5))
+                tp2_ratio = getattr(policy, "tp2_r", 2.0)
+                tp3_ratio = getattr(policy, "tp3_r", 3.5)
+                m_tp2 = pos.tp if pos.tp > 0 else ((pos.open_price + (risk_dist * tp2_ratio)) if pos.type == "BUY" else (pos.open_price - (risk_dist * tp2_ratio)))
+                m_tp3 = (pos.open_price + (risk_dist * tp3_ratio)) if pos.type == "BUY" else (pos.open_price - (risk_dist * tp3_ratio))
                 self._position_milestones[pos.ticket] = {
                     "tp1": round(m_tp1, digits),
                     "tp2": round(m_tp2, digits),
@@ -1237,9 +1277,11 @@ class PositionMonitorEngine:
 
             # ── 6. 3-Tier Milestone Progression Tracking ────────────────────
             if pos.ticket in self._position_milestones:
-                if current_r >= 3.0:
+                tp3_thresh = getattr(policy, "tp3_r", 3.0)
+                tp2_thresh = getattr(policy, "tp2_r", 2.0)
+                if current_r >= tp3_thresh:
                     self._position_milestones[pos.ticket]["status"] = "TP3_RUNNER_TRAILING"
-                elif current_r >= 2.0:
+                elif current_r >= tp2_thresh:
                     self._position_milestones[pos.ticket]["status"] = "TP2_HIT_PROFIT_LOCKED"
                 elif current_r >= policy.fast_cash_r or pos.ticket in self._be_locked or pos.ticket in self._partially_closed_tickets:
                     self._position_milestones[pos.ticket]["status"] = "TP1_HIT_BE_LOCKED"
@@ -1457,7 +1499,8 @@ class PositionMonitorEngine:
         except Exception:
             spec = None
 
-        policy = ExitPolicy.for_symbol(pos.symbol, spec)
+        pos_style = self._extract_position_trade_style(pos)
+        policy = ExitPolicy.for_symbol(pos.symbol, spec, trade_style=pos_style)
         digits = policy.digits
 
         if pos.type == "BUY":
@@ -2023,12 +2066,11 @@ class PositionMonitorEngine:
 
             # ── PHASE 0: Early Structural Thesis Invalidation (current_r < 0.20R) ──
             if current_r < 0.20:
-                # Decisive structural breakdown of the trade's premise:
-                # Requires confirmed CHoCH/BOS against the trade with signal_count >= 2,
-                # OR severe momentum inversion (|trend_score| >= 25) + MTF alignment flip against trade
-                # when underwater (saving 40-70% stop loss capital before full SL hit).
-                is_momentum_wreck = ("ADVERSE_MOMENTUM" in sig_summary and "MTF" in sig_summary and signal_count >= 2 and current_r <= -0.25)
-                if (has_structural_break and signal_count >= 2) or is_momentum_wreck:
+                # Decisive structural breakdown:
+                # Must be genuinely underwater (current_r <= -0.40R) with confirmed opposite CHoCH/BOS and signal_count >= 3.
+                # Never kill a trade floating between -0.35R and +0.20R where normal retests occur!
+                is_momentum_wreck = ("ADVERSE_MOMENTUM" in sig_summary and "MTF" in sig_summary and signal_count >= 3 and current_r <= -0.45)
+                if (has_structural_break and signal_count >= 3 and current_r <= -0.40) or is_momentum_wreck:
                     return current_sl, None, True, f"STRUCTURAL_THESIS_INVALIDATION({current_r:.2f}R | {sig_summary})"
                 return current_sl, None, False, None
 

@@ -121,7 +121,7 @@ class JarvisOrchestrator:
         self._execution_lock = threading.Lock()
         # Per-symbol last-execution timestamp for 10-min same-symbol cooldown
         self._last_execution_time: Dict[str, float] = {}
-        self._SAME_SYMBOL_COOLDOWN_SEC = 600  # 10 minutes
+        self._SAME_SYMBOL_COOLDOWN_SEC = 600  # 10 minutes default
         # Symbols the broker does not offer are refused every cycle; log the
         # reason once per symbol/style rather than on every scan.
         self._unusable_warned: set = set()
@@ -177,6 +177,14 @@ class JarvisOrchestrator:
         self._main_thread: Optional[threading.Thread] = None
         self._watchdog_thread: Optional[threading.Thread] = None
         self._last_heartbeat: float = time.time()
+
+    def _get_same_symbol_cooldown(self, style: str = "SWING") -> float:
+        st = str(style or "SWING").upper()
+        if "SCALP" in st:
+            return 120.0   # 2 minutes for scalp trades
+        elif any(k in st for k in ("DAY", "INTRADAY")):
+            return 240.0   # 4 minutes for day trades
+        return 600.0       # 10 minutes for swing trades
 
     def start(self):
         """Starts the full HM Algo 2.0 engine, background workers, and watchdog supervisor."""
@@ -594,7 +602,8 @@ class JarvisOrchestrator:
                 risk_eng.loss_cooldown.record_trade_result(
                     pnl=pnl or 0.0,
                     is_win=(is_win == 1),
-                    symbol=trade_symbol
+                    symbol=trade_symbol,
+                    current_date=datetime.now(timezone.utc).date().isoformat(),
                 )
         if new_equity > 0:
             self.drawdown_guard.update_equity_benchmarks(new_equity, float(data.get("balance", new_equity)))
@@ -1109,7 +1118,7 @@ class JarvisOrchestrator:
         # fetched.
         logger.info(
             "Spread measurement %s [%s]: live=%s pips, registry_typical=%s pips "
-            "(reporting only; no gate, stop or size consumes either).",
+            "(live value drives the spread gate when present).",
             symbol, active_trade_style,
             context.live_spread_pips, _spec.typical_spread_pips,
         )
@@ -1274,10 +1283,11 @@ class JarvisOrchestrator:
         # Fixes race condition where ThreadPoolExecutor fires multiple trades
         # on same symbol before MT5StateSynchronizer 1-second sync catches up.
         canonical_sym = _spec.canonical
+        style_cd = self._get_same_symbol_cooldown(active_trade_style)
         with self._execution_lock:
             already_executing = canonical_sym in self._execution_in_progress
             last_exec_time = self._last_execution_time.get(canonical_sym, 0.0)
-            cooldown_active = (time.time() - last_exec_time) < self._SAME_SYMBOL_COOLDOWN_SEC
+            cooldown_active = (time.time() - last_exec_time) < style_cd
 
         # Anti-Clustering Rule: Prevent stacking multiple simultaneous orders on same asset
         active_sym_positions = [
@@ -1292,8 +1302,9 @@ class JarvisOrchestrator:
         # Asian Pre-Market Blackout Rule (00:00 to 06:00 UTC) & Rollover Spread Window (21:00 to 23:00 UTC)
         now_utc_hour = datetime.now(timezone.utc).hour
         is_asian_pair = any(c in str(symbol).upper() for c in ("JPY", "AUD", "NZD"))
-        is_asian_blackout = (0 <= now_utc_hour < 6) and not is_crypto(symbol) and not is_asian_pair
-        is_rollover_blackout = (21 <= now_utc_hour <= 23) and not is_crypto(symbol)
+        has_session_restriction = getattr(_prof, "session_restriction", True) if _prof else True
+        is_asian_blackout = (0 <= now_utc_hour < 6) and not is_crypto(symbol) and not is_asian_pair and has_session_restriction
+        is_rollover_blackout = (21 <= now_utc_hour <= 23) and not is_crypto(symbol) and has_session_restriction
         is_session_blackout = is_asian_blackout or is_rollover_blackout
 
         # Active Open Position Trailing & Profit Lock Management
@@ -1409,7 +1420,7 @@ class JarvisOrchestrator:
             decision.execution_authorized = False
             auth_res = {"authorized": False, "reason": f"PENDING_ORDER_EXISTS: Symbol {symbol} already has an active pending order."}
         elif cooldown_active and (len(active_sym_positions) + len(active_sym_pending)) == 0 and wants_entry:
-            remaining = int(self._SAME_SYMBOL_COOLDOWN_SEC - (time.time() - last_exec_time))
+            remaining = int(style_cd - (time.time() - last_exec_time))
             decision.decision = "WAIT"
             decision.execution_authorized = False
             auth_res = {"authorized": False, "reason": f"COOLDOWN_GUARD: {remaining}s remaining before next {canonical_sym} trade."}
@@ -1544,7 +1555,7 @@ class JarvisOrchestrator:
                         _st = (exec_res or {}).get("status")
                         if _st in ("FILLED", "UNKNOWN", "PLACED"):
                             self._last_execution_time[canonical_sym] = time.time()
-                            logger.info(f"Execution lock released for {canonical_sym}. Cooldown {self._SAME_SYMBOL_COOLDOWN_SEC}s started.")
+                            logger.info(f"Execution lock released for {canonical_sym}. Cooldown {int(style_cd)}s started.")
             # Record pending features for online learning and journal entry (§17)
             self._record_open_trade_context(
                 exec_res=exec_res,
@@ -1726,7 +1737,8 @@ class JarvisOrchestrator:
                             already_fired = True
 
                 last_exec = self._last_execution_time.get(canonical_sym, 0)
-                if (time.time() - last_exec) < self._SAME_SYMBOL_COOLDOWN_SEC:
+                cand_cd = self._get_same_symbol_cooldown(getattr(candidate, "trade_style", "SWING"))
+                if (time.time() - last_exec) < cand_cd:
                     already_fired = True
 
                 if already_fired:
@@ -1764,7 +1776,11 @@ class JarvisOrchestrator:
                         else float(getattr(sym_info, "volume_min", 0.01) or 0.01)
                     )
                     _equity = float(getattr(account, "equity", 0.0) or 0.0)
-                    _entry_px = float(getattr(decision, "price", 0.0) or 0.0)
+                    _entry_px = float(
+                        getattr(decision, "entry_price", None)
+                        or getattr(decision, "price", 0.0)
+                        or 0.0
+                    )
                     _sl_px = float(getattr(decision, "stop_loss", 0.0) or 0.0)
                     if self._is_unsplittable_book(_entry_px, _sl_px, _equity, _spec, _vol_min):
                         if decision.risk_reward_ratio < 2.00:
@@ -1820,6 +1836,23 @@ class JarvisOrchestrator:
 
                 decision.decision = "EXECUTE"
 
+                # The calibrated entry policy remains the authority when it has
+                # a profile for this symbol. The old code always passed True,
+                # which skipped it entirely for arbiter-selected candidates.
+                _arb_entry = None
+                _arb_regime = getattr(decision, "regime", None)
+                if _arb_regime is not None:
+                    try:
+                        _arb_entry = self._calibrated_entry_decision(
+                            canonical_sym, decision, _arb_regime
+                        )
+                    except Exception as _arb_exc:
+                        logger.debug("Arbiter calibrated-entry check failed: %s", _arb_exc)
+                        _arb_entry = None
+                _arb_entry_override = (
+                    None if _arb_entry is None else bool(_arb_entry.allowed)
+                )
+
                 auth_res = self.risk_engine.authorize_execution(
                     decision, account, positions, sym_info,
                     current_spread_pips=cur_spread,
@@ -1827,7 +1860,7 @@ class JarvisOrchestrator:
                     context=ctx,
                     is_second_trade=(len(active_sym_positions) == 1),
                     pending_orders=all_pending_orders,
-                    entry_authorized_override=True
+                    entry_authorized_override=_arb_entry_override
                 )
 
                 if auth_res.get("authorized"):

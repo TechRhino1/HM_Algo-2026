@@ -112,21 +112,26 @@ class PositionSizer:
         is_micro_account = account_balance < 1000.0
         is_high_conviction = (model_confidence >= 0.70) or (combined_scaler >= 1.10)
 
-        if is_micro_account and is_high_conviction:
-            # High-conviction trade scaling on micro accounts (< $1,000)
-            # Base risk dynamically scales up to 1.50% - 2.00%
-            conviction_metric = max(
-                (model_confidence - 0.60) / 0.30 if model_confidence >= 0.60 else 0.0,
-                (combined_scaler - 1.0) / 0.40 if combined_scaler > 1.0 else 0.0,
-                min(1.0, kelly_pct / 20.0) if kelly_pct > 0.0 else 0.0
-            )
-            micro_target_pct = 1.50 + (0.50 * conviction_metric)
-            scaled = micro_target_pct * invalidation_risk_coefficient
-            effective_risk_pct = min(2.0, max(1.50, scaled)) if invalidation_risk_coefficient >= 1.0 else max(0.50, scaled)
-            logger.info(
-                f"[{sym_name}] HIGH CONVICTION MICRO SCALING: risk target {effective_risk_pct:.2f}% "
-                f"(balance ${account_balance:.0f}, model_conf={model_confidence:.2f}, scaler={combined_scaler:.2f}, kelly={kelly_pct:.2f}%)"
-            )
+        if is_micro_account:
+            # Micro accounts (< $1,000): require calibrated risk capital (1.25% - 2.25%)
+            # to enable valid 0.02 - 0.05 lot execution on tight intraday stops
+            if is_high_conviction:
+                conviction_metric = max(
+                    (model_confidence - 0.60) / 0.30 if model_confidence >= 0.60 else 0.0,
+                    (combined_scaler - 1.0) / 0.40 if combined_scaler > 1.0 else 0.0,
+                    min(1.0, kelly_pct / 20.0) if kelly_pct > 0.0 else 0.0
+                )
+                micro_target_pct = 1.75 + (0.50 * conviction_metric)
+                scaled = micro_target_pct * invalidation_risk_coefficient
+                effective_risk_pct = min(2.50, max(1.50, scaled)) if invalidation_risk_coefficient >= 1.0 else max(0.80, scaled)
+                logger.info(
+                    f"[{sym_name}] HIGH CONVICTION MICRO SCALING: risk target {effective_risk_pct:.2f}% "
+                    f"(balance ${account_balance:.0f}, model_conf={model_confidence:.2f}, scaler={combined_scaler:.2f}, kelly={kelly_pct:.2f}%)"
+                )
+            else:
+                base_micro = max(1.25, float(risk_pct))
+                scaled = base_micro * invalidation_risk_coefficient * combined_scaler
+                effective_risk_pct = min(2.50, max(1.25, scaled))
         else:
             ceiling = float(risk_pct) if risk_pct and risk_pct > 0 else 0.0
             scaled = risk_pct * invalidation_risk_coefficient * combined_scaler
@@ -142,6 +147,8 @@ class PositionSizer:
             f"kelly {kelly_pct:.2f}% computed)"
         )
         risk_amount_dollars = account_balance * (effective_risk_pct / 100.0)
+        if account_balance < 2500.0:
+            risk_amount_dollars = min(risk_amount_dollars, 12.0)
 
         from jarvis.data.symbol_registry import get_dollar_risk_per_price_unit
         
@@ -160,62 +167,32 @@ class PositionSizer:
         raw_lots = risk_amount_dollars / dollar_risk_per_lot
 
         # ── Micro Account / Small Balance Handling ───────────────────────────
-        # On micro accounts the broker minimum lot (0.01) forces risk above the
-        # base 0.5%.  The tiered caps below reflect industry-standard micro-
-        # account risk management:
-        #   $0   – $250  → up to 5.0% per trade (unavoidable on Gold/BTC at 0.01)
-        #   $250 – $1000 → up to 4.0% per trade
-        #   $1000– $2500 → up to 3.5% per trade
-        #   $2500+       → strict 2× target (typically ≤ 1.0%)
+        # The broker minimum lot (0.01) can force more risk than the calibrated
+        # 1.25–2.5% target. For accounts below $2,500 the absolute ceiling is
+        # $12 per trade; there is no 4–5.5% / $20–25 exception ladder anymore.
+        # At or above $2,500 the minimum lot is allowed when its percentage risk
+        # is no worse than the normal per-trade ceiling (wide-stop symbols on a
+        # larger account are not a capital-preservation problem).
         if raw_lots < min_vol:
             actual_risk_dollars = min_vol * dollar_risk_per_lot
             actual_risk_pct = (actual_risk_dollars / (account_balance + 1e-9)) * 100.0
 
-            # Adaptive micro cap by account size tier
-            if account_balance < 100.0:
-                tier_cap = 2.0 * effective_risk_pct  # nano accounts (< $100): strict 2x ceiling
-            elif account_balance < 250.0:
-                tier_cap = 5.0   # $100 account: 0.01 Gold = $10 = 10% → tight SL needed
-            elif account_balance < 1000.0:
-                tier_cap = 4.0
-            elif account_balance < 2500.0:
-                tier_cap = 3.5
+            if account_balance < 2500.0:
+                min_lot_ok = (
+                    actual_risk_dollars <= 12.0 + 1e-9
+                    and actual_risk_pct <= 2.50 + 1e-9
+                )
+                cap_text = "$12.00 / 2.50% absolute"
             else:
-                tier_cap = max(risk_pct, 2.0 * effective_risk_pct)  # standard accounts: up to base risk ceiling
+                max_pct = max(float(risk_pct), 1.0)
+                min_lot_ok = actual_risk_pct <= max_pct + 1e-9
+                cap_text = f"{max_pct:.2f}%"
 
-            # For micro accounts (< $1000), minimum broker lot (0.01) on Gold or Crypto
-            # forces an absolute dollar risk dictated by market volatility.
-            # On micro accounts (< $500), absolute risk must NEVER exceed $12.00 (under 2.7% max risk)
-            # to strictly prevent destructive single-trade drawdowns.
-            is_gold_asset = any(k in sym_key for k in ("XAU", "GOLD"))
-            is_crypto_asset = any(k in sym_key for k in ("BTC", "ETH", "SOL"))
-
-            if (is_gold_asset or is_crypto_asset) and 150.0 <= account_balance < 500.0:
-                tier_cap = min(max(tier_cap, 3.0), 3.5)
-            elif (is_gold_asset or is_crypto_asset) and 500.0 <= account_balance < 1000.0:
-                tier_cap = max(tier_cap, 4.5)
-
-            # For very small accounts, enforce a calibrated dollar floor:
-            # - Accounts < $500: max $12.00 risk on Gold/Crypto, $8.00 on FX
-            # - Accounts $500-$1000: max $18.00 risk on Gold/Crypto, $12.00 on FX
-            # For standard accounts ($1000+), minimum broker lot is acceptable whenever
-            # the forced risk does not exceed the configured base risk ceiling.
-            dollar_floor_ok = (
-                (actual_risk_dollars <= 12.0 and 150.0 <= account_balance < 500.0 and (is_gold_asset or is_crypto_asset))
-                or (actual_risk_dollars <= 18.0 and 500.0 <= account_balance < 1000.0 and (is_gold_asset or is_crypto_asset))
-                or (actual_risk_dollars <= 8.0 and 150.0 <= account_balance < 500.0)
-                or (actual_risk_dollars <= 12.0 and 500.0 <= account_balance < 1000.0)
-                or (account_balance >= 1000.0 and (actual_risk_pct <= max(risk_pct, 1.0) or actual_risk_dollars <= max(50.0, account_balance * (risk_pct / 100.0))))
-            )
-
-            if is_micro_account and account_balance >= 100.0:
-                max_acceptable_risk_pct = max(tier_cap, 2.0 * effective_risk_pct)
-            else:
-                max_acceptable_risk_pct = max(tier_cap, max(risk_pct, 2.0 * effective_risk_pct))
-            if actual_risk_pct > max_acceptable_risk_pct and not dollar_floor_ok:
+            if not min_lot_ok:
                 logger.error(
                     f"REJECTED [{sym_key}]: Minimum lot size ({min_vol}) would force "
-                    f"{actual_risk_pct:.2f}% risk (target was {effective_risk_pct:.2f}%, cap was {max_acceptable_risk_pct:.2f}%). "
+                    f"{actual_risk_pct:.2f}% / ${actual_risk_dollars:.2f} risk "
+                    f"(target was {effective_risk_pct:.2f}%, cap was {cap_text}). "
                     f"Account balance too small for this symbol/stop-distance combination."
                 )
                 return 0.0

@@ -176,7 +176,7 @@ def test_stop_price_is_on_the_correct_side_of_entry(symbol, mid, spread_pips, at
 def test_stop_still_respects_the_floor(bias, style):
     """A near-zero ATR must not produce a stop inside the floor.
 
-    The floor is ``max(3 * spread_dist, 0.10 * ATR)`` in both branches; the symmetry
+    The floor is ``max(3.5 * spread_dist, 0.10 * ATR)`` in both branches; the symmetry
     fix widens the structural term only and must leave that floor untouched.
     """
     symbol, mid, spread_pips, atr_frac, gap_atrs = "EURUSD", 1.08500, 1.0, 0.00005, 0.05
@@ -201,7 +201,7 @@ def test_floor_binds_identically_in_both_directions(bias):
     symbol, mid, spread_pips, atr_frac, gap_atrs = "EURUSD", 1.08500, 1.0, 0.00005, 0.05
     spec = resolve_symbol(symbol)
     spread_dist = spread_pips * spec.pip_size
-    floor = max(3.0 * spread_dist, 0.10 * (mid * atr_frac))
+    floor = max(3.5 * spread_dist, 0.10 * (mid * atr_frac))
 
     levels = _levels(symbol, mid, spread_pips, atr_frac, gap_atrs, bias, "SWING")
     assert levels["risk_dist"] == pytest.approx(floor, abs=2e-5)

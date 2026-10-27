@@ -9,9 +9,10 @@ Enforces multi-tier portfolio protection:
 import time
 import logging
 import threading
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from jarvis.data.schemas import DecisionObject, AccountSnapshot, PositionSnapshot, MarketContext
-from jarvis.data.symbol_registry import resolve as resolve_symbol
+from jarvis.data.symbol_registry import resolve as resolve_symbol, get_dollar_risk_per_price_unit
 from jarvis.config.paths import mode_scoped_db_path
 from jarvis.config.settings import SETTINGS
 from jarvis.risk.position_sizing import PositionSizer
@@ -66,6 +67,12 @@ class RiskEngine:
         self.max_symbol_positions = max_symbol_positions
         self.max_risk_per_trade_pct = max_risk_per_trade_pct
         self.max_portfolio_risk_pct = max_portfolio_risk_pct
+        self.recovery_channel_enabled = bool(getattr(risk, "recovery_channel_enabled", False))
+        self.recovery_risk_pct = float(getattr(risk, "recovery_risk_pct", 0.5) or 0.5)
+        self.recovery_max_daily_loss_pct = float(getattr(risk, "recovery_max_daily_loss_pct", 6.5) or 6.5)
+        self.recovery_max_attempts_per_day = int(getattr(risk, "recovery_max_attempts_per_day", 1) or 1)
+        self._recovery_day = ""
+        self._recovery_attempts = 0
         # Persistence is scoped to the execution mode. Paper measures equity on a
         # 10000.0 base while live may hold a few hundred dollars, so a shared file
         # let a paper peak become the live account's peak — and `peak_equity` only
@@ -347,9 +354,32 @@ class RiskEngine:
                 rejection_reasons.append(f"LOSS_COOLDOWN: {skip_reason}")
 
             # 2. Drawdown & Daily Loss limits
-            dd = self.drawdown_guard.check_limits(account.equity, account.balance)
+            # The recovery channel is opt-in and off by default. It may waive a
+            # daily-loss halt only for a perfect setup, never a portfolio DD halt.
+            recovery_candidate = (
+                self.recovery_channel_enabled
+                and self._is_perfect_recovery_setup(decision)
+            )
+            dd = self.drawdown_guard.check_limits(
+                account.equity,
+                account.balance,
+                allow_recovery=recovery_candidate,
+                recovery_max_pct=self.recovery_max_daily_loss_pct,
+            )
+            recovery_mode = bool(
+                recovery_candidate
+                and dd.get("passed")
+                and float(dd.get("daily_loss_pct", 0.0) or 0.0) >= self.max_daily_loss_pct
+                and float(dd.get("daily_loss_pct", 0.0) or 0.0) <= self.recovery_max_daily_loss_pct + 1e-9
+                and float(dd.get("total_dd_pct", 0.0) or 0.0) < self.max_drawdown_pct
+            )
             if not dd.get("passed"):
                 rejection_reasons.extend(dd.get("breaches", []))
+            elif recovery_mode and not self._can_take_recovery_attempt():
+                rejection_reasons.append(
+                    "RECOVERY_CHANNEL: daily attempt limit already used "
+                    f"({self.recovery_max_attempts_per_day}/day)."
+                )
 
             # 3. Portfolio Heat Evaluation
             open_monetary_risk = self.exposure_manager.calculate_portfolio_monetary_risk(positions, account) + self.get_total_reserved_risk_usd()
@@ -463,16 +493,27 @@ class RiskEngine:
             # breakers in step 2 already provide hard halts at their configured
             # limits; the tier multiplier only scales down position sizes.
             dd_risk_mult = self.drawdown_guard.get_risk_multiplier(account.equity)
+            daily_risk_mult = float(
+                self.drawdown_guard.get_daily_risk_multiplier(account.equity)
+            )
             if dd_risk_mult < 0.50:
                 logger.warning(
                     "DRAWDOWN_TIER_WARNING: Drawdown tier multiplier is %.2f. "
                     "Position sizing severely reduced (peak=%.2f, equity=%.2f).",
                     dd_risk_mult, self.drawdown_guard.peak_equity, account.equity,
                 )
+            if daily_risk_mult < 1.0:
+                logger.warning(
+                    "DAILY_LOSS_TIER: day is down %.2f%% (start=%.2f, equity=%.2f); "
+                    "risk multiplier %.2f.",
+                    float(dd.get("daily_loss_pct", 0.0) or 0.0),
+                    self.drawdown_guard.daily_start_equity, account.equity,
+                    daily_risk_mult,
+                )
 
             # 9. Dynamic Position Sizing with Heat, Drawdown Tier, & 2nd Position Scaling
             sample_size = getattr(decision, "pattern_sample_size", 0)
-            combined_multiplier = heat_res.risk_multiplier * dd_risk_mult
+            combined_multiplier = heat_res.risk_multiplier * dd_risk_mult * daily_risk_mult
 
             # Micro-account adaptive risk boost: the base 0.5% is designed for
             # $10k+ accounts.  On a $100 account 0.5% = $0.50, which cannot buy
@@ -480,11 +521,15 @@ class RiskEngine:
             # accounts is 1-2% risk per trade.
             base_risk = self.max_risk_per_trade_pct
             if account.equity < 250.0:
-                base_risk = min(base_risk * 3.0, 2.0)   # 0.5% → 1.5% (cap 2%)
+                base_risk = min(base_risk * 3.5, 2.5)   # 0.5% → 1.75% (cap 2.5%)
             elif account.equity < 500.0:
-                base_risk = min(base_risk * 2.0, 1.5)   # 0.5% → 1.0% (cap 1.5%)
+                base_risk = min(base_risk * 3.0, 2.0)   # 0.5% → 1.5% (cap 2.0%)
             elif account.equity < 1000.0:
-                base_risk = min(base_risk * 1.5, 1.0)   # 0.5% → 0.75% (cap 1.0%)
+                base_risk = min(base_risk * 2.5, 1.75)  # 0.5% → 1.25% (cap 1.75%)
+            if recovery_mode:
+                # The channel is explicitly capped at 0.5% regardless of the
+                # micro-account risk boost; the lot cap below enforces it.
+                base_risk = min(float(self.recovery_risk_pct), self.max_risk_per_trade_pct)
 
             # 2026-10-20 learned sizing: the live ledger's expectancy for this
             # (symbol, strategy) pair tints the risk budget — positive edge
@@ -528,6 +573,43 @@ class RiskEngine:
                 atr_ratio=atr_ratio
             )
 
+            if recovery_mode:
+                # PositionSizer applies the micro-account 1.25–2.5% floor, which
+                # would silently exceed the recovery cap. Enforce ≤0.5% here and
+                # fail closed if the broker minimum lot cannot fit.
+                _risk_dist = abs(float(decision.entry_price) - float(decision.stop_loss))
+                _dollars_per_unit = get_dollar_risk_per_price_unit(
+                    decision.symbol, sym_info_enriched
+                )
+                _risk_per_lot = _risk_dist * _dollars_per_unit
+                _max_recovery_usd = account.equity * (float(self.recovery_risk_pct) / 100.0)
+                if _risk_per_lot <= 0:
+                    return {
+                        "authorized": False,
+                        "lots": 0.0,
+                        "reasons": ["RECOVERY_CHANNEL: invalid stop distance/contract value."],
+                    }
+                _step = float(sym_info_enriched.get("volume_step", 0.01) or 0.01)
+                _min_lot = float(sym_info_enriched.get("volume_min", 0.01) or 0.01)
+                _cap_lots = int((_max_recovery_usd / _risk_per_lot) / _step + 1e-9) * _step
+                _cap_lots = round(_cap_lots, 2)
+                lots = min(lots, _cap_lots)
+                if lots < _min_lot - 1e-9:
+                    return {
+                        "authorized": False,
+                        "lots": 0.0,
+                        "reasons": [
+                            "RECOVERY_CHANNEL: minimum lot would risk "
+                            f"${_min_lot * _risk_per_lot:.2f}, above the "
+                            f"{self.recovery_risk_pct:.2f}% (${_max_recovery_usd:.2f}) recovery cap."
+                        ],
+                    }
+                logger.warning(
+                    "RECOVERY_CHANNEL: perfect setup authorized at %.2f lots "
+                    "(≤%.2f%% / $%.2f risk) during a daily-loss halt.",
+                    lots, self.recovery_risk_pct, _max_recovery_usd,
+                )
+
             if lots <= 0.0:
                 return {
                     "authorized": False,
@@ -546,13 +628,20 @@ class RiskEngine:
                     "reasons": [f"Circuit Breaker tripped during authorization: {cb_final.get('reason')}"]
                 }
                 
-            dd_final = self.drawdown_guard.check_limits(account.equity, account.balance)
+            dd_final = self.drawdown_guard.check_limits(
+                account.equity,
+                account.balance,
+                allow_recovery=recovery_mode,
+                recovery_max_pct=self.recovery_max_daily_loss_pct,
+            )
             if not dd_final.get("passed"):
                 return {
                     "authorized": False,
                     "lots": 0.0,
                     "reasons": dd_final.get("breaches", [])
                 }
+            if recovery_mode:
+                self._note_recovery_attempt()
 
             return {
                 "authorized": True,
@@ -560,8 +649,61 @@ class RiskEngine:
                 "reasons": [],
                 "is_second_trade": is_second_trade,
                 "heat_score": heat_res.score,
-                "heat_zone": heat_res.zone
+                "heat_zone": heat_res.zone,
+                "recovery_mode": recovery_mode,
             }
+
+    def _recovery_today(self) -> str:
+        return datetime.now(timezone.utc).date().isoformat()
+
+    def _can_take_recovery_attempt(self) -> bool:
+        today = self._recovery_today()
+        if today != self._recovery_day:
+            self._recovery_day = today
+            self._recovery_attempts = 0
+        return self._recovery_attempts < self.recovery_max_attempts_per_day
+
+    def _note_recovery_attempt(self) -> None:
+        today = self._recovery_today()
+        if today != self._recovery_day:
+            self._recovery_day = today
+            self._recovery_attempts = 0
+        self._recovery_attempts += 1
+
+    @staticmethod
+    def _is_perfect_recovery_setup(decision: DecisionObject) -> bool:
+        """A+ only: no gate exceptions, no softened gates, real strategy/edge.
+
+        A daily-loss halt is a capital-preservation control, so the exception is
+        deliberately narrow and must never be reachable through SOFTEN.
+        """
+        if getattr(decision, "decision", "") != "EXECUTE":
+            return False
+        qg = getattr(decision, "quality_gate", None)
+        if qg is None:
+            return False
+        effective = getattr(qg, "effective_passed", None)
+        if effective is None:
+            effective = getattr(qg, "passed", False)
+        if not effective:
+            return False
+        if list(getattr(qg, "failing_reasons", []) or []):
+            return False
+        if list(getattr(qg, "softened_gates", []) or []):
+            return False
+        if getattr(decision, "gate_policy_decision", "BLOCK") != "PASS":
+            return False
+        if getattr(decision, "master_confluence_tier", "") != "A+":
+            return False
+        if float(getattr(decision, "expected_value", 0.0) or 0.0) <= 0.0:
+            return False
+        if float(getattr(decision, "model_confidence", 0.0) or 0.0) < 0.70:
+            return False
+        if float(getattr(decision, "risk_reward_ratio", 0.0) or 0.0) < 2.0:
+            return False
+        if getattr(decision, "strategy", "NO_STRATEGY") in ("", "NO_STRATEGY"):
+            return False
+        return True
 
     def check_portfolio_heat(
         self,

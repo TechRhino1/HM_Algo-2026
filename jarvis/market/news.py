@@ -7,6 +7,7 @@ followed by all upcoming news events sorted chronologically.
 """
 import re
 import json
+import os
 import ssl
 import time
 import logging
@@ -97,7 +98,9 @@ class LiveNewsEngine:
     """Real-time institutional news calendar engine with Indian Time (IST) & deep event analytics."""
     
     FAIRECONOMY_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    FAIRECONOMY_MIRROR_URL = "https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json"
     MYFXBOOK_URL = "https://www.myfxbook.com/rss/forex-economic-calendar-events"
+    DISK_CACHE_PATH = os.path.join("data", "news_calendar_cache.json")
     #: How long to stop asking after a 429. FairEconomy's cooldown is minutes,
     #: so the 90s cache TTL would otherwise re-trigger it on every expiry.
     RATE_LIMIT_BACKOFF_SEC: float = 600.0
@@ -135,6 +138,7 @@ class LiveNewsEngine:
         #: Same, for MyFxBook, which answers 403 behind a Cloudflare challenge
         #: that urllib cannot pass -- so the request is pure waste on every fetch.
         self._mfb_backoff_until: float = 0.0
+        self._load_disk_cache()
         #: Set while a live fetch is running, cleared when it lands. A scan
         #: spawns one MACRO analyst per candidate and the cluster runs 8
         #: workers, so nine callers can reach a cold cache at once -- and
@@ -145,6 +149,46 @@ class LiveNewsEngine:
         #: concurrent requests are also what EARNS FairEconomy's 429.
         self._fetch_done = threading.Event()
         self._fetch_done.set()          # nothing in flight at construction
+
+    def _load_disk_cache(self) -> None:
+        """Hydrates news calendar from persistent disk cache on cold start."""
+        try:
+            if not os.path.exists(self.DISK_CACHE_PATH):
+                return
+            with open(self.DISK_CACHE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            cached_events = data.get("events", [])
+            cached_time = float(data.get("saved_at", 0.0))
+            # Weekly economic calendar remains valid for up to 7 days
+            if cached_events and (time.time() - cached_time) < 86400 * 7:
+                self._cached_news = cached_events
+                self._last_fetch_time = cached_time
+                logger.info("Loaded %d real economic events from persistent disk cache.", len(cached_events))
+        except Exception as e:
+            logger.debug("Failed to load news disk cache: %s", e)
+
+    def _save_disk_cache(self, events: List[Dict[str, Any]]) -> None:
+        """Atomically persists real economic events to local disk cache."""
+        try:
+            if not events:
+                return
+            real_events = [e for e in events if not e.get("is_fallback")]
+            if not real_events:
+                return
+            os.makedirs(os.path.dirname(self.DISK_CACHE_PATH), exist_ok=True)
+            payload = {
+                "saved_at": time.time(),
+                "saved_at_iso": datetime.now(timezone.utc).isoformat(),
+                "events": real_events
+            }
+            tmp_path = f"{self.DISK_CACHE_PATH}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, default=str, indent=2)
+            os.replace(tmp_path, self.DISK_CACHE_PATH)
+            logger.debug("Persisted %d real economic events to disk cache.", len(real_events))
+        except Exception as e:
+            logger.debug("Failed to persist news disk cache: %s", e)
+
 
     def get_news_calendar(self, force_refresh: bool = False,
                           max_wait: float | None = None) -> List[Dict[str, Any]]:
@@ -169,9 +213,13 @@ class LiveNewsEngine:
         """
         with self._lock:
             now = time.time()
-            if not force_refresh and self._cached_news and (now - self._last_fetch_time) < self.cache_ttl_sec:
-                NEWS_CALENDAR_SERVED.inc(origin="cached")
-                return self._organize_news_feed(self._cached_news)
+            if not force_refresh and (now - self._last_fetch_time) < self.cache_ttl_sec:
+                if self._cached_news:
+                    NEWS_CALENDAR_SERVED.inc(origin="cached")
+                    return self._organize_news_feed(self._cached_news)
+                elif self._fe_backoff_until > time.monotonic():
+                    NEWS_CALENDAR_SERVED.inc(origin="synthetic")
+                    return self._organize_news_feed(self._generate_dynamic_calendar())
 
         if max_wait is None:
             # Single-flight: a concurrent burst makes ONE network pass, not one
@@ -208,14 +256,16 @@ class LiveNewsEngine:
         def _refresh() -> None:
             try:
                 events = self._fetch_all_live_sources()
-                if events:
-                    with self._lock:
+                with self._lock:
+                    if events:
                         self._cached_news = events
-                        self._last_fetch_time = time.time()
+                    self._last_fetch_time = time.time()
             except Exception as exc:
                 # Never let a background refresh kill the process or the caller.
                 logger.warning("Background news refresh failed (%s: %s); "
                                "keeping the cached calendar.", type(exc).__name__, exc)
+                with self._lock:
+                    self._last_fetch_time = time.time()
             finally:
                 with self._lock:
                     # Signal followers BEFORE clearing the flag. A synchronous
@@ -280,10 +330,12 @@ class LiveNewsEngine:
 
         try:
             events = self._fetch_all_live_sources()
-            if events:
-                with self._lock:
+            with self._lock:
+                if events:
                     self._cached_news = events
-                    self._last_fetch_time = time.time()
+                elif not self._cached_news:
+                    self._load_disk_cache()
+                self._last_fetch_time = time.time()
             return events
         except Exception as exc:
             # A feed that raises must not take the caller down with it; the
@@ -291,6 +343,7 @@ class LiveNewsEngine:
             logger.warning("News fetch failed (%s: %s); keeping the cached calendar.",
                            type(exc).__name__, exc)
             with self._lock:
+                self._last_fetch_time = time.time()
                 return list(self._cached_news)
         finally:
             # Always release the claim, on every path, or every later caller
@@ -343,10 +396,22 @@ class LiveNewsEngine:
                 NEWS_FETCHES.inc(source="faireconomy", outcome="skipped")
                 return []
         _fe_timer = NEWS_FETCH_LATENCY.time(source="faireconomy")
+        data = None
+        last_exc = None
+        for endpoint in (self.FAIRECONOMY_URL, self.FAIRECONOMY_MIRROR_URL):
+            try:
+                req = urllib.request.Request(endpoint, headers=headers)
+                with urllib.request.urlopen(req, context=self._ctx, timeout=5) as resp:
+                    data = json.loads(read_bounded(resp).decode("utf-8"))
+                if data:
+                    break
+            except Exception as e:
+                last_exc = e
+                continue
+
         try:
-            req = urllib.request.Request(self.FAIRECONOMY_URL, headers=headers)
-            with urllib.request.urlopen(req, context=self._ctx, timeout=5) as resp:
-                data = json.loads(read_bounded(resp).decode("utf-8"))
+            if data is None and last_exc:
+                raise last_exc
                 
             parsed = []
             now_dt = datetime.now(timezone.utc)

@@ -18,6 +18,10 @@ class LossCooldownManager:
         self.consecutive_losses_by_symbol: Dict[str, int] = {}
         self.cooldown_expiry_by_symbol: Dict[str, float] = {}
         self.cooldown_bars_by_symbol: Dict[str, int] = {}
+        # Wall-clock equivalent for live trading. The bar counter is only
+        # decremented by the backtester's tick_bar(); using it live bricked the
+        # whole book after three consecutive losses until a process restart.
+        self.cooldown_expiry_global: float = 0.0
         self.daily_pnl = 0.0
         self.cooldown_bars_remaining = 0
         self.trades_today = 0
@@ -36,6 +40,12 @@ class LossCooldownManager:
         self.trades_today += 1
         sym_key = str(symbol).strip().upper() if symbol else ""
         if sym_key:
+            try:
+                from jarvis.data.symbol_registry import resolve
+
+                sym_key = resolve(sym_key).canonical.upper()
+            except Exception:
+                pass
             self.trades_today_by_symbol[sym_key] = self.trades_today_by_symbol.get(sym_key, 0) + 1
             
         if is_win:
@@ -63,18 +73,43 @@ class LossCooldownManager:
         # Backtest bar tracking (only applies when tick_bar is actively called)
         if self.consecutive_losses == 3:
             self.cooldown_bars_remaining = 2
+            self.cooldown_expiry_global = time.time() + 900.0
         elif self.consecutive_losses >= 5:
             self.cooldown_bars_remaining = 4
+            self.cooldown_expiry_global = time.time() + 1800.0
 
     def should_skip_trade(self, symbol: str = "") -> Tuple[bool, str]:
         """Check if we should skip the next trade.
         Returns (should_skip, reason)."""
         import time
+        from datetime import datetime, timezone
         from jarvis.config.runtime import is_offline
         sym_key = str(symbol).strip().upper() if symbol else ""
-        
-        # 0. Global bar-based cooldown
-        if self.cooldown_bars_remaining > 0:
+        if sym_key:
+            try:
+                from jarvis.data.symbol_registry import resolve
+
+                sym_key = resolve(sym_key).canonical.upper()
+            except Exception:
+                pass
+
+        live = not is_offline()
+        if live:
+            today = datetime.now(timezone.utc).date().isoformat()
+            if self.current_date is None:
+                self.current_date = today
+            elif self.current_date != today:
+                self.reset_daily(today)
+
+        # 0. Global cooldown. Live uses wall-clock expiry because nothing calls
+        # tick_bar() outside the backtester; the old bar counter never reached
+        # zero and silently blocked every symbol until process restart.
+        if live:
+            if self.cooldown_expiry_global > time.time():
+                remaining_sec = int(self.cooldown_expiry_global - time.time())
+                return True, f"Cooldown active: {remaining_sec}s remaining."
+            self.cooldown_bars_remaining = 0
+        elif self.cooldown_bars_remaining > 0:
             return True, f"Cooldown active: {self.cooldown_bars_remaining} bars remaining."
 
         # 1. Per-symbol cooldown:

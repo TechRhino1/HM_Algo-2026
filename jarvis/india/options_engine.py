@@ -50,48 +50,71 @@ class IndiaOptionsEngine:
         live_chain = None
         try:
             from jarvis.india.nse_bse_adapter import fetch_nse_option_chain
-            live_chain = fetch_nse_option_chain(sym)
+            live_chain = fetch_nse_option_chain(sym, expiry=expiry)
         except Exception:
             live_chain = None
 
         data_source = "synthetic"
         rows = []
+        all_live_rows = []
+        available_expiries = []
         if live_chain and live_chain.get("chain"):
             data_source = "live"
             base_price = float(live_chain.get("spot_price") or base_price)
             strikes_list = sorted({float(r["strike"]) for r in live_chain["chain"]})
             atm_strike = min(strikes_list, key=lambda s: abs(s - base_price))
-            # Local RNG for the modelled fields below (e.g. iv_rank). Seeding the
-            # module-level generator here used to leak into every other caller of
-            # `random`; `stable_seed` keeps it identical across processes.
+            available_expiries = live_chain.get("available_expiries", [])
+            selected_expiry = live_chain.get("expiry") or selected_expiry
             rng = random.Random(stable_seed(sym + str(atm_strike)))
             for r in live_chain["chain"]:
+                strike = float(r["strike"])
                 ce = r["call"]
                 pe = r["put"]
-                ce_itm = r["strike"] < base_price
-                pe_itm = r["strike"] > base_price
+                ce_itm = strike < base_price
+                pe_itm = strike > base_price
                 ce_oi_chg = float(ce.get("oi_change_pct", 0.0) or 0.0)
                 pe_oi_chg = float(pe.get("oi_change_pct", 0.0) or 0.0)
                 ce_ltp = float(ce.get("ltp", 0.0) or 0.0)
                 pe_ltp = float(pe.get("ltp", 0.0) or 0.0)
+                ce_iv = float(ce.get("iv", 0.0) or (iv_base * 100.0))
+                pe_iv = float(pe.get("iv", 0.0) or (iv_base * 100.0))
+
+                gk = GREEKS_ENGINE.calculate_greeks(
+                    spot=base_price,
+                    strike=strike,
+                    time_to_expiry_years=time_years,
+                    volatility=max(0.08, ce_iv / 100.0)
+                )
+
+                ce_delta = float(ce.get("delta") or gk["call"]["delta"])
+                ce_theta = float(ce.get("theta") or gk["call"]["theta"])
+                ce_gamma = float(ce.get("gamma") or gk["call"]["gamma"])
+                ce_vega = float(ce.get("vega") or gk["call"]["vega"])
+
+                pe_delta = float(pe.get("delta") or gk["put"]["delta"])
+                pe_theta = float(pe.get("theta") or gk["put"]["theta"])
+                pe_gamma = float(pe.get("gamma") or gk["put"]["gamma"])
+                pe_vega = float(pe.get("vega") or gk["put"]["vega"])
+
                 ce_buildup = "LONG_BUILDUP" if (ce_ltp > 5 and ce_oi_chg > 0) else ("SHORT_COVERING" if ce_oi_chg < 0 else "SHORT_BUILDUP")
                 pe_buildup = "LONG_BUILDUP" if (pe_ltp > 5 and pe_oi_chg > 0) else ("SHORT_COVERING" if pe_oi_chg < 0 else "SHORT_BUILDUP")
-                rows.append({
-                    "strike": r["strike"],
-                    "is_atm": abs(r["strike"] - atm_strike) < (strike_step * 0.5),
+
+                row_dict = {
+                    "strike": strike,
+                    "is_atm": abs(strike - atm_strike) < (strike_step * 0.5),
                     "call": {
                         "ltp": ce_ltp,
                         "change_pct": float(ce.get("change_pct", 0.0) or 0.0),
                         "oi": int(ce.get("oi", 0) or 0),
-                        "oi_change_pct": ce_oi_chg,
+                        "oi_change_pct": round(ce_oi_chg, 1),
                         "volume": int(ce.get("volume", 0) or 0),
-                        "iv": float(ce.get("iv", 0.0) or 0.0),
-                        "delta": float(ce.get("delta", 0.0) or 0.0),
-                        "theta": float(ce.get("theta", 0.0) or 0.0),
-                        "gamma": float(ce.get("gamma", 0.0) or 0.0),
-                        "vega": float(ce.get("vega", 0.0) or 0.0),
-                        "bid": max(0.05, ce_ltp * 0.99),
-                        "ask": ce_ltp * 1.01,
+                        "iv": round(ce_iv, 1),
+                        "delta": round(ce_delta, 3),
+                        "theta": round(ce_theta, 2),
+                        "gamma": round(ce_gamma, 5),
+                        "vega": round(ce_vega, 2),
+                        "bid": max(0.05, round(ce_ltp * 0.995, 2)),
+                        "ask": round(ce_ltp * 1.005, 2),
                         "is_itm": ce_itm,
                         "buildup": ce_buildup
                     },
@@ -99,19 +122,26 @@ class IndiaOptionsEngine:
                         "ltp": pe_ltp,
                         "change_pct": float(pe.get("change_pct", 0.0) or 0.0),
                         "oi": int(pe.get("oi", 0) or 0),
-                        "oi_change_pct": pe_oi_chg,
+                        "oi_change_pct": round(pe_oi_chg, 1),
                         "volume": int(pe.get("volume", 0) or 0),
-                        "iv": float(pe.get("iv", 0.0) or 0.0),
-                        "delta": float(pe.get("delta", 0.0) or 0.0),
-                        "theta": float(pe.get("theta", 0.0) or 0.0),
-                        "gamma": float(pe.get("gamma", 0.0) or 0.0),
-                        "vega": float(pe.get("vega", 0.0) or 0.0),
-                        "bid": max(0.05, pe_ltp * 0.99),
-                        "ask": pe_ltp * 1.01,
+                        "iv": round(pe_iv, 1),
+                        "delta": round(pe_delta, 3),
+                        "theta": round(pe_theta, 2),
+                        "gamma": round(pe_gamma, 5),
+                        "vega": round(pe_vega, 2),
+                        "bid": max(0.05, round(pe_ltp * 0.995, 2)),
+                        "ask": round(pe_ltp * 1.005, 2),
                         "is_itm": pe_itm,
                         "buildup": pe_buildup
                     }
-                })
+                }
+                all_live_rows.append(row_dict)
+
+            # Center rows display on ATM +- 12 strikes (25 total strikes matching num_wings)
+            atm_idx = min(range(len(all_live_rows)), key=lambda i: abs(all_live_rows[i]["strike"] - atm_strike))
+            start_idx = max(0, atm_idx - 12)
+            end_idx = min(len(all_live_rows), atm_idx + 13)
+            rows = all_live_rows[start_idx:end_idx]
         else:
             # Determine ATM Strike centered around updated 2026 spot price
             atm_strike = round(base_price / strike_step) * strike_step
@@ -207,7 +237,8 @@ class IndiaOptionsEngine:
                 })
 
         # Calculate Chain Aggregate Metrics (Max Pain, PCR)
-        strikes_payload = [{"strike": r["strike"], "ce_oi": r["call"]["oi"], "pe_oi": r["put"]["oi"], "ce_volume": r["call"]["volume"], "pe_volume": r["put"]["volume"]} for r in rows]
+        active_pool = all_live_rows if all_live_rows else rows
+        strikes_payload = [{"strike": r["strike"], "ce_oi": r["call"]["oi"], "pe_oi": r["put"]["oi"], "ce_volume": r["call"]["volume"], "pe_volume": r["put"]["volume"]} for r in active_pool]
         max_pain = GREEKS_ENGINE.calculate_max_pain(strikes_payload)
         pcr_metrics = GREEKS_ENGINE.calculate_pcr(strikes_payload)
 
@@ -227,6 +258,7 @@ class IndiaOptionsEngine:
             "lot_size": lot_size,
             "freeze_limit": NSE_RULES.get_freeze_limit(sym),
             "expiry": selected_expiry,
+            "available_expiries": available_expiries,
             "expiry_schedule": expiry_info,
             "max_pain_strike": max_pain["max_pain_strike"],
             "pcr": pcr_metrics,

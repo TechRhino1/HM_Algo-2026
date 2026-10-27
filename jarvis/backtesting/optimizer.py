@@ -126,9 +126,10 @@ OBJECTIVES: Tuple[str, ...] = ("expectancy_r", "total_r", "profit_factor", "calm
 def manifest_since(timeframe: str, days: int = DEFAULT_DAYS) -> Optional[str]:
     """The ``--since`` trim the scanner applied when it cached this timeframe.
 
-    Returns ``None`` when the scan used the full series (the H1 and M15 case) or
-    when no manifest exists — in which case no trim is replayed, which is the
-    correct behaviour for an untrimmed scan.
+    Returns ``None`` when the scan used the full series (the H1 and M15 case),
+    when no manifest exists, or when the manifest describes a different
+    ``days`` window than the caller's data — in which case no trim is replayed.
+    A 95-day manifest must never trim a 183-day candidate table.
     """
     tf = str(timeframe).upper()
     name = "scan_manifest.json" if tf == "H1" else f"scan_manifest_{tf}.json"
@@ -140,6 +141,13 @@ def manifest_since(timeframe: str, days: int = DEFAULT_DAYS) -> Optional[str]:
             payload = json.load(fh)
     except (OSError, ValueError) as exc:
         logger.warning("could not read %s (%s) — assuming no trim", path, exc)
+        return None
+
+    try:
+        manifest_days = int(payload.get("days"))
+    except (TypeError, ValueError):
+        manifest_days = None
+    if manifest_days is not None and manifest_days != int(days):
         return None
 
     if payload.get("complete") is False:

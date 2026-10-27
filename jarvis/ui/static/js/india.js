@@ -28,7 +28,14 @@
         strategyBias: "BULLISH",
         autoScanInterval: 30,
         countdown: 30,
-        heatmapOpen: false
+        heatmapOpen: false,
+        activeOptionsSymbol: "NIFTY",
+        activePredictionHorizon: "intraday",
+        activeScannerView: "intraday",
+        predictionsData: null,
+        optionsAdvisorData: null,
+        scannerViewsData: null,
+        overviewCardsData: []
     };
 
     // DOM Elements Cache
@@ -102,7 +109,43 @@
         // Strategy Builder Modal
         stratModal: document.getElementById("india-strategy-modal"),
         stratModalTicker: document.getElementById("strat-modal-ticker"),
-        stratPayloadContainer: document.getElementById("strategy-payload-container")
+        stratPayloadContainer: document.getElementById("strategy-payload-container"),
+
+        // Live Overview Cards
+        liveOverviewCards: document.getElementById("live-overview-cards"),
+        cardNifty: document.getElementById("card-nifty"),
+        cardSensex: document.getElementById("card-sensex"),
+        cardBanknifty: document.getElementById("card-banknifty"),
+        liveExchangeClock: document.getElementById("live-exchange-clock"),
+
+        // Options Expert Advisor Workspace
+        sectionOptionsAdvisor: document.getElementById("section-options-advisor"),
+        advSpotVal: document.getElementById("adv-spot-val"),
+        advAtmVal: document.getElementById("adv-atm-val"),
+        advMaxPainVal: document.getElementById("adv-maxpain-val"),
+        advPcrVal: document.getElementById("adv-pcr-val"),
+        advStraddleVal: document.getElementById("adv-straddle-val"),
+        advCorridorVal: document.getElementById("adv-corridor-val"),
+        advVixVal: document.getElementById("adv-vix-val"),
+        advLotSizeVal: document.getElementById("adv-lotsize-val"),
+        advBriefingContent: document.getElementById("adv-briefing-content"),
+        advCallCard: document.getElementById("adv-call-card"),
+        advPutCard: document.getElementById("adv-put-card"),
+        advChatInput: document.getElementById("opt-advisor-chat-input"),
+        advChainExpirySelect: document.getElementById("adv-chain-expiry-select"),
+        advChainTbody: document.getElementById("adv-chain-tbody"),
+        advChainSourceBadge: document.getElementById("adv-chain-source-badge"),
+
+        // Predictions
+        predictionsCardsGrid: document.getElementById("predictions-cards-grid"),
+
+        // Scanner Views
+        countTabIntraday: document.getElementById("count-tab-intraday"),
+        countTabScalping: document.getElementById("count-tab-scalping"),
+        countTabBullish: document.getElementById("count-tab-bullish"),
+        countTabBearish: document.getElementById("count-tab-bearish"),
+        countTabKeylevels: document.getElementById("count-tab-keylevels"),
+        scannerTotalCount: document.getElementById("scanner-total-count")
     };
 
     /* ==========================================================================
@@ -1093,6 +1136,525 @@
         pill.click();
     };
 
+
+    /* ==========================================================================
+       ADVANCED INDIAN MARKET 2.0 — LIVE CARDS, OPTIONS ADVISOR & PREDICTIONS
+       ========================================================================== */
+
+    async function fetchLiveOverviewCards() {
+        try {
+            const res = await fetch("/api/india/live_indices");
+            const data = await res.json();
+            if (data && data.cards && data.cards.length) {
+                state.overviewCardsData = data.cards;
+                renderLiveOverviewCardsDOM(data.cards);
+                const clockEl = document.getElementById("live-exchange-clock");
+                if (clockEl && data.timestamp) {
+                    clockEl.textContent = `NSE / BSE • ${data.timestamp}`;
+                }
+            }
+        } catch (err) {
+            console.error("Live overview cards fetch error:", err);
+        }
+    }
+
+    function renderLiveOverviewCardsDOM(cards) {
+        cards.forEach(card => {
+            const sym = (card.symbol || "").toUpperCase();
+            let cardEl = null;
+            if (sym === "NIFTY") cardEl = document.getElementById("card-nifty");
+            else if (sym === "SENSEX") cardEl = document.getElementById("card-sensex");
+            else if (sym === "BANKNIFTY") cardEl = document.getElementById("card-banknifty");
+
+            if (!cardEl) return;
+            cardEl.classList.remove("loading");
+
+            const isBull = card.direction === "BULLISH";
+            const isSelected = state.activeOptionsSymbol === sym;
+            if (isSelected) {
+                cardEl.classList.add("active-selected");
+            } else {
+                cardEl.classList.remove("active-selected");
+            }
+
+            const chgSign = card.change_val >= 0 ? "+" : "";
+            const chgColor = isBull ? "var(--neon-bull)" : "var(--neon-bear)";
+            const dirClass = isBull ? "card-direction-bullish" : "card-direction-bearish";
+            const dirIcon = isBull ? "▲" : "▼";
+            const dirLabel = isBull ? "BULLISH" : "BEARISH";
+
+            const low = Number(card.low || card.price * 0.99);
+            const high = Number(card.high || card.price * 1.01);
+            const price = Number(card.price);
+            const rangeSpan = Math.max(0.01, high - low);
+            const pipPos = Math.min(100, Math.max(0, ((price - low) / rangeSpan) * 100));
+
+            cardEl.innerHTML = `
+                <div class="card-top-row">
+                    <div class="card-title-group">
+                        <span class="card-symbol-name">${card.name || card.symbol}</span>
+                        <span class="card-exchange-tag">${card.exchange}</span>
+                    </div>
+                    <span class="card-direction-badge ${dirClass}">
+                        <span>${dirIcon}</span> ${dirLabel}
+                    </span>
+                </div>
+
+                <div class="card-price-row">
+                    <div class="card-price-value">₹${price.toLocaleString("en-IN", {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    <div class="card-change-box">
+                        <span class="card-change-pct" style="color:${chgColor};">${chgSign}${Number(card.change_pct).toFixed(2)}%</span>
+                        <span class="card-change-val">${chgSign}₹${Math.abs(Number(card.change_val)).toFixed(2)}</span>
+                    </div>
+                </div>
+
+                <div class="card-range-row">
+                    <div class="card-range-labels">
+                        <span>L: ₹${low.toLocaleString("en-IN", {minimumFractionDigits: 1})}</span>
+                        <span>Day Range</span>
+                        <span>H: ₹${high.toLocaleString("en-IN", {minimumFractionDigits: 1})}</span>
+                    </div>
+                    <div class="card-range-track">
+                        <div class="card-range-fill" style="width: 100%;"></div>
+                        <div class="card-range-pip" style="left: ${pipPos.toFixed(1)}%;"></div>
+                    </div>
+                </div>
+
+                <div class="card-action-bar">
+                    <span class="card-meta-pill">Lot: ${card.lot_size} &bull; VIX: ${card.vix || '16.5'}</span>
+                    <span class="card-cta-link">Options Advisor ➔</span>
+                </div>
+            `;
+        });
+    }
+
+    window.selectOptionsAdvisorIndex = async function (symbol) {
+        const sym = (symbol || "NIFTY").toUpperCase().trim();
+        state.activeOptionsSymbol = sym;
+
+        // Highlight selected overview card and tab
+        ["NIFTY", "SENSEX", "BANKNIFTY"].forEach(s => {
+            const cardEl = document.getElementById(`card-${s.toLowerCase()}`);
+            if (cardEl) {
+                if (s === sym) cardEl.classList.add("active-selected");
+                else cardEl.classList.remove("active-selected");
+            }
+            const tabBtn = document.getElementById(`tab-opt-${s.toLowerCase()}`);
+            if (tabBtn) {
+                if (s === sym) {
+                    tabBtn.classList.add("active");
+                    tabBtn.setAttribute("aria-selected", "true");
+                } else {
+                    tabBtn.classList.remove("active");
+                    tabBtn.setAttribute("aria-selected", "false");
+                }
+            }
+        });
+
+        await fetchOptionsAdvisorData(sym);
+        await fetchOptionChainForAdvisor(sym);
+
+        const advisorSec = document.getElementById("section-options-advisor");
+        if (advisorSec) {
+            advisorSec.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+    };
+
+    async function fetchOptionsAdvisorData(symbol, query = null, strategyType = null) {
+        try {
+            const sym = symbol || state.activeOptionsSymbol || "NIFTY";
+            let url = `/api/india/options/ai_advisor?symbol=${sym}`;
+            if (query) url += `&query=${encodeURIComponent(query)}`;
+            if (strategyType) url += `&strategy=${encodeURIComponent(strategyType)}`;
+
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data) {
+                state.optionsAdvisorData = data;
+                renderOptionsAdvisorDOM(data);
+            }
+        } catch (err) {
+            console.error("Options advisor fetch error:", err);
+        }
+    }
+
+    function renderOptionsAdvisorDOM(data) {
+        if (!data) return;
+
+        const spotEl = document.getElementById("adv-spot-val");
+        const atmEl = document.getElementById("adv-atm-val");
+        const maxPainEl = document.getElementById("adv-maxpain-val");
+        const pcrEl = document.getElementById("adv-pcr-val");
+        const straddleEl = document.getElementById("adv-straddle-val");
+        const corridorEl = document.getElementById("adv-corridor-val");
+        const vixEl = document.getElementById("adv-vix-val");
+        const lotEl = document.getElementById("adv-lotsize-val");
+
+        if (spotEl) spotEl.textContent = `₹${Number(data.spot_price).toLocaleString("en-IN", {minimumFractionDigits: 2})}`;
+        if (atmEl) atmEl.textContent = Number(data.atm_strike).toLocaleString("en-IN");
+        if (maxPainEl) maxPainEl.textContent = Number(data.max_pain).toLocaleString("en-IN");
+        if (pcrEl && data.pcr) {
+            const pcrVal = Number(data.pcr.pcr_oi || 1.0).toFixed(2);
+            pcrEl.textContent = `${pcrVal} (${data.pcr.sentiment || 'Neutral'})`;
+            pcrEl.className = data.pcr.pcr_oi >= 1.05 ? "adv-kpi-val text-bull" : (data.pcr.pcr_oi <= 0.85 ? "adv-kpi-val text-bear" : "adv-kpi-val text-gold");
+        }
+        if (straddleEl && data.atm_straddle) {
+            straddleEl.textContent = `₹${Number(data.atm_straddle.premium).toFixed(1)} (±${Number(data.atm_straddle.expected_move_pct).toFixed(1)}%)`;
+        }
+        if (corridorEl && data.atm_straddle) {
+            corridorEl.textContent = `${Number(data.atm_straddle.lower_breakeven).toFixed(0)} – ${Number(data.atm_straddle.upper_breakeven).toFixed(0)}`;
+        }
+        if (vixEl) vixEl.textContent = `${Number(data.vix || 16.5).toFixed(1)} (${data.vix > 18 ? 'High Vol' : 'Normal'})`;
+        if (lotEl) lotEl.textContent = `${data.lot_size} Qty`;
+
+        // Render AI Briefing Card
+        const briefingEl = document.getElementById("adv-briefing-content");
+        if (briefingEl && data.ai_advisor_analysis) {
+            let text = data.ai_advisor_analysis;
+            text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            text = text.replace(/• (.*?)(?=(\n|$))/g, '<div style="margin-bottom:4px;">• $1</div>');
+            text = text.replace(/\n\n/g, '<br/>');
+            briefingEl.innerHTML = text;
+        }
+
+        // Render Recommended Call and Put Cards
+        if (data.call_opportunity) {
+            const ce = data.call_opportunity;
+            const titleEl = document.getElementById("adv-call-title");
+            const entryEl = document.getElementById("adv-call-entry");
+            const slEl = document.getElementById("adv-call-sl");
+            const tpEl = document.getElementById("adv-call-tp");
+            const greeksEl = document.getElementById("adv-call-greeks");
+            const riskEl = document.getElementById("adv-call-risk");
+
+            if (titleEl) titleEl.textContent = `${data.symbol} ${ce.strike} CE`;
+            if (entryEl) entryEl.textContent = ce.entry_range || `₹${ce.ltp}`;
+            if (slEl) slEl.textContent = `₹${ce.stop_loss} (-30%)`;
+            if (tpEl) tpEl.textContent = `₹${ce.target_1} / ₹${ce.target_2}`;
+            if (greeksEl) greeksEl.textContent = `Δ ${ce.delta} • θ ${ce.theta_per_day}`;
+            if (riskEl) riskEl.textContent = `₹${Number(ce.max_risk_per_lot).toLocaleString("en-IN")}`;
+        }
+
+        if (data.put_opportunity) {
+            const pe = data.put_opportunity;
+            const titleEl = document.getElementById("adv-put-title");
+            const entryEl = document.getElementById("adv-put-entry");
+            const slEl = document.getElementById("adv-put-sl");
+            const tpEl = document.getElementById("adv-put-tp");
+            const greeksEl = document.getElementById("adv-put-greeks");
+            const riskEl = document.getElementById("adv-put-risk");
+
+            if (titleEl) titleEl.textContent = `${data.symbol} ${pe.strike} PE`;
+            if (entryEl) entryEl.textContent = pe.entry_range || `₹${pe.ltp}`;
+            if (slEl) slEl.textContent = `₹${pe.stop_loss} (-30%)`;
+            if (tpEl) tpEl.textContent = `₹${pe.target_1} / ₹${pe.target_2}`;
+            if (greeksEl) greeksEl.textContent = `Δ ${pe.delta} • θ ${pe.theta_per_day}`;
+            if (riskEl) riskEl.textContent = `₹${Number(pe.max_risk_per_lot).toLocaleString("en-IN")}`;
+        }
+    }
+
+    async function fetchOptionChainForAdvisor(symbol, expiry = null) {
+        try {
+            const sym = symbol || state.activeOptionsSymbol || "NIFTY";
+            let url = `/api/india/option_chain?symbol=${sym}`;
+            if (expiry) url += `&expiry=${encodeURIComponent(expiry)}`;
+
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data && (data.chain || data.strikes)) {
+                renderAdvisorOptionChainDOM(data);
+            }
+        } catch (err) {
+            console.error("Option chain fetch error:", err);
+        }
+    }
+
+    function renderAdvisorOptionChainDOM(chainData) {
+        const tbody = document.getElementById("adv-chain-tbody");
+        const expirySelect = document.getElementById("adv-chain-expiry-select");
+        const sourceBadge = document.getElementById("adv-chain-source-badge");
+
+        if (sourceBadge && chainData.data_source) {
+            sourceBadge.textContent = chainData.data_source.toUpperCase();
+        }
+
+        if (expirySelect && chainData.available_expiries && chainData.available_expiries.length) {
+            let optHtml = "";
+            chainData.available_expiries.forEach(exp => {
+                const isSel = exp === chainData.expiry ? "selected" : "";
+                optHtml += `<option value="${exp}" ${isSel}>${exp}</option>`;
+            });
+            expirySelect.innerHTML = optHtml;
+        }
+
+        if (!tbody) return;
+        const rows = chainData.chain || chainData.strikes || [];
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:20px; color:var(--text-dim);">No option chain strikes available.</td></tr>';
+            return;
+        }
+
+        let html = "";
+        rows.forEach(r => {
+            const isAtm = r.is_atm;
+            const isMaxPain = r.strike === chainData.max_pain_strike;
+            const ce = r.call || {};
+            const pe = r.put || {};
+
+            const atmClass = isAtm ? "row-atm" : "";
+            const ceItmClass = ce.is_itm ? "itm-call" : "";
+            const peItmClass = pe.is_itm ? "itm-put" : "";
+
+            const ceOiChg = Number(ce.oi_change_pct || 0);
+            const peOiChg = Number(pe.oi_change_pct || 0);
+            const ceOiColor = ceOiChg >= 0 ? "var(--neon-bull)" : "var(--neon-bear)";
+            const peOiColor = peOiChg >= 0 ? "var(--neon-bull)" : "var(--neon-bear)";
+
+            html += `
+            <tr class="${atmClass}">
+                <td class="${ceItmClass}" style="color:${ceOiColor};">${ceOiChg > 0 ? '+' : ''}${ceOiChg.toFixed(0)}%</td>
+                <td class="${ceItmClass}">${Number(ce.oi || 0).toLocaleString()}</td>
+                <td class="${ceItmClass}">${Number(ce.volume || 0).toLocaleString()}</td>
+                <td class="${ceItmClass}">${Number(ce.delta || 0).toFixed(2)}</td>
+                <td class="${ceItmClass}" style="font-weight:800; color:#ffffff;">₹${Number(ce.ltp || 0).toFixed(2)}</td>
+                
+                <td class="strike-cell">
+                    ${r.strike}
+                    ${isAtm ? ' <span style="font-size:9px; color:var(--neon-gold); font-weight:900;">ATM</span>' : ''}
+                    ${isMaxPain ? ' <span style="font-size:9px; color:var(--accent-cyan); font-weight:900;">MP</span>' : ''}
+                </td>
+
+                <td class="${peItmClass}" style="font-weight:800; color:#ffffff;">₹${Number(pe.ltp || 0).toFixed(2)}</td>
+                <td class="${peItmClass}">${Number(pe.delta || 0).toFixed(2)}</td>
+                <td class="${peItmClass}">${Number(pe.volume || 0).toLocaleString()}</td>
+                <td class="${peItmClass}">${Number(pe.oi || 0).toLocaleString()}</td>
+                <td class="${peItmClass}" style="color:${peOiColor};">${peOiChg > 0 ? '+' : ''}${peOiChg.toFixed(0)}%</td>
+            </tr>`;
+        });
+
+        tbody.innerHTML = html;
+    }
+
+    async function fetchMarketPredictions() {
+        try {
+            const res = await fetch("/api/india/predictions");
+            const data = await res.json();
+            if (data) {
+                state.predictionsData = data;
+                renderPredictionsGridDOM();
+            }
+        } catch (err) {
+            console.error("Market predictions fetch error:", err);
+        }
+    }
+
+    window.switchPredictionTab = function (horizon) {
+        state.activePredictionHorizon = horizon;
+        ["intraday", "scalping", "breakouts", "keylevels"].forEach(h => {
+            const btn = document.getElementById(`pred-tab-${h}`);
+            if (btn) {
+                if (h === horizon) btn.classList.add("active");
+                else btn.classList.remove("active");
+            }
+        });
+        renderPredictionsGridDOM();
+    };
+
+    function renderPredictionsGridDOM() {
+        const grid = document.getElementById("predictions-cards-grid");
+        if (!grid || !state.predictionsData) return;
+
+        const horizon = state.activePredictionHorizon || "intraday";
+        let items = [];
+        if (horizon === "intraday") items = state.predictionsData.intraday_setups || [];
+        else if (horizon === "scalping") items = state.predictionsData.scalping_setups || [];
+        else if (horizon === "breakouts") items = (state.predictionsData.breakouts || []).concat(state.predictionsData.breakdowns || []);
+        else if (horizon === "keylevels") items = state.predictionsData.key_levels || [];
+
+        if (!items.length) {
+            grid.innerHTML = '<div style="grid-column:1 / -1; text-align:center; padding:30px; color:var(--text-dim);">No setups currently active for this horizon.</div>';
+            return;
+        }
+
+        let html = "";
+        items.forEach(item => {
+            const isBuy = item.direction === "BUY";
+            const dirIcon = isBuy ? "▲ BUY" : "▼ SELL";
+            const badgeClass = isBuy ? "card-direction-bullish" : "card-direction-bearish";
+            const conf = item.confidence_score || 80;
+
+            if (horizon === "keylevels") {
+                html += `
+                <div class="pred-card" onclick="window.openIndiaDossier('${item.symbol}')" style="cursor:pointer;">
+                    <div class="pred-card-top">
+                        <span class="pred-card-symbol">${item.symbol} &bull; <span style="font-size:12px; font-weight:600; color:var(--text-dim);">${item.name}</span></span>
+                        <span class="badge ${item.trend_bias && item.trend_bias.includes('BULLISH') ? 'badge-cpr-narrow' : 'badge-cpr-wide'}">${item.trend_bias || 'NEUTRAL'}</span>
+                    </div>
+                    <div style="font-size:20px; font-weight:900; font-family:var(--font-mono); color:#ffffff; margin-bottom:10px;">
+                        ₹${Number(item.price).toLocaleString("en-IN", {minimumFractionDigits:2})}
+                        <span style="font-size:12px; color:${item.change_pct >= 0 ? 'var(--neon-bull)' : 'var(--neon-bear)'};">${item.change_pct >= 0 ? '+' : ''}${item.change_pct}%</span>
+                    </div>
+                    <div class="pred-levels-grid">
+                        <div class="pred-level-item"><span class="pred-level-label">CPR TC:</span><span class="pred-level-val text-cyan">₹${Number(item.cpr_tc).toFixed(1)}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">Pivot (P):</span><span class="pred-level-val text-gold">₹${Number(item.cpr_pivot).toFixed(1)}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">CPR BC:</span><span class="pred-level-val text-cyan">₹${Number(item.cpr_bc).toFixed(1)}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">Cam H4:</span><span class="pred-level-val text-bull">₹${Number(item.cam_h4).toFixed(1)}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">VWAP:</span><span class="pred-level-val text-white">₹${Number(item.vwap).toFixed(1)}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">Cam L4:</span><span class="pred-level-val text-bear">₹${Number(item.cam_l4).toFixed(1)}</span></div>
+                    </div>
+                </div>`;
+            } else {
+                html += `
+                <div class="pred-card">
+                    <div class="pred-card-top">
+                        <div>
+                            <span class="pred-card-symbol">${item.symbol}</span>
+                            <span style="font-size:11.5px; color:var(--text-dim); margin-left:6px;">${item.timeframe}</span>
+                        </div>
+                        <span class="card-direction-badge ${badgeClass}">${dirIcon}</span>
+                    </div>
+
+                    <div class="pred-confidence-bar">
+                        <div class="confidence-track">
+                            <div class="confidence-fill" style="width:${conf}%;"></div>
+                        </div>
+                        <span class="confidence-score-text">${conf}% CONFIDENCE</span>
+                    </div>
+
+                    <div class="pred-levels-grid">
+                        <div class="pred-level-item"><span class="pred-level-label">Entry Zone:</span><span class="pred-level-val text-cyan">${item.entry_zone}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">Stop Loss:</span><span class="pred-level-val text-bear">${item.stop_loss}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">Target 1:</span><span class="pred-level-val text-bull">${item.target_1}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">Target 2:</span><span class="pred-level-val text-bull">${item.target_2}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">Target 3:</span><span class="pred-level-val text-bull">${item.target_3 || 'Runner'}</span></div>
+                        <div class="pred-level-item"><span class="pred-level-label">Risk : Reward:</span><span class="pred-level-val text-gold">${item.risk_reward}</span></div>
+                    </div>
+
+                    <div class="pred-reasoning-box">
+                        <strong>Reasoning:</strong> ${item.key_catalyst_reasoning}
+                    </div>
+                </div>`;
+            }
+        });
+
+        grid.innerHTML = html;
+    }
+
+    async function fetchScannerViews() {
+        try {
+            const res = await fetch("/api/india/scanner_views");
+            const data = await res.json();
+            if (data) {
+                state.scannerViewsData = data;
+                if (data.counts) {
+                    const c = data.counts;
+                    const cIntra = document.getElementById("count-tab-intraday");
+                    const cScalp = document.getElementById("count-tab-scalping");
+                    const cBull = document.getElementById("count-tab-bullish");
+                    const cBear = document.getElementById("count-tab-bearish");
+                    const cKey = document.getElementById("count-tab-keylevels");
+                    const cTot = document.getElementById("scanner-total-count");
+
+                    if (cIntra) cIntra.textContent = c.intraday || 0;
+                    if (cScalp) cScalp.textContent = c.scalping || 0;
+                    if (cBull) cBull.textContent = c.bullish || 0;
+                    if (cBear) cBear.textContent = c.bearish || 0;
+                    if (cKey) cKey.textContent = c.key_levels || 0;
+                    if (cTot) {
+                        const total = (c.intraday || 0) + (c.scalping || 0) + (c.bullish || 0) + (c.bearish || 0) + (c.key_levels || 0);
+                        cTot.textContent = `${total} Live Opportunities`;
+                    }
+                }
+                renderScannerTableDOM();
+            }
+        } catch (err) {
+            console.error("Scanner views fetch error:", err);
+        }
+    }
+
+    window.switchScannerView = function (viewKey) {
+        state.activeScannerView = viewKey;
+        ["intraday", "scalping", "bullish", "bearish", "keylevels"].forEach(k => {
+            const tabBtn = document.getElementById(`scan-tab-${k}`);
+            if (tabBtn) {
+                const match = (k === "keylevels" && viewKey === "key_levels") || (k === viewKey);
+                if (match) tabBtn.classList.add("active");
+                else tabBtn.classList.remove("active");
+            }
+        });
+        renderScannerTableDOM();
+    };
+
+    function renderScannerTableDOM() {
+        const tbody = document.getElementById("screener-table-tbody");
+        if (!tbody || !state.scannerViewsData) return;
+
+        const viewKey = state.activeScannerView || "intraday";
+        const items = state.scannerViewsData[viewKey] || [];
+
+        if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:30px; color:var(--text-dim);">No stocks match this scanner view currently.</td></tr>';
+            return;
+        }
+
+        let html = "";
+        items.forEach(s => {
+            const isPos = s.change_pct >= 0;
+            const chgColor = isPos ? "var(--neon-bull)" : "var(--neon-bear)";
+            const chgSign = isPos ? "+" : "";
+
+            html += `
+            <tr>
+                <td>
+                    <div style="font-weight:800; color:#ffffff; cursor:pointer;" onclick="window.openIndiaDossier('${s.symbol}')">${s.symbol}</div>
+                    <div style="font-size:11px; color:var(--text-dim);">${s.name || ''} &bull; ${s.sector || ''}</div>
+                </td>
+                <td style="font-family:var(--font-mono); font-weight:800;">₹${Number(s.price).toLocaleString("en-IN", {minimumFractionDigits:2})}</td>
+                <td style="font-family:var(--font-mono); font-weight:800; color:${chgColor};">${chgSign}${Number(s.change_pct).toFixed(2)}%</td>
+                <td style="font-family:var(--font-mono);">${Number(s.rvol).toFixed(2)}x</td>
+                <td><span class="badge ${s.cpr_classification === 'NARROW_CPR' ? 'badge-cpr-narrow' : 'badge-cpr-wide'}">${s.cpr_classification}</span></td>
+                <td style="font-family:var(--font-mono); color:var(--neon-bull);">₹${Number(s.cam_h4).toFixed(1)}</td>
+                <td style="font-family:var(--font-mono); color:#ffffff;">₹${Number(s.vwap).toFixed(1)}</td>
+                <td><span class="scanner-why-tag">${s.why_identified || 'Quantitative momentum signal'}</span></td>
+                <td style="font-family:var(--font-mono);">${s.lot_size}</td>
+                <td style="text-align:right;">
+                    <button class="btn-action-tool" style="padding:4px 8px; font-size:11px;" onclick="window.openIndiaDossier('${s.symbol}')">Dossier</button>
+                    <button class="btn-action-tool" style="padding:4px 8px; font-size:11px;" onclick="window.openOptionChainModal('${s.symbol}')">Options</button>
+                </td>
+            </tr>`;
+        });
+
+        tbody.innerHTML = html;
+    }
+
+    window.sendAdvisorPrompt = function (promptKey) {
+        const sym = state.activeOptionsSymbol || "NIFTY";
+        let queryText = "";
+        if (promptKey === "best_call") queryText = `Recommend the highest-probability Call (CE) buying setup for ${sym} today with entry, stop-loss, and target.`;
+        else if (promptKey === "best_put") queryText = `Recommend the highest-probability Put (PE) buying setup for ${sym} today with entry, stop-loss, and target.`;
+        else if (promptKey === "hero_zero") queryText = `Analyze expiry dynamics and recommend a safe Hero-Zero or 0DTE trade for ${sym}.`;
+        else if (promptKey === "spread") queryText = `Formulate an institutional defined-risk spread (Bull Call, Bear Put, or Iron Condor) for ${sym}.`;
+        else if (promptKey === "greeks") queryText = `Perform full Delta, Gamma, Theta decay, and IV Rank diagnostic for ${sym}.`;
+
+        const inputEl = document.getElementById("opt-advisor-chat-input");
+        if (inputEl) inputEl.value = queryText;
+        fetchOptionsAdvisorData(sym, queryText, promptKey);
+    };
+
+    window.submitAdvisorQuery = function () {
+        const inputEl = document.getElementById("opt-advisor-chat-input");
+        if (!inputEl) return;
+        const text = inputEl.value.trim();
+        if (!text) return;
+        const sym = state.activeOptionsSymbol || "NIFTY";
+        fetchOptionsAdvisorData(sym, text);
+    };
+
+    window.onAdvisorExpiryChange = function (expiry) {
+        const sym = state.activeOptionsSymbol || "NIFTY";
+        fetchOptionChainForAdvisor(sym, expiry);
+    };
+
     /* ==========================================================================
        11. INITIALIZATION
        ========================================================================== */
@@ -1100,10 +1662,18 @@
     document.addEventListener("DOMContentLoaded", () => {
         initSearchController();
         buildMobileFilterSelects();
-        fetchIndicesTelemetry();
+        fetchLiveOverviewCards();
         fetchFiiDiiData();
-        fetchScannerData();
+        fetchIndicesTelemetry();
+        fetchMarketPredictions();
+        fetchScannerViews();
+        window.selectOptionsAdvisorIndex("NIFTY");
         startAutoScanTicker();
+
+        // 24/7 Real-Time Polling Loops
+        setInterval(fetchLiveOverviewCards, 5000);
+        setInterval(fetchMarketPredictions, 15000);
+        setInterval(fetchScannerViews, 15000);
         if (el.dossierModal) {
             el.dossierModal.addEventListener("click", (e) => {
                 if (e.target === el.dossierModal) {

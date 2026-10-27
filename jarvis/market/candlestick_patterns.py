@@ -44,6 +44,10 @@ class CandlestickPriceActionEngine:
 
         if df is None or len(df) < 15:
             return default_res
+        if not {"high", "low", "close"}.issubset(df.columns):
+            # A partial feed (missing OHLC columns) must not crash the whole
+            # context build; the pattern engine simply has nothing to read.
+            return default_res
 
         highs = df["high"].values.astype(float)
         lows = df["low"].values.astype(float)

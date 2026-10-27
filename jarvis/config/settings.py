@@ -11,12 +11,21 @@ def verify_execution_mode(mode: str) -> str:
     """
     Verifies execution mode.
     Defaults to 'demo' for broker-connected paper testing (safe default).
-    Returns 'live' only when explicitly requested.
+    'live' requires the explicit JARVIS_CONFIRM_LIVE=1 acknowledgement and
+    otherwise falls back to 'paper' with a loud warning, matching README §7.
     Returns 'paper' for offline / backtest simulation.
     """
     norm_mode = str(mode or "demo").lower().strip()
     if norm_mode == "live":
-        return "live"
+        confirmed = str(os.environ.get("JARVIS_CONFIRM_LIVE", "")).strip().lower()
+        if confirmed in {"1", "true", "yes", "on"}:
+            return "live"
+        logger.critical(
+            "LIVE EXECUTION BLOCKED: mode='live' was requested without "
+            "JARVIS_CONFIRM_LIVE=1. Falling back to 'paper'. Set the variable "
+            "explicitly only after verifying the account, symbols, and risk limits."
+        )
+        return "paper"
     if norm_mode in {"paper", "backtest", "simulated", "offline"}:
         return "paper"
     return "demo"
@@ -34,6 +43,13 @@ class RiskSettings:
     min_confidence_floor: float = 0.50
     partial_tp_ratio: float = 0.50
     partial_tp_r_multiple: float = 1.5
+    # Approved 2026-10-23: a capped recovery channel for perfect A+ setups after
+    # the daily halt. Disabled until out-of-sample validation proves the edge;
+    # when enabled it is one attempt per day at 0.5% risk, and never past 6.5%.
+    recovery_channel_enabled: bool = False
+    recovery_risk_pct: float = 0.5
+    recovery_max_daily_loss_pct: float = 6.5
+    recovery_max_attempts_per_day: int = 1
     # NOTE: `breakeven_atr_multiple` was REMOVED here. It was declared but never
     # read anywhere, and its value (1.0) directly contradicted the canonical exit
     # policy, which defers breakeven to +2R. Leaving a dead field named this
@@ -129,6 +145,10 @@ class JarvisConfig:
                     ("min_confidence_floor", "min_confidence_floor", float),
                     ("min_trade_score", "min_trade_score", float),
                     ("high_risk_trade_score", "high_risk_trade_score", float),
+                    ("recovery_channel_enabled", "recovery_channel_enabled", lambda v: str(v).strip().lower() in {"1", "true", "yes", "on"}),
+                    ("recovery_risk_pct", "recovery_risk_pct", float),
+                    ("recovery_max_daily_loss_pct", "recovery_max_daily_loss_pct", float),
+                    ("recovery_max_attempts_per_day", "recovery_max_attempts_per_day", int),
                 )
                 for json_key, attr, caster in risk_keys:
                     if json_key in r_data and r_data[json_key] is not None:

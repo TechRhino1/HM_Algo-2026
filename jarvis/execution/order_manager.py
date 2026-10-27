@@ -161,7 +161,13 @@ class OrderManager:
                           else position.open_price + fallback_risk)
                 )
             if position.ticket not in self._exit_policy:
-                self._exit_policy[position.ticket] = ExitPolicy.for_symbol(position.symbol, spec)
+                comment = str(getattr(position, "comment", "") or "").upper()
+                pos_style = "SCALP" if ("SCLP" in comment or "SCALP" in comment) else ("DAY_TRADING" if ("DAY" in comment or "INTRADAY" in comment) else "SWING")
+                reg_name = None
+                if context and getattr(context, "regime", None):
+                    reg_obj = getattr(context, "regime", None)
+                    reg_name = reg_obj.primary_regime.value if hasattr(reg_obj, "primary_regime") else str(reg_obj)
+                self._exit_policy[position.ticket] = ExitPolicy.for_symbol(position.symbol, spec, trade_style=pos_style, regime=reg_name)
             policy = self._exit_policy[position.ticket]
 
             initial_sl = self._initial_sl[position.ticket]

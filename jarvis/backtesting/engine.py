@@ -204,6 +204,14 @@ class BacktestEngine:
         either is omitted the previous behaviour is unchanged: MTF context is
         built by resampling the primary series to H4/D1.
         """
+        from jarvis.config.runtime import is_offline
+
+        if is_offline():
+            try:
+                self.decision_engine.strategy_selector.bandit.reset_for_backtest()
+            except Exception:
+                pass
+
         balance = self.initial_balance
         trades: List[Dict[str, Any]] = []
         open_trade: Optional[Dict[str, Any]] = None
@@ -429,7 +437,9 @@ class BacktestEngine:
                 # trail that sat *behind* the initial stop and could never ratchet.
                 # Net effect: trades that ran +20R were closed near +0.9R.
                 if "exit_policy" not in open_trade:
-                    open_trade["exit_policy"] = ExitPolicy.for_symbol(symbol, spec)
+                    trade_style = open_trade.get("trade_style", "SWING")
+                    reg_val = open_trade.get("regime", None)
+                    open_trade["exit_policy"] = ExitPolicy.for_symbol(symbol, spec, trade_style=trade_style, regime=reg_val)
 
                 bar_start_sl = float(open_trade["sl"])
                 price_for_exit = float(current_bar["close"])
@@ -803,7 +813,8 @@ class BacktestEngine:
                             trade_max_bars = geom_max_bars
                         else:
                             tp_price = decision.take_profit + price_shift
-                            exit_policy_for_trade = ExitPolicy.for_symbol(symbol, spec)
+                            trade_style_cand = getattr(decision, "trade_style", "SWING")
+                            exit_policy_for_trade = ExitPolicy.for_symbol(symbol, spec, trade_style=trade_style_cand)
                             trade_max_bars = None
 
                         # Enforce hard dollar risk cap based on filled entry & SL

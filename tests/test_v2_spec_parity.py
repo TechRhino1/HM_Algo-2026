@@ -25,13 +25,16 @@ from jarvis.execution.execution_engine import ExecutionEngine
 from jarvis.data.schemas import PositionSnapshot, DecisionObject, ExecutionMode
 
 
-def test_default_mode_is_demo():
+def test_default_mode_is_demo(monkeypatch):
     """Verify that default execution mode is demo per Spec v2.1."""
     from jarvis.config.settings import JarvisConfig
     cfg = JarvisConfig.load()
     assert cfg.trading.default_mode == "demo"
     assert verify_execution_mode("") == "demo"
     assert verify_execution_mode(None) == "demo"
+    monkeypatch.delenv("JARVIS_CONFIRM_LIVE", raising=False)
+    assert verify_execution_mode("live") == "paper"
+    monkeypatch.setenv("JARVIS_CONFIRM_LIVE", "1")
     assert verify_execution_mode("live") == "live"
     assert verify_execution_mode("demo") == "demo"
     assert verify_execution_mode("paper") == "paper"

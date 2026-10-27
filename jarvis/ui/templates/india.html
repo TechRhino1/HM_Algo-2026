@@ -128,15 +128,32 @@
     </nav>
 
     <!-- ==========================================================================
-         TOP INDICES & CPR STATUS BAR
+         1. THREE PROMINENT LIVE MARKET OVERVIEW CARDS (NIFTY 50, SENSEX, BANK NIFTY)
          ========================================================================== -->
-    <div class="indices-ticker-bar">
-        <div class="indices-title-tag">🇮🇳 BENCHMARK INDICES:</div>
-        <div id="indices-track" class="indices-track">
-            <!-- Dynamically populated by JS -->
-            <div class="index-pill-loading">Loading live NIFTY, BANKNIFTY, SENSEX telemetry...</div>
+    <section class="live-overview-section" aria-label="Live Benchmark Overview">
+        <div class="live-overview-header">
+            <div class="section-title-wrap">
+                <span class="live-pulse-badge"><span class="pulse-ring"></span> LIVE EXCHANGE</span>
+                <h1 class="overview-main-heading">Indian Markets Command Dashboard</h1>
+                <span class="live-clock-badge" id="live-exchange-clock">NSE / BSE Real-Time Feed</span>
+            </div>
+            <div class="overview-meta-info">
+                <span class="data-mode-tag">✓ Direct Broker Tick Resolution</span>
+                <span class="click-hint-tag">⚡ Click any card to launch Options Expert Advisor</span>
+            </div>
         </div>
-    </div>
+        <div class="live-overview-grid" id="live-overview-cards" role="region" aria-label="Index overview cards">
+            <div class="index-overview-card loading" id="card-nifty" tabindex="0" role="button" aria-label="NIFTY 50 overview card" onclick="window.selectOptionsAdvisorIndex('NIFTY')">
+                <div class="card-loading-shimmer">Loading NIFTY 50 live feed...</div>
+            </div>
+            <div class="index-overview-card loading" id="card-sensex" tabindex="0" role="button" aria-label="SENSEX overview card" onclick="window.selectOptionsAdvisorIndex('SENSEX')">
+                <div class="card-loading-shimmer">Loading SENSEX live feed...</div>
+            </div>
+            <div class="index-overview-card loading" id="card-banknifty" tabindex="0" role="button" aria-label="BANK NIFTY overview card" onclick="window.selectOptionsAdvisorIndex('BANKNIFTY')">
+                <div class="card-loading-shimmer">Loading BANK NIFTY live feed...</div>
+            </div>
+        </div>
+    </section>
 
     <!-- ==========================================================================
          INSTITUTIONAL FII / DII CASH & DERIVATIVES FLOW RIBBON
@@ -167,108 +184,288 @@
     <!-- ==========================================================================
          MAIN VIEWPORT CONTAINER
          ========================================================================== -->
-    <div class="india-layout-container" role="main" id="hm-main" aria-label="India market screener">
+    <div class="india-layout-container" role="main" id="hm-main" aria-label="India market command">
 
-        <!-- Filter & Control Toolbar -->
-        <div class="filter-panel-card">
-            <div class="filter-row">
-                <div class="filter-group">
-                    <span class="filter-label">SECTOR:</span>
-                    <div class="filter-pills-wrap">
-                        <button class="sector-pill active" onclick="window.setSectorFilter('all', this)">All</button>
-                        <button class="sector-pill" onclick="window.setSectorFilter('Indices', this)">Indices</button>
-                        <button class="sector-pill" onclick="window.setSectorFilter('Financial Services', this)">Banking & Fin</button>
-                        <button class="sector-pill" onclick="window.setSectorFilter('Technology', this)">IT / Tech</button>
-                        <button class="sector-pill" onclick="window.setSectorFilter('Consumer Cyclical', this)">Auto & Retail</button>
-                        <button class="sector-pill" onclick="window.setSectorFilter('Industrials', this)">Defense & Infra</button>
-                        <button class="sector-pill" onclick="window.setSectorFilter('Energy & Conglomerate', this)">Energy / Petrochem</button>
-                        <button class="sector-pill" onclick="window.setSectorFilter('Basic Materials', this)">Metals</button>
-                        <button class="sector-pill" onclick="window.setSectorFilter('Healthcare', this)">Pharma</button>
+        <!-- ======================================================================
+             SECTION 1: OPTIONS EXPERT ADVISOR & LIVE OPTION CHAIN WORKSPACE
+             ====================================================================== -->
+        <section id="section-options-advisor" class="options-advisor-workspace" aria-label="Options Expert Advisor">
+            <div class="advisor-header-row">
+                <div class="advisor-title-group">
+                    <span class="advisor-title-icon">🧠</span>
+                    <div>
+                        <h2 class="advisor-heading">Options Expert Advisor &amp; Derivatives Intelligence</h2>
+                        <span style="font-size:11.5px; color:var(--text-dim);">Live CE/PE Option Chain, Institutional Greeks, Volatility Corridors &amp; AI Trade Formulations</span>
                     </div>
                 </div>
 
-                <div class="filter-group">
-                    <span class="filter-label">CPR STRUCTURE:</span>
-                    <div class="filter-pills-wrap">
-                        <button class="cpr-pill active" onclick="window.setCprFilter('all', this)">All CPR</button>
-                        <button class="cpr-pill" onclick="window.setCprFilter('narrow', this)">⚡ Narrow CPR (Breakout)</button>
-                        <button class="cpr-pill" onclick="window.setCprFilter('wide', this)">🧱 Wide CPR (Rangebound)</button>
-                    </div>
-                </div>
-
-                <div class="filter-group">
-                    <span class="filter-label">MIN AI PROBABILITY:</span>
-                    <div class="filter-pills-wrap">
-                        <button class="prob-pill active" onclick="window.setProbFilter(0, this)">All (0%+)</button>
-                        <button class="prob-pill" onclick="window.setProbFilter(60, this)">60%+</button>
-                        <button class="prob-pill" onclick="window.setProbFilter(75, this)">🔥 75%+ Prime</button>
-                    </div>
+                <div class="advisor-index-tabs" role="tablist" aria-label="Select Index for Options Analysis">
+                    <button id="tab-opt-nifty" class="advisor-tab-btn active" role="tab" aria-selected="true" onclick="window.selectOptionsAdvisorIndex('NIFTY')">NIFTY 50</button>
+                    <button id="tab-opt-sensex" class="advisor-tab-btn" role="tab" aria-selected="false" onclick="window.selectOptionsAdvisorIndex('SENSEX')">SENSEX</button>
+                    <button id="tab-opt-banknifty" class="advisor-tab-btn" role="tab" aria-selected="false" onclick="window.selectOptionsAdvisorIndex('BANKNIFTY')">BANK NIFTY</button>
                 </div>
             </div>
 
-            <!-- Mobile filter dropdowns (shown <=900px, where .filter-row is hidden:
-                 15 pills wrapped to 8 rows and 233px at 360px wide). Each <select>
-                 projects the pills below it — options are built from the pill labels
-                 and choosing one clicks the matching pill, so the pill's own onclick
-                 still owns state and the .active marker. See stocks.html for the
-                 same pattern. -->
-            <div class="filter-dropdowns-row" id="filter-dropdowns-row">
-                <label class="fd-field">
-                    <span class="fd-label">Sector</span>
-                    <select class="fd-select" id="mob-filter-sector" data-pills=".sector-pill"
-                            onchange="window.applyMobileFilterSelect(this, '.sector-pill')"></select>
-                </label>
-                <label class="fd-field">
-                    <span class="fd-label">CPR structure</span>
-                    <select class="fd-select" id="mob-filter-cpr" data-pills=".cpr-pill"
-                            onchange="window.applyMobileFilterSelect(this, '.cpr-pill')"></select>
-                </label>
-                <label class="fd-field">
-                    <span class="fd-label">Min AI probability</span>
-                    <select class="fd-select" id="mob-filter-prob" data-pills=".prob-pill"
-                            onchange="window.applyMobileFilterSelect(this, '.prob-pill')"></select>
-                </label>
+            <!-- Options Telemetry KPI Ribbon -->
+            <div class="advisor-kpi-ribbon">
+                <div class="adv-kpi-box">
+                    <span class="adv-kpi-label">Underlying Spot</span>
+                    <div id="adv-spot-val" class="adv-kpi-val text-white">₹22,460.95</div>
+                </div>
+                <div class="adv-kpi-box">
+                    <span class="adv-kpi-label">ATM Strike</span>
+                    <div id="adv-atm-val" class="adv-kpi-val text-gold">22,450</div>
+                </div>
+                <div class="adv-kpi-box">
+                    <span class="adv-kpi-label">Max Pain Strike</span>
+                    <div id="adv-maxpain-val" class="adv-kpi-val text-cyan">22,500</div>
+                </div>
+                <div class="adv-kpi-box">
+                    <span class="adv-kpi-label">Put-Call Ratio (PCR)</span>
+                    <div id="adv-pcr-val" class="adv-kpi-val text-bull">0.71 (Bearish)</div>
+                </div>
+                <div class="adv-kpi-box">
+                    <span class="adv-kpi-label">ATM Straddle Premium</span>
+                    <div id="adv-straddle-val" class="adv-kpi-val text-white">₹319.65 (±1.4%)</div>
+                </div>
+                <div class="adv-kpi-box">
+                    <span class="adv-kpi-label">Expected Expiry Corridor</span>
+                    <div id="adv-corridor-val" class="adv-kpi-val text-gold">22,130 &ndash; 22,770</div>
+                </div>
+                <div class="adv-kpi-box">
+                    <span class="adv-kpi-label">India VIX / Regime</span>
+                    <div id="adv-vix-val" class="adv-kpi-val text-cyan">16.97 (Normal)</div>
+                </div>
+                <div class="adv-kpi-box">
+                    <span class="adv-kpi-label">NSE Lot Size</span>
+                    <div id="adv-lotsize-val" class="adv-kpi-val text-white">25 Qty</div>
+                </div>
             </div>
 
-            <!-- Action Ribbon (Heatmap, Option Chain, Strategy Builder, CSV) -->
-            <div class="toolbar-bottom-row">
-                <div class="toolbar-left-actions">
+            <!-- Two-Column Advisor Workspace -->
+            <div class="advisor-columns-grid">
+                
+                <!-- Left: AI Options Trading Advisor Console -->
+                <div class="advisor-left-console">
+                    <div class="advisor-briefing-card" id="adv-briefing-content">
+                        <strong>⚡ Institutional Intelligence Briefing:</strong>
+                        <p style="margin-top:6px; color:var(--text-secondary);">Loading live options microstructure and order flow for selected index...</p>
+                    </div>
+
+                    <!-- Quick Prompt Pills -->
+                    <div class="advisor-quick-prompts">
+                        <button class="opt-prompt-btn" onclick="window.sendAdvisorPrompt('best_call')">🎯 Best Call (CE)</button>
+                        <button class="opt-prompt-btn" onclick="window.sendAdvisorPrompt('best_put')">🛡️ Best Put (PE)</button>
+                        <button class="opt-prompt-btn" onclick="window.sendAdvisorPrompt('hero_zero')">⚡ Expiry Hero-Zero</button>
+                        <button class="opt-prompt-btn" onclick="window.sendAdvisorPrompt('spread')">⚖️ Defined-Risk Spread</button>
+                        <button class="opt-prompt-btn" onclick="window.sendAdvisorPrompt('greeks')">🧭 S/R &amp; Greeks Diagnostic</button>
+                    </div>
+
+                    <!-- Actionable Trade Recommendations (CE & PE) -->
+                    <div class="advisor-trade-opportunities" id="adv-trade-opportunities">
+                        <div class="opt-trade-card opt-trade-card-call" id="adv-call-card">
+                            <span class="opt-trade-badge">🟢 RECOMMENDED CALL (CE)</span>
+                            <div class="opt-trade-strike-name" id="adv-call-title">NIFTY 22450 CE</div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Entry Range:</span><span id="adv-call-entry" class="text-white">₹190 &ndash; ₹194</span></div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Stop Loss:</span><span id="adv-call-sl" class="text-bear">₹134.00 (-30%)</span></div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Target 1 / 2:</span><span id="adv-call-tp" class="text-bull">₹268 / ₹345</span></div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Delta / Theta:</span><span id="adv-call-greeks" class="text-cyan">0.536 / -20.0</span></div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Risk per Lot:</span><span id="adv-call-risk" class="text-gold">₹1,425.00</span></div>
+                        </div>
+
+                        <div class="opt-trade-card opt-trade-card-put" id="adv-put-card">
+                            <span class="opt-trade-badge">🔴 RECOMMENDED PUT (PE)</span>
+                            <div class="opt-trade-strike-name" id="adv-put-title">NIFTY 22450 PE</div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Entry Range:</span><span id="adv-put-entry" class="text-white">₹126 &ndash; ₹130</span></div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Stop Loss:</span><span id="adv-put-sl" class="text-bear">₹89.60 (-30%)</span></div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Target 1 / 2:</span><span id="adv-put-tp" class="text-bull">₹179 / ₹230</span></div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Delta / Theta:</span><span id="adv-put-greeks" class="text-cyan">-0.463 / -18.2</span></div>
+                            <div class="opt-trade-meta-row"><span class="opt-trade-meta-label">Risk per Lot:</span><span id="adv-put-risk" class="text-gold">₹960.00</span></div>
+                        </div>
+                    </div>
+
+                    <!-- Conversational Advisor Chat Input -->
+                    <div class="advisor-chat-input-row">
+                        <input type="text" id="opt-advisor-chat-input" class="advisor-chat-input" placeholder="Ask Options Advisor: e.g. What is the best strategy for expiry today?" autocomplete="off" onkeydown="if(event.key==='Enter') window.submitAdvisorQuery()">
+                        <button class="advisor-chat-send-btn" onclick="window.submitAdvisorQuery()">Ask AI</button>
+                    </div>
+                </div>
+
+                <!-- Right: Live CE / PE Option Chain Matrix -->
+                <div class="advisor-right-chain">
+                    <div class="chain-top-bar">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span style="font-weight:800; font-size:13px; color:#ffffff;">Live Option Chain (CE / PE)</span>
+                            <span id="adv-chain-source-badge" class="badge badge-nse">LIVE EXCHANGE</span>
+                        </div>
+                        <div class="chain-expiry-selector">
+                            <label for="adv-chain-expiry-select" style="color:var(--text-dim);">Expiry:</label>
+                            <select id="adv-chain-expiry-select" onchange="window.onAdvisorExpiryChange(this.value)">
+                                <option value="">Loading expiries...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="chain-table-wrap">
+                        <table class="adv-chain-table">
+                            <thead>
+                                <tr>
+                                    <th colspan="5" class="th-ce-head">CALLS (CE)</th>
+                                    <th class="th-strike-head">STRIKE</th>
+                                    <th colspan="5" class="th-pe-head">PUTS (PE)</th>
+                                </tr>
+                                <tr>
+                                    <th class="th-ce-head">OI Chg</th>
+                                    <th class="th-ce-head">OI</th>
+                                    <th class="th-ce-head">Vol</th>
+                                    <th class="th-ce-head">Delta</th>
+                                    <th class="th-ce-head">LTP (₹)</th>
+                                    <th class="th-strike-head">Price</th>
+                                    <th class="th-pe-head">LTP (₹)</th>
+                                    <th class="th-pe-head">Delta</th>
+                                    <th class="th-pe-head">Vol</th>
+                                    <th class="th-pe-head">OI</th>
+                                    <th class="th-pe-head">OI Chg</th>
+                                </tr>
+                            </thead>
+                            <tbody id="adv-chain-tbody">
+                                <tr>
+                                    <td colspan="11" style="text-align:center; padding:30px; color:var(--text-dim);">
+                                        Loading live institutional option chain...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- ======================================================================
+             SECTION 2: ADVANCED MARKET ANALYSIS AND PREDICTIONS
+             ====================================================================== -->
+        <section id="section-market-predictions" class="market-predictions-section" aria-label="Advanced Market Analysis and Predictions">
+            <div class="pred-header-bar">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-size:20px;">🎯</span>
+                    <div>
+                        <h2 style="font-size:16px; font-weight:900; color:#ffffff; margin:0;">Advanced Market Analysis &amp; Predictions</h2>
+                        <span style="font-size:11px; color:var(--text-dim);">Multi-Horizon Institutional Setups (Intraday, Scalp, Breakouts, S/R Levels)</span>
+                    </div>
+                </div>
+
+                <div class="pred-provenance-badge">
+                    <span style="display:inline-flex; align-items:center; gap:4px; color:var(--neon-bull);"><span class="pulse-ring" style="width:6px; height:6px;"></span> LIVE FEED</span>
+                    <span>&bull;</span>
+                    <span style="color:var(--accent-cyan);">🤖 AI PREDICTION ENGINE</span>
+                </div>
+            </div>
+
+            <!-- Horizon View Tabs -->
+            <div class="pred-horizon-tabs" role="tablist">
+                <button id="pred-tab-intraday" class="pred-tab-btn active" onclick="window.switchPredictionTab('intraday')">⚡ Intraday Trading</button>
+                <button id="pred-tab-scalping" class="pred-tab-btn" onclick="window.switchPredictionTab('scalping')">🎯 Scalping (5M)</button>
+                <button id="pred-tab-breakouts" class="pred-tab-btn" onclick="window.switchPredictionTab('breakouts')">🚀 Breakouts &amp; Breakdowns</button>
+                <button id="pred-tab-keylevels" class="pred-tab-btn" onclick="window.switchPredictionTab('keylevels')">🧭 Key S/R Levels &amp; Trends</button>
+            </div>
+
+            <!-- Predictions Cards Grid -->
+            <div id="predictions-cards-grid" class="predictions-cards-grid">
+                <!-- Dynamically populated by JS -->
+                <div style="grid-column:1 / -1; text-align:center; padding:24px; color:var(--text-dim); font-size:12px;">
+                    Calculating quantitative probability matrices and trade setups...
+                </div>
+            </div>
+        </section>
+
+        <!-- ======================================================================
+             SECTION 3: LIVE STOCK SCANNER & TRADING OPPORTUNITIES
+             ====================================================================== -->
+        <section id="section-stock-scanner" class="stock-scanner-section" aria-label="Live Stock Scanner">
+            <div class="table-header-bar" style="margin-bottom:12px;">
+                <div class="table-title">
+                    <span>📊 Live Stock Scanner &amp; Trading Opportunities</span>
+                    <span id="scanner-total-count" class="table-count-badge">Scanning 100+ Equities...</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
                     <button class="btn-action-tool" onclick="window.toggleSectorHeatmap()">
-                        <span>🗺️</span> Sector Rotation Heatmap
+                        <span>🗺️</span> Sector Heatmap
                     </button>
-                    <button class="btn-action-tool" onclick="window.openOptionChainModal('NIFTY')">
-                        <span>📊</span> NIFTY Option Chain (CE/PE)
-                    </button>
-                    <button class="btn-action-tool" onclick="window.openOptionChainModal('BANKNIFTY')">
-                        <span>⚡</span> BANKNIFTY Option Chain
-                    </button>
-                    <button class="btn-action-tool" onclick="window.openAiStrategyModal('NIFTY')">
-                        <span>🧠</span> AI Defined-Risk Strategy Builder
-                    </button>
-                </div>
-
-                <div class="toolbar-right-actions">
-                    <div class="auto-scan-box">
-                        <span class="scan-label">Auto-Scan:</span>
-                        <select id="auto-scan-interval" onchange="window.setAutoScanInterval(this.value)">
-                            <option value="15">15s</option>
-                            <option value="30" selected>30s</option>
-                            <option value="60">60s</option>
-                            <option value="0">Paused</option>
-                        </select>
-                        <span id="scan-countdown" class="scan-countdown-tag">30s</span>
-                    </div>
                     <button class="btn-action-tool" onclick="window.exportIndiaCsv()">
                         <span>📥</span> Export CSV
                     </button>
                 </div>
             </div>
-        </div>
 
-        <!-- ==========================================================================
-             SECTOR ROTATION HEATMAP PANEL (COLLAPSIBLE)
-             ========================================================================== -->
-        <div id="sector-heatmap-section" class="sector-heatmap-panel" style="display:none;">
+            <!-- 5 Distinct Scanner View Tabs -->
+            <div class="scanner-views-nav" role="tablist">
+                <button id="scan-tab-intraday" class="scanner-view-btn active" onclick="window.switchScannerView('intraday')">
+                    <span>⚡</span> Intraday Trading <span id="count-tab-intraday" class="scanner-view-count">0</span>
+                </button>
+                <button id="scan-tab-scalping" class="scanner-view-btn" onclick="window.switchScannerView('scalping')">
+                    <span>🎯</span> Scalping <span id="count-tab-scalping" class="scanner-view-count">0</span>
+                </button>
+                <button id="scan-tab-bullish" class="scanner-view-btn" onclick="window.switchScannerView('bullish')">
+                    <span>🟢</span> Bullish Setups <span id="count-tab-bullish" class="scanner-view-count">0</span>
+                </button>
+                <button id="scan-tab-bearish" class="scanner-view-btn" onclick="window.switchScannerView('bearish')">
+                    <span>🔴</span> Bearish Setups <span id="count-tab-bearish" class="scanner-view-count">0</span>
+                </button>
+                <button id="scan-tab-keylevels" class="scanner-view-btn" onclick="window.switchScannerView('key_levels')">
+                    <span>🧭</span> Key Price Levels <span id="count-tab-keylevels" class="scanner-view-count">0</span>
+                </button>
+            </div>
+
+            <!-- Sector & Search Filter Toolbar -->
+            <div class="filter-row" style="margin-bottom:14px;">
+                <div class="filter-group">
+                    <span class="filter-label">SECTOR:</span>
+                    <div class="filter-pills-wrap">
+                        <button class="sector-pill active" onclick="window.setSectorFilter('all', this)">All</button>
+                        <button class="sector-pill" onclick="window.setSectorFilter('Financial Services', this)">Banking &amp; Fin</button>
+                        <button class="sector-pill" onclick="window.setSectorFilter('Technology', this)">IT / Tech</button>
+                        <button class="sector-pill" onclick="window.setSectorFilter('Consumer Cyclical', this)">Auto &amp; Retail</button>
+                        <button class="sector-pill" onclick="window.setSectorFilter('Industrials', this)">Defense &amp; Infra</button>
+                        <button class="sector-pill" onclick="window.setSectorFilter('Energy &amp; Conglomerate', this)">Energy / Petrochem</button>
+                        <button class="sector-pill" onclick="window.setSectorFilter('Basic Materials', this)">Metals</button>
+                        <button class="sector-pill" onclick="window.setSectorFilter('Healthcare', this)">Pharma</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scanner Table -->
+            <div class="table-responsive">
+                <table class="screener-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol / Company</th>
+                            <th>LTP (₹)</th>
+                            <th>Change %</th>
+                            <th>RVOL</th>
+                            <th>CPR Classification</th>
+                            <th>Camarilla H4</th>
+                            <th>VWAP (₹)</th>
+                            <th>Why Identified (Clear Rationale)</th>
+                            <th>Lot Size</th>
+                            <th style="text-align:right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="screener-table-tbody">
+                        <tr>
+                            <td colspan="10" style="text-align:center; padding:30px; color:var(--text-dim);">
+                                Scanning NSE equity derivatives and calculating CPR / Camarilla matrices...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ======================================================================
+             SECTION 4: SECTOR ROTATION HEATMAP PANEL (COLLAPSIBLE)
+             ====================================================================== -->
+        <div id="sector-heatmap-section" class="sector-heatmap-panel" style="display:none; margin-bottom:24px;">
             <div class="heatmap-header-bar">
                 <div style="display:flex; align-items:center; gap:8px;">
                     <span style="font-size:16px;">🗺️</span>
@@ -279,78 +476,6 @@
             </div>
             <div id="sector-heatmap-grid" class="sector-heatmap-grid">
                 <!-- Dynamically populated by JS -->
-            </div>
-        </div>
-
-        <!-- ==========================================================================
-             AI RECOMMENDED: BUY NOW SHOWCASE SECTION
-             ========================================================================== -->
-        <div id="section-buy-now" class="ai-buy-now-section">
-            <div class="buy-now-header-bar">
-                <div class="buy-now-title">
-                    <span class="buy-now-pulse-icon">⚡</span>
-                    <span style="font-weight:900; font-size:14px; letter-spacing:0.5px; background:linear-gradient(90deg, #00f59b, #ff9900); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
-                        AI RECOMMENDED: BUY NOW (NSE/BSE SETUPS)
-                    </span>
-                    <span class="badge badge-prime">PRIME HIGH CONVICTION</span>
-                </div>
-                <div style="font-size:11px; color:var(--text-dim);">
-                    Algorithmic setups with Narrow CPR breakout, VWAP support, positive institutional order flow, and asymmetrical R:R.
-                </div>
-            </div>
-            
-            <div id="ai-buy-now-grid" class="buy-now-cards-grid">
-                <!-- Dynamically populated by JS -->
-                <div style="grid-column: 1 / -1; text-align:center; padding:18px; color:var(--text-dim); font-size:12px;">
-                    Scanning Indian equity universe and options flow for prime Buy Now triggers...
-                </div>
-            </div>
-        </div>
-
-        <!-- ==========================================================================
-             MAIN SCREENER TABLE CARD
-             ========================================================================== -->
-        <div id="section-screener" class="screener-main-grid">
-            <div class="screener-table-card">
-                <div class="table-header-bar">
-                    <div class="table-title">
-                        <span>📊 Ranked NSE/BSE Breakout & CPR Opportunities</span>
-                        <span id="table-count-badge" class="table-count-badge">Scanning Universe...</span>
-                    </div>
-
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="font-size:11px; color:var(--text-dim);">Click any row for Full AI Dossier & Option Chain</span>
-                    </div>
-                </div>
-
-                <div class="table-responsive">
-                    <table class="screener-table">
-                        <thead>
-                            <tr>
-                                <th onclick="window.sortTableBy('setup_grade')">Grade ⬍</th>
-                                <th onclick="window.sortTableBy('symbol')">Symbol / Company ⬍</th>
-                                <th>CPR Structure</th>
-                                <th>Camarilla H4 Breakout</th>
-                                <th>VWAP Level</th>
-                                <th onclick="window.sortTableBy('price')">LTP (₹) ⬍</th>
-                                <th onclick="window.sortTableBy('change_pct')">Change % ⬍</th>
-                                <th onclick="window.sortTableBy('probability')">AI Prob % ⬍</th>
-                                <th>RVOL</th>
-                                <th>Lot Size</th>
-                                <th>Opportunity State</th>
-                                <th>AI Recommendation</th>
-                                <th style="text-align:right;">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="screener-table-tbody">
-                            <tr>
-                                <td colspan="13" style="text-align:center; padding:30px; color:var(--text-dim);">
-                                    Scanning NSE equity derivatives and calculating CPR / Camarilla matrices...
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
             </div>
         </div>
 
