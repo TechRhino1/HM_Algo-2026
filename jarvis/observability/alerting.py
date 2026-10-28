@@ -130,18 +130,36 @@ class AlertManager:
 
         return True
 
+    @staticmethod
+    def format_webhook_payload(webhook_url: str, alert: Alert) -> Dict[str, Any]:
+        """Auto-formats webhook payload for Discord, Telegram, or Slack/generic."""
+        url_lower = webhook_url.lower()
+        if "discord.com" in url_lower:
+            return {
+                "content": f"**[{alert.severity.value}] [{alert.source}] {alert.title}**\n{alert.message}"
+            }
+        elif "api.telegram.org" in url_lower:
+            chat_id = os.environ.get("JARVIS_TELEGRAM_CHAT_ID", "")
+            return {
+                "chat_id": chat_id,
+                "text": f"*{alert.severity.value} - {alert.source}: {alert.title}*\n{alert.message}",
+                "parse_mode": "Markdown"
+            }
+        else:
+            return {
+                "text": f"*{alert.severity.value} Alert - {alert.source}*\n*{alert.title}*\n{alert.message}",
+                "severity": alert.severity.value,
+                "title": alert.title,
+                "source": alert.source,
+                "timestamp": alert.timestamp,
+                "details": alert.details,
+            }
+
     def _send_webhook_payload(self, alert: Alert) -> None:
         """Sends HTTP POST webhook payload without blocking the caller."""
         if not self._webhook_url:
             return
-        payload = {
-            "text": f"*{alert.severity.value} Alert - {alert.source}*\n*{alert.title}*\n{alert.message}",
-            "severity": alert.severity.value,
-            "title": alert.title,
-            "source": alert.source,
-            "timestamp": alert.timestamp,
-            "details": alert.details,
-        }
+        payload = self.format_webhook_payload(self._webhook_url, alert)
         try:
             req = urllib_request.Request(
                 self._webhook_url,

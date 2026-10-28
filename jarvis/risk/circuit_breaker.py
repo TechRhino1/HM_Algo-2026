@@ -5,10 +5,13 @@ Halts trading during consecutive execution failures, rapid loss streaks, or plat
 import time
 import sqlite3
 import os
+import logging
 from typing import Dict, Any, Optional
 
 from jarvis.config.paths import resolve_db_path
 from jarvis.data.schema_version import migrate
+
+logger = logging.getLogger("JARVIS_CircuitBreaker")
 
 # D3: 1 = `circuit_state` as it exists today.
 SCHEMA_VERSION = 1
@@ -30,7 +33,13 @@ MIGRATIONS = {1: _migration_1}
 
 
 class CircuitBreaker:
-    def __init__(self, db_path: str = "jarvis_circuit_state.db", clock=None, reset_on_boot: Optional[bool] = None):
+    def __init__(
+        self,
+        db_path: str = "jarvis_circuit_state.db",
+        clock=None,
+        reset_on_boot: Optional[bool] = None,
+        consecutive_loss_limit: int = 5,
+    ):
         # Injectable clock. Live trading uses the real wall clock; a BACKTEST must
         # advance on BAR TIME (``BacktestEngine`` sets this to the current bar's
         # epoch seconds each bar). Without it, a 45-minute symbol pause is
@@ -38,6 +47,7 @@ class CircuitBreaker:
         # on how fast the machine is -- which made backtest trade counts vary
         # run to run (USDJPY 53 vs 63, XAUUSD 97 vs 84 on identical inputs).
         self._now = clock if clock is not None else time.time
+        self.consecutive_loss_limit = max(3, int(consecutive_loss_limit))
         # Anchored on the repo data dir — a CWD-relative path let the breaker
         # "forget" it had tripped when launched from a different directory.
         db_path = resolve_db_path(db_path)
@@ -171,9 +181,14 @@ class CircuitBreaker:
                 if self.regime_losses[regime] >= 3:
                     self.regime_paused_until[regime] = now + 3600.0
 
-            if self.consecutive_losses >= 3:
+            if self.consecutive_losses >= self.consecutive_loss_limit:
                 self.trip(f"{self.consecutive_losses} consecutive loss limit reached across portfolio.")
             else:
+                if self.consecutive_losses >= 3:
+                    logger.warning(
+                        "Portfolio consecutive losses reached %d (limit=%d). Individual symbol cooldowns active; monitoring portfolio heat.",
+                        self.consecutive_losses, self.consecutive_loss_limit
+                    )
                 self._save_state()
 
     def is_symbol_paused(self, symbol: str) -> bool:

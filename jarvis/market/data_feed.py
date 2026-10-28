@@ -360,6 +360,17 @@ class DataFeedEngine:
             if len(cached_df) >= num_bars:
                 return cached_df.tail(num_bars).copy()
 
+        # If requesting closed bars, check if forming bar cache is fresh and derive locally
+        if not include_current_bar:
+            forming_key = f"{symbol}_{timeframe}_True"
+            forming_entry = self._cache.get(forming_key)
+            if forming_entry is not None and (now - forming_entry["timestamp"]) < self._cache_ttl_sec:
+                forming_df = forming_entry["df"]
+                if len(forming_df) >= (num_bars + 1):
+                    closed_slice = forming_df.iloc[:-1].tail(num_bars).copy()
+                    closed_slice.attrs = dict(forming_df.attrs)
+                    return closed_slice
+
         fetch_bars = max(num_bars, 300)
 
         def _fetch():
@@ -576,12 +587,28 @@ class DataFeedEngine:
         if timeframes is None:
             timeframes = style_timeframes(trade_style)
 
-        result = {}
         is_intraday = trade_style.upper() in ("SCALP", "DAY_TRADING", "INTRADAY", "DAY")
+        
+        # Deduplicate MT5 calls across roles: fetch unique timeframes with forming bar, then slice locally
+        unique_tfs = set(timeframes.values())
+        raw_frames = {}
+        for tf in unique_tfs:
+            raw_frames[tf] = self.fetch_rates(symbol, timeframe=tf, num_bars=num_bars + 1, include_current_bar=True)
+
+        result = {}
         for role, tf in timeframes.items():
-            # Primary execution and timing frames must always reflect current price action across all styles
             inc_cur = True if (role in ("primary", "timing") or (is_intraday and role == "setup")) else False
-            result[role] = self.fetch_rates(symbol, timeframe=tf, num_bars=num_bars, include_current_bar=inc_cur)
+            df = raw_frames.get(tf)
+            if df is not None and not df.empty:
+                if inc_cur:
+                    res_df = df.tail(num_bars).copy()
+                else:
+                    # Slicing off the forming bar produces closed bars with zero MT5 roundtrip
+                    res_df = df.iloc[:-1].tail(num_bars).copy()
+                res_df.attrs = dict(df.attrs)
+                result[role] = res_df
+            else:
+                result[role] = self.fetch_rates(symbol, timeframe=tf, num_bars=num_bars, include_current_bar=inc_cur)
         return result
 
     def _generate_realistic_rates(self, symbol: str, timeframe: str, num_bars: int) -> pd.DataFrame:

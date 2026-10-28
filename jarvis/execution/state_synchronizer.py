@@ -30,6 +30,7 @@ class MT5StateSynchronizer:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._last_position_tickets: Set[int] = set()
+        self._last_position_volumes: Dict[int, float] = {}
         self._backoff_delay = 1.0
         self._max_backoff = 30.0
 
@@ -55,14 +56,51 @@ class MT5StateSynchronizer:
             self.state_manager.update_account(account)
             self.state_manager.update_positions(positions)
 
-            # Reconcile closed/opened positions
-            current_tickets = set(p.ticket for p in positions)
+            # Reconcile closed/opened positions and partial fills
+            current_positions_by_ticket = {p.ticket: p for p in positions}
+            current_tickets = set(current_positions_by_ticket.keys())
             
+            # Detect partial closes on surviving positions
+            for t, p in current_positions_by_ticket.items():
+                if t in self._last_position_volumes:
+                    old_vol = self._last_position_volumes[t]
+                    if p.volume < (old_vol - 1e-4):
+                        closed_vol = round(old_vol - p.volume, 4)
+                        logger.info(
+                            f"State Reconciliation: Partial close detected on Position #{t} "
+                            f"(volume {old_vol} -> {p.volume}, closed {closed_vol} lots)."
+                        )
+                        partial_deal_pnl = 0.0
+                        exit_price = p.current_price
+                        try:
+                            import MetaTrader5 as mt5
+                            with self.mt5_client._shared_lock:
+                                deals = mt5.history_deals_get(position=t) if self.mt5_client.mode != "paper" else None
+                            if deals:
+                                exit_deals = [d for d in deals if getattr(d, "entry", 0) in (1, 3)]
+                                if exit_deals:
+                                    last_deal = exit_deals[-1]
+                                    partial_deal_pnl = float(last_deal.profit + last_deal.swap + last_deal.commission)
+                                    exit_price = float(last_deal.price)
+                        except Exception as e:
+                            logger.error(f"Failed to fetch deal history for partial close on position #{t}: {e}")
+
+                        self.event_bus.publish_sync("POSITION_PARTIALLY_CLOSED", {
+                            "ticket": t,
+                            "symbol": p.symbol,
+                            "remaining_volume": p.volume,
+                            "closed_volume": closed_vol,
+                            "realized_pnl": partial_deal_pnl,
+                            "exit_price": exit_price,
+                            "equity": account.equity
+                        })
+
             # Detect newly closed positions
             closed_tickets = self._last_position_tickets - current_tickets
             for t in closed_tickets:
                 logger.info(f"State Reconciliation: Position #{t} closed on broker terminal.")
                 self.event_bus.publish_sync("POSITION_CLOSED", {"ticket": t})
+                self._last_position_volumes.pop(t, None)
                 
                 # Fetch deal history for ML feedback loop (§17)
                 try:
@@ -92,6 +130,7 @@ class MT5StateSynchronizer:
                 self.event_bus.publish_sync("POSITION_OPENED", {"ticket": t})
 
             self._last_position_tickets = current_tickets
+            self._last_position_volumes = {t: p.volume for t, p in current_positions_by_ticket.items()}
 
             status = "CONNECTED" if (self.mt5_client.is_connected and account.login > 0) else "DISCONNECTED"
             self.state_manager.update_service_health("MT5", status)
