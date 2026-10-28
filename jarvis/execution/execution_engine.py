@@ -1,523 +1,1088 @@
 """
+
 HM Algo 2.0 — Master Execution Engine.
+
 Orchestrates order dispatch, mode verification (LIVE/PAPER/DEMO), and execution logging.
+
 """
+
 import logging
+
 import uuid
+
 from typing import Dict, Any, Optional
+
 from jarvis.data.schemas import DecisionObject
+
 from jarvis.execution.mt5_client import MT5Client
+
 from jarvis.application.state_manager import StateManager, GLOBAL_STATE
+
 from jarvis.observability import log_event
+
 from jarvis.observability.instruments import ORDERS_SUBMITTED, ORDER_LATENCY
+
 from jarvis.data.symbol_registry import resolve as resolve_symbol_spec
+
+
 
 logger = logging.getLogger("JARVIS_ExecutionEngine")
 
+
+
 class ExecutionEngine:
+
     def __init__(self, mt5_client: MT5Client, state_manager: StateManager = GLOBAL_STATE):
+
         self.mt5_client = mt5_client
+
         self.state_manager = state_manager or GLOBAL_STATE
 
+
+
     def _classify_broker_response(self, res: Optional[Dict[str, Any]]) -> str:
+
         """Classify broker response according to Spec v2.2 taxonomy:
+
         - FILLED: Order executed fully with ticket and fill price.
+
         - ACCEPTED: Order placed as pending (e.g. BUY_LIMIT/SELL_LIMIT) or resting in broker queue.
+
         - PARTIAL: Order partially executed.
+
         - REJECTED: Broker explicitly rejected order (e.g. invalid volume, price, stops, off quotes).
+
         - FAILED: Internal failure before reaching broker or explicit broker failure code.
+
         - UNKNOWN: Timeout, disconnect, or ambiguous broker response requiring state reconciliation.
+
         - POSITION_CONFIRMED: Position confirmed active on terminal.
+
         """
+
         if not res:
+
             return "UNKNOWN"
+
         raw_status = str(res.get("status", "")).upper()
+
         if raw_status in ("FILLED", "POSITION_CONFIRMED", "PARTIAL"):
+
             return raw_status
+
         if raw_status in ("PLACED", "ACCEPTED", "PENDING"):
+
             return "ACCEPTED"
+
         if raw_status in ("REJECTED", "BLOCKED"):
+
             return "REJECTED"
+
         if raw_status in ("FAILED", "SAFETY_BLOCK", "TIMEOUT_FALLBACK_BLOCKED"):
+
             return "FAILED"
+
         if raw_status in ("UNKNOWN", "TIMEOUT", "DISCONNECTED"):
+
             return "UNKNOWN"
+
         retcode = res.get("retcode")
+
         if retcode is not None:
+
             if retcode in (10009,):
+
                 return "FILLED" if res.get("ticket") else "ACCEPTED"
+
             if retcode in (10008,):
+
                 return "ACCEPTED"
+
             if retcode in (10010,):
+
                 return "PARTIAL"
+
             if retcode in (10004, 10006, 10013, 10014, 10015, 10016, 10017, 10018, 10019, 10020, 10021):
+
                 return "REJECTED"
+
             if retcode in (10022, 10024):
+
                 return "UNKNOWN"
+
         return "UNKNOWN"
 
+
+
     def _price_origin(self, res: Dict[str, Any]) -> str:
+
         """Where the fill price came from — `broker`, `paper` or `synthetic` (D1).
 
+
+
         Paper and live fills land in the same table and were indistinguishable,
+
         so every realised-P&L number read from it mixed simulated money with
+
         real. A fallback price is worse than paper: it means the quote was
+
         missing and a stand-in was used, and the row must not be counted as a
+
         market result at all.
+
         """
+
         if res.get("is_fallback"):
+
             return "synthetic"
+
         mode = str(getattr(self.mt5_client, "mode", "") or "").lower()
+
         if mode == "paper":
+
             return "paper"
+
         if mode in ("live", "demo"):
+
             # A live client that could not reach the terminal falls back too;
+
             # `not MT5_AVAILABLE` in send_market_order takes the same branch as
+
             # paper, so ask whether the client actually connected.
+
             return "broker" if getattr(self.mt5_client, "is_connected", True) else "synthetic"
+
         return "unknown"
 
+
+
     def _execution_mode(self, res: Dict[str, Any] = None) -> str:
+
         """The execution mode this fill was produced under (D1, completed).
 
+
+
         Deliberately NOT derived from :meth:`_price_origin`. A live client that
+
         has lost the terminal takes the same branch as paper inside
+
         `send_market_order`, so its price is a stand-in — but the order was
+
         still routed to a real account, and the row has to say so. Conflating
+
         "the price is a stand-in" with "this was simulated money" is what left
+
         paper and live fills indistinguishable in the first place.
+
         """
+
         mode = str(getattr(self.mt5_client, "mode", "") or "").lower()
+
         return mode if mode in ("live", "paper", "demo") else "unknown"
 
+
+
     @staticmethod
+
     def _quantize_price(price: float, tick_size: float, digits: int) -> float:
+
         if tick_size > 0:
+
             return round(round(price / tick_size) * tick_size, digits)
+
         return round(price, digits)
 
+
+
     def execute_decision(
+
         self,
+
         decision: DecisionObject,
+
         lots: float,
+
         sym_spec: Optional[Dict[str, Any]] = None,
+
     ) -> Dict[str, Any]:
+
         """Dispatches authorized decision to MT5 or Paper Simulator."""
+
         if not decision.execution_authorized or lots <= 0:
+
             logger.warning(f"Execution rejected for {decision.symbol}: Not authorized or invalid lot size ({lots}).")
+
             ORDERS_SUBMITTED.inc(mode=self._execution_mode(), status="BLOCKED")
+
             return {"status": "BLOCKED", "reason": "Execution unauthorized"}
 
+
+
         state_mgr = self.state_manager or GLOBAL_STATE
+
         if getattr(state_mgr, "is_safe_mode", False):
+
             logger.warning(f"Execution blocked for {decision.symbol}: SAFE MODE is ACTIVE.")
+
             ORDERS_SUBMITTED.inc(mode=self._execution_mode(), status="BLOCKED")
+
             return {"status": "BLOCKED", "reason": "Safe mode active"}
 
+
+
         setup_id_val = getattr(decision, "setup_id", None)
+
         cand_id_val = getattr(decision, "candidate_id", None)
+
         if not isinstance(setup_id_val, str) or not setup_id_val:
+
             if isinstance(cand_id_val, str) and cand_id_val:
+
                 setup_id_val = cand_id_val
+
             else:
+
                 setup_id_val = str(uuid.uuid4())
+
         decision.setup_id = setup_id_val
+
         setup_id = setup_id_val
 
+
+
         mode = getattr(state_mgr, "execution_mode", "demo")
+
         trade_style = getattr(decision, "trade_style", "") or "DAY"
+
         ts_str = str(trade_style).upper()
+
         if "SWING" in ts_str:
+
             style_code = "SWNG"
+
         elif "SCALP" in ts_str:
+
             style_code = "SCLP"
+
         else:
+
             style_code = "DAY"
+
         strat_code = str(getattr(decision, "strategy", "TRND") or "TRND")[:4].upper()
+
         mode_code = getattr(mode, "value", str(mode))[:4].upper()
+
         comment = f"HMA2_{style_code}_{strat_code}_{mode_code}"
 
+
+
         # ── Pre-fill Broker-Safe Sizing and SL Distance Calculation (Spec v2.1 Refinement 1) ──
+
         if sym_spec is None:
+
             sym_spec = {}
+
             if hasattr(self.mt5_client, "get_symbol_trading_spec"):
+
                 sym_spec = self.mt5_client.get_symbol_trading_spec(decision.symbol) or {}
+
         
+
         reg_spec = resolve_symbol_spec(decision.symbol)
+
         point = float(sym_spec.get("point") or (reg_spec.pip_size if reg_spec else 0.0001) or 0.0001)
+
         digits = int(sym_spec.get("digits") or (reg_spec.digits if reg_spec else 5) or 5)
+
         tick_sz = float(sym_spec.get("trade_tick_size") or (reg_spec.pip_size if reg_spec else point) or point)
+
         tick_val = float(sym_spec.get("trade_tick_value") or (reg_spec.pip_value_per_lot if reg_spec else 1.0) or 1.0)
+
         dollar_risk_per_price_unit = tick_val / max(tick_sz, 1e-9)
 
+
+
         stops_level = int(sym_spec.get("trade_stops_level", 0) or 0)
+
         spread_points = int(sym_spec.get("spread", 0) or 0)
+
         spread_dist = spread_points * point
+
         stops_level_dist = stops_level * point
+
         min_broker_stop_dist = max(stops_level_dist, spread_dist * 2.0, 10.0 * point)
 
+
+
         planned_sl_dist = abs(decision.entry_price - decision.stop_loss)
+
         executable_sl_dist = max(planned_sl_dist, min_broker_stop_dist)
+
         executable_tp_dist = abs(decision.take_profit - decision.entry_price) if decision.take_profit > 0 else 0.0
 
+
+
         # If planned stop is too close to entry for the broker, adjust SL and TP proportionally
+
         if executable_sl_dist > planned_sl_dist + 1e-9:
+
             # RULE 1: If broker minimum stop distance is > 2.0x planned stop,
+
             # the scalp/intraday geometry is fundamentally invalid for this broker. BLOCK ORDER!
+
             if executable_sl_dist > (planned_sl_dist * 2.0):
+
                 logger.error(
+
                     f"🛑 EXECUTION BLOCKED for {decision.symbol}: Broker stops_level ({executable_sl_dist:.2f} pts) "
+
                     f"is > 2.0x planned stop ({planned_sl_dist:.2f} pts). Scalp geometry invalid on this broker."
+
                 )
+
                 return {"status": "BLOCKED", "reason": f"Broker stops_level exceeds 2x planned stop ({executable_sl_dist:.2f} > {planned_sl_dist*2:.2f})"}
 
+
+
             # RULE 2: If stop is modestly widened, Take Profit MUST be proportionally expanded
+
             # to preserve at least 1.8:1 (or 2.0:1 for Gold) Risk:Reward ratio!
+
             min_target_rr = 2.0 if ("XAU" in decision.symbol.upper() or "GOLD" in decision.symbol.upper()) else 1.8
+
             expansion_ratio = executable_sl_dist / max(planned_sl_dist, 1e-6)
+
             executable_tp_dist = max(executable_tp_dist * expansion_ratio, executable_sl_dist * min_target_rr)
 
+
+
             if decision.bias == "BUY":
+
                 decision.stop_loss = self._quantize_price(decision.entry_price - executable_sl_dist, tick_sz, digits)
+
                 decision.take_profit = self._quantize_price(decision.entry_price + executable_tp_dist, tick_sz, digits)
+
             else:
+
                 decision.stop_loss = self._quantize_price(decision.entry_price + executable_sl_dist, tick_sz, digits)
+
                 decision.take_profit = self._quantize_price(decision.entry_price - executable_tp_dist, tick_sz, digits)
 
+
+
             decision.sl_distance = executable_sl_dist
+
             decision.tp_distance = executable_tp_dist
+
             decision.risk_reward_ratio = round(executable_tp_dist / executable_sl_dist, 2)
+
             logger.info(
+
                 f"🔧 RE-ALIGNED SL & TP to Broker Minimum: SL={decision.stop_loss} ({executable_sl_dist:.2f} pts), "
+
                 f"TP={decision.take_profit} ({executable_tp_dist:.2f} pts), R:R={decision.risk_reward_ratio}:1"
+
             )
 
+
+
             # Adjust lot size down if widening the SL would breach the risk budget
+
             account_equity = self.state_manager.account.equity if self.state_manager.account else 10000.0
+
             from jarvis.config.settings import SETTINGS
+
             max_risk_pct = SETTINGS.risk.max_risk_per_trade_pct
+
             target_risk_usd = account_equity * (max_risk_pct / 100.0)
+
             
+
             safe_lots = target_risk_usd / (executable_sl_dist * dollar_risk_per_price_unit)
+
             vol_step = float(sym_spec.get("volume_step", 0.01) or 0.01)
+
             vol_min = float(sym_spec.get("volume_min", 0.01) or 0.01)
+
             
+
             # Micro-account capital preservation guard:
+
             # If minimum lot forced risk > $12.00 on account < $500, REJECT ORDER!
+
             min_lot_risk_usd = vol_min * executable_sl_dist * dollar_risk_per_price_unit
+
             if account_equity < 500.0 and min_lot_risk_usd > 12.0:
+
                 logger.error(
+
                     f"🛑 EXECUTION BLOCKED for {decision.symbol}: Minimum lot {vol_min} would risk "
+
                     f"${min_lot_risk_usd:.2f} on equity ${account_equity:.2f} (max $12.00 allowed)."
+
                 )
+
                 return {"status": "BLOCKED", "reason": f"Risk ${min_lot_risk_usd:.2f} exceeds micro account ceiling $12.00"}
 
+
+
             safe_lots = max(vol_min, round(safe_lots / vol_step) * vol_step)
+
             safe_lots = round(safe_lots, 2)
+
             if safe_lots < lots:
+
                 logger.info(
+
                     f"🛡️ SIZING DOWN VOLUME to protect risk ceiling: {lots} lots -> {safe_lots} lots "
+
                     f"(target risk ${target_risk_usd:.2f} on {executable_sl_dist:.5f} stop distance)"
+
                 )
+
                 lots = safe_lots
 
+
+
         # FINAL PRE-DISPATCH R:R GATE: Never dispatch any order with degenerate R:R < 1.30:1!
+
         final_risk = abs(decision.entry_price - decision.stop_loss)
+
         final_reward = abs(decision.take_profit - decision.entry_price)
+
         final_rr = (final_reward / max(final_risk, 1e-6)) if final_risk > 0 else 0.0
+
         if final_rr < 1.30:
+
             logger.error(f"🛑 REJECTED DISPATCH for {decision.symbol}: Final R:R ratio {final_rr:.2f}:1 is below 1.30:1 minimum!")
+
             return {"status": "BLOCKED", "reason": f"Final R:R {final_rr:.2f}:1 < 1.30"}
 
+
+
         # Pre-quantize initial levels
+
         decision.entry_price = self._quantize_price(decision.entry_price, tick_sz, digits)
+
         decision.stop_loss = self._quantize_price(decision.stop_loss, tick_sz, digits)
+
         if decision.take_profit > 0:
+
             decision.take_profit = self._quantize_price(decision.take_profit, tick_sz, digits)
+
+
 
         logger.info(f"DISPATCHING ORDER [{mode.value}]: {decision.bias} {lots} {decision.symbol} @ Entry={decision.entry_price} SL={decision.stop_loss} TP={decision.take_profit}")
 
+
+
         order_kind = getattr(decision, "order_type", "MARKET").upper()
+
         use_limit = "LIMIT" in order_kind or "PENDING" in order_kind
+
+
 
         _order_timer = ORDER_LATENCY.time(route="pending" if use_limit else "market")
 
+
+
         ctx = getattr(decision, "context", None)
+
         cur_price = getattr(ctx, "current_price", decision.entry_price) if ctx else decision.entry_price
+
         if not isinstance(cur_price, (int, float)):
+
             cur_price = decision.entry_price
+
         bid_price = getattr(ctx, "bid", cur_price) if ctx else cur_price
+
         if not isinstance(bid_price, (int, float)):
+
             bid_price = cur_price
+
         ask_price = getattr(ctx, "ask", cur_price) if ctx else cur_price
+
         if not isinstance(ask_price, (int, float)):
+
             ask_price = cur_price
 
+
+
         valid_bid = isinstance(bid_price, (int, float)) and bid_price > 0
+
         valid_ask = isinstance(ask_price, (int, float)) and ask_price > 0
 
+
+
         if use_limit:
+
             # Task 1: Deduplication Guard — Block duplicate pending limit orders on the same symbol
+
             if hasattr(self.mt5_client, "get_pending_orders"):
+
                 existing_pending = self.mt5_client.get_pending_orders(decision.symbol)
+
                 if isinstance(existing_pending, (list, tuple)) and len(existing_pending) > 0:
+
                     ticket_id = existing_pending[0].get('ticket') if isinstance(existing_pending[0], dict) else getattr(existing_pending[0], 'ticket', '?')
+
                     logger.info(
+
                         f"🛡️ PENDING ORDER DEDUPLICATION: Symbol {decision.symbol} already has "
+
                         f"{len(existing_pending)} open pending order(s) (Ticket #{ticket_id}). "
+
                         f"Suppressing duplicate limit order dispatch."
+
                     )
+
                     return {"status": "BLOCKED", "reason": "Existing pending order active"}
 
+
+
             # Task 2b: Direction-vs-price sanity check for resting limit orders
+
             is_sane_limit = True
+
+            raw_atr = getattr(getattr(ctx, "volatility", None), "atr", None)
+
+            if isinstance(raw_atr, (int, float)) and raw_atr > 0:
+
+                atr_val = float(raw_atr)
+
+            else:
+
+                atr_val = (float(cur_price) * 0.005) if isinstance(cur_price, (int, float)) and cur_price > 0 else 1.0
+
+            max_tolerable_drift = max(0.20 * atr_val, float(tick_sz) * 10)
+
+
+
             if decision.bias == "BUY" and valid_bid and decision.entry_price >= (bid_price - min_broker_stop_dist):
-                logger.info(
-                    f"⚡ BUY_LIMIT price ({decision.entry_price}) is within broker minimum distance of current bid ({bid_price}, min_stop={min_broker_stop_dist:.5f}). "
-                    f"Routing seamlessly to instant MARKET order."
-                )
-                is_sane_limit = False
-            elif decision.bias == "SELL" and valid_ask and decision.entry_price <= (ask_price + min_broker_stop_dist):
-                logger.info(
-                    f"⚡ SELL_LIMIT price ({decision.entry_price}) is within broker minimum distance of current ask ({ask_price}, min_stop={min_broker_stop_dist:.5f}). "
-                    f"Routing seamlessly to instant MARKET order."
-                )
-                is_sane_limit = False
 
-            if is_sane_limit:
-                limit_dir = "BUY_LIMIT" if decision.bias == "BUY" else "SELL_LIMIT"
-                # Anchor SL and TP strictly to the quantized limit entry price
-                decision.entry_price = self._quantize_price(decision.entry_price, tick_sz, digits)
-                if decision.bias == "BUY":
-                    decision.stop_loss = self._quantize_price(decision.entry_price - executable_sl_dist, tick_sz, digits)
-                    if executable_tp_dist > 0:
-                        decision.take_profit = self._quantize_price(decision.entry_price + executable_tp_dist, tick_sz, digits)
-                else:
-                    decision.stop_loss = self._quantize_price(decision.entry_price + executable_sl_dist, tick_sz, digits)
-                    if executable_tp_dist > 0:
-                        decision.take_profit = self._quantize_price(decision.entry_price - executable_tp_dist, tick_sz, digits)
+                drift = abs(bid_price - decision.entry_price)
 
-                res = self.mt5_client.place_pending_order(
-                    symbol=decision.symbol,
-                    order_type=limit_dir,
-                    price=decision.entry_price,
-                    volume=lots,
-                    sl_price=decision.stop_loss,
-                    tp_price=decision.take_profit,
-                    comment=comment
-                )
-            else:
-                # Limit order was too close/invalid: route to market order re-anchored to live market price
-                ref_mkt_entry = ask_price if decision.bias == "BUY" and valid_ask else (bid_price if decision.bias == "SELL" and valid_bid else cur_price)
-                ref_mkt_entry = self._quantize_price(ref_mkt_entry, tick_sz, digits)
-                decision.entry_price = ref_mkt_entry
-                if decision.bias == "BUY":
-                    decision.stop_loss = self._quantize_price(ref_mkt_entry - executable_sl_dist, tick_sz, digits)
-                    if executable_tp_dist > 0:
-                        decision.take_profit = self._quantize_price(ref_mkt_entry + executable_tp_dist, tick_sz, digits)
-                else:
-                    decision.stop_loss = self._quantize_price(ref_mkt_entry + executable_sl_dist, tick_sz, digits)
-                    if executable_tp_dist > 0:
-                        decision.take_profit = self._quantize_price(ref_mkt_entry - executable_tp_dist, tick_sz, digits)
+                if drift > max_tolerable_drift:
 
-                res = self.mt5_client.send_market_order(
-                    symbol=decision.symbol,
-                    order_type=decision.bias,
-                    volume=lots,
-                    sl_price=decision.stop_loss,
-                    tp_price=decision.take_profit,
-                    comment=comment,
-                    reference_price=decision.entry_price
-                )
-        else:
-            # Standard Market order: re-anchor to live market price if observed
-            ref_mkt_entry = ask_price if decision.bias == "BUY" and valid_ask else (bid_price if decision.bias == "SELL" and valid_bid else decision.entry_price)
-            ref_mkt_entry = self._quantize_price(ref_mkt_entry, tick_sz, digits)
-            decision.entry_price = ref_mkt_entry
-            if decision.bias == "BUY":
-                decision.stop_loss = self._quantize_price(ref_mkt_entry - executable_sl_dist, tick_sz, digits)
-                if executable_tp_dist > 0:
-                    decision.take_profit = self._quantize_price(ref_mkt_entry + executable_tp_dist, tick_sz, digits)
-            else:
-                decision.stop_loss = self._quantize_price(ref_mkt_entry + executable_sl_dist, tick_sz, digits)
-                if executable_tp_dist > 0:
-                    decision.take_profit = self._quantize_price(ref_mkt_entry - executable_tp_dist, tick_sz, digits)
+                    logger.info(
 
-            res = self.mt5_client.send_market_order(
-                symbol=decision.symbol,
-                order_type=decision.bias,
-                volume=lots,
-                sl_price=decision.stop_loss,
-                tp_price=decision.take_profit,
-                comment=comment,
-                reference_price=decision.entry_price
-            )
+                        f"🚫 BUY_LIMIT rejected: market bid ({bid_price}) has drifted away from intended structural limit "
 
-        _order_timer.stop()
-        _order_status = self._classify_broker_response(res)
-        if res is not None and isinstance(res, dict):
-            res["classified_status"] = _order_status
+                        f"({decision.entry_price}, drift={drift:.5f} > {max_tolerable_drift:.5f}). Chasing prohibited."
 
-        ORDERS_SUBMITTED.inc(mode=self._execution_mode(), status=_order_status)
-        log_event(
-            logger,
-            logging.WARNING if _order_status not in ("FILLED", "ACCEPTED", "POSITION_CONFIRMED") else logging.INFO,
-            "order_dispatched",
-            f"{decision.symbol}: {_order_status} (setup_id={setup_id})",
-            symbol=decision.symbol,
-            action=decision.bias,
-            status=_order_status,
-            route="pending" if use_limit else "market",
-            volume=lots,
-            duration_ms=_order_timer.elapsed_ms,
-            setup_id=setup_id,
-        )
-
-        if _order_status == "UNKNOWN":
-            logger.error(
-                f"🚨 UNKNOWN broker execution state for setup_id={setup_id} {decision.symbol}. "
-                f"Broker response: {res}. Risk reservation held. Reconcile with MT5 positions/deals before any duplicate dispatch."
-            )
-
-        # §2: Re-anchor SL/TP to actual fill price if slippage occurred & validate post-fill risk
-        is_fill = res and (res.get("status") == "FILLED" or _order_status == "FILLED")
-        is_placed = res and (res.get("status") == "PLACED" or _order_status == "ACCEPTED")
-
-        if is_fill:
-            ticket = res.get("ticket")
-            fill_price = float(res.get("price", decision.entry_price))
-            sl_dist = getattr(decision, "sl_distance", 0.0)
-            tp_dist = getattr(decision, "tp_distance", 0.0)
-
-            if ticket and sl_dist > 0 and abs(fill_price - decision.entry_price) > 1e-5:
-                if decision.bias == "BUY":
-                    actual_sl = fill_price - sl_dist
-                    actual_tp = (fill_price + tp_dist) if tp_dist > 0 else decision.take_profit
-                else:
-                    actual_sl = fill_price + sl_dist
-                    actual_tp = (fill_price - tp_dist) if tp_dist > 0 else decision.take_profit
-
-                actual_rr = round(tp_dist / (sl_dist + 1e-9), 2)
-                logger.info(
-                    f"⚓ RE-ANCHORING SL/TP to real fill: Ticket=#{ticket} Fill={fill_price} "
-                    f"(planned {decision.entry_price}) -> Real SL={actual_sl:.4f}, TP={actual_tp:.4f} (R:R={actual_rr})"
-                )
-                mod_res = self.mt5_client.modify_position(ticket=ticket, sl=actual_sl, tp=actual_tp)
-                if mod_res and mod_res.get("status") == "MODIFIED":
-                    res["sl"] = actual_sl
-                    res["tp"] = actual_tp
-                    res["real_fill_anchored"] = True
-
-            # ── Post-Fill Monetary Risk Audit (LOG ONLY) ──────────────────
-            # IMPORTANT: This block no longer tightens the SL.  The old code
-            # crushed structural stops (e.g. 35-pt Gold) down to $13–$15 of
-            # monetary risk, placing the SL inside sub-session noise.  Forensic
-            # analysis of 465 trades showed 92.5% exiting by SL hit, with 269
-            # trades lasting < 5 minutes (–$884).  The position sizer already
-            # approved this trade at the given lot size; if the monetary risk is
-            # too large, the correct place to reject is BEFORE dispatch — not
-            # after fill by destroying the structural stop.
-            if ticket:
-                tick_val = float(sym_spec.get("trade_tick_value", 1.0) or 1.0)
-                tick_sz = float(sym_spec.get("trade_tick_size", point) or point)
-                dollar_per_unit = tick_val / max(tick_sz, 1e-9)
-                actual_sl_final = float(res.get("sl", decision.stop_loss))
-                realized_risk_usd = abs(fill_price - actual_sl_final) * dollar_per_unit * lots
-                
-                account_equity = self.state_manager.account.equity if self.state_manager.account else 10000.0
-                from jarvis.config.settings import SETTINGS
-                base_target = account_equity * (SETTINGS.risk.max_risk_per_trade_pct / 100.0)
-                is_gold_trade = any(k in str(decision.symbol).upper() for k in ["XAU", "GOLD"])
-                micro_floor = 28.0 if is_gold_trade else 15.0
-                target_risk_usd = max(base_target, micro_floor) if account_equity < 2500.0 else base_target
-                
-                if realized_risk_usd > target_risk_usd * 1.10:
-                    logger.warning(
-                        f"⚠️ POST-FILL RISK NOTE on #{ticket}: Realized risk ${realized_risk_usd:.2f} > target ${target_risk_usd:.2f} "
-                        f"(Lots: {lots}, Stop Dist: {abs(fill_price - actual_sl_final):.5f}). "
-                        f"Structural SL preserved — position sizer approved this geometry."
                     )
 
-        if is_fill or is_placed:
-            ticket = (res or {}).get("ticket")
-            fill_price = float((res or {}).get("price", decision.entry_price))
-            try:
-                import json
-                from jarvis.data.database import TRADE_DB
+                    return {"status": "BLOCKED", "reason": "LIMIT_DRIFT_EXCEEDED_NO_CHASE"}
+
+                logger.info(
+
+                    f"⚡ BUY_LIMIT price ({decision.entry_price}) is within broker minimum distance of current bid ({bid_price}, min_stop={min_broker_stop_dist:.5f}). "
+
+                    f"Routing seamlessly to instant MARKET order."
+
+                )
+
+                is_sane_limit = False
+
+            elif decision.bias == "SELL" and valid_ask and decision.entry_price <= (ask_price + min_broker_stop_dist):
+
+                drift = abs(decision.entry_price - ask_price)
+
+                if drift > max_tolerable_drift:
+
+                    logger.info(
+
+                        f"🚫 SELL_LIMIT rejected: market ask ({ask_price}) has drifted away from intended structural limit "
+
+                        f"({decision.entry_price}, drift={drift:.5f} > {max_tolerable_drift:.5f}). Chasing prohibited."
+
+                    )
+
+                    return {"status": "BLOCKED", "reason": "LIMIT_DRIFT_EXCEEDED_NO_CHASE"}
+
+                logger.info(
+
+                    f"⚡ SELL_LIMIT price ({decision.entry_price}) is within broker minimum distance of current ask ({ask_price}, min_stop={min_broker_stop_dist:.5f}). "
+
+                    f"Routing seamlessly to instant MARKET order."
+
+                )
+
+                is_sane_limit = False
+
+
+
+            if is_sane_limit:
+
+                limit_dir = "BUY_LIMIT" if decision.bias == "BUY" else "SELL_LIMIT"
+
+                # Anchor SL and TP strictly to the quantized limit entry price
+
+                decision.entry_price = self._quantize_price(decision.entry_price, tick_sz, digits)
+
+                if decision.bias == "BUY":
+
+                    decision.stop_loss = self._quantize_price(decision.entry_price - executable_sl_dist, tick_sz, digits)
+
+                    if executable_tp_dist > 0:
+
+                        decision.take_profit = self._quantize_price(decision.entry_price + executable_tp_dist, tick_sz, digits)
+
+                else:
+
+                    decision.stop_loss = self._quantize_price(decision.entry_price + executable_sl_dist, tick_sz, digits)
+
+                    if executable_tp_dist > 0:
+
+                        decision.take_profit = self._quantize_price(decision.entry_price - executable_tp_dist, tick_sz, digits)
+
+
+
+                res = self.mt5_client.place_pending_order(
+
+                    symbol=decision.symbol,
+
+                    order_type=limit_dir,
+
+                    price=decision.entry_price,
+
+                    volume=lots,
+
+                    sl_price=decision.stop_loss,
+
+                    tp_price=decision.take_profit,
+
+                    comment=comment
+
+                )
+
+            else:
+
+                # Limit order was too close/invalid: route to market order re-anchored to live market price
+
+                ref_mkt_entry = ask_price if decision.bias == "BUY" and valid_ask else (bid_price if decision.bias == "SELL" and valid_bid else cur_price)
+
+                ref_mkt_entry = self._quantize_price(ref_mkt_entry, tick_sz, digits)
+
+                decision.entry_price = ref_mkt_entry
+
+                if decision.bias == "BUY":
+
+                    decision.stop_loss = self._quantize_price(ref_mkt_entry - executable_sl_dist, tick_sz, digits)
+
+                    if executable_tp_dist > 0:
+
+                        decision.take_profit = self._quantize_price(ref_mkt_entry + executable_tp_dist, tick_sz, digits)
+
+                else:
+
+                    decision.stop_loss = self._quantize_price(ref_mkt_entry + executable_sl_dist, tick_sz, digits)
+
+                    if executable_tp_dist > 0:
+
+                        decision.take_profit = self._quantize_price(ref_mkt_entry - executable_tp_dist, tick_sz, digits)
+
+
+
+                res = self.mt5_client.send_market_order(
+
+                    symbol=decision.symbol,
+
+                    order_type=decision.bias,
+
+                    volume=lots,
+
+                    sl_price=decision.stop_loss,
+
+                    tp_price=decision.take_profit,
+
+                    comment=comment,
+
+                    reference_price=decision.entry_price
+
+                )
+
+        else:
+
+            # Standard Market order: re-anchor to live market price if observed
+
+            ref_mkt_entry = ask_price if decision.bias == "BUY" and valid_ask else (bid_price if decision.bias == "SELL" and valid_bid else decision.entry_price)
+
+            ref_mkt_entry = self._quantize_price(ref_mkt_entry, tick_sz, digits)
+
+            decision.entry_price = ref_mkt_entry
+
+            if decision.bias == "BUY":
+
+                decision.stop_loss = self._quantize_price(ref_mkt_entry - executable_sl_dist, tick_sz, digits)
+
+                if executable_tp_dist > 0:
+
+                    decision.take_profit = self._quantize_price(ref_mkt_entry + executable_tp_dist, tick_sz, digits)
+
+            else:
+
+                decision.stop_loss = self._quantize_price(ref_mkt_entry + executable_sl_dist, tick_sz, digits)
+
+                if executable_tp_dist > 0:
+
+                    decision.take_profit = self._quantize_price(ref_mkt_entry - executable_tp_dist, tick_sz, digits)
+
+
+
+            res = self.mt5_client.send_market_order(
+
+                symbol=decision.symbol,
+
+                order_type=decision.bias,
+
+                volume=lots,
+
+                sl_price=decision.stop_loss,
+
+                tp_price=decision.take_profit,
+
+                comment=comment,
+
+                reference_price=decision.entry_price
+
+            )
+
+
+
+        _order_timer.stop()
+
+        _order_status = self._classify_broker_response(res)
+
+        if res is not None and isinstance(res, dict):
+
+            res["classified_status"] = _order_status
+
+
+
+        ORDERS_SUBMITTED.inc(mode=self._execution_mode(), status=_order_status)
+
+        log_event(
+
+            logger,
+
+            logging.WARNING if _order_status not in ("FILLED", "ACCEPTED", "POSITION_CONFIRMED") else logging.INFO,
+
+            "order_dispatched",
+
+            f"{decision.symbol}: {_order_status} (setup_id={setup_id})",
+
+            symbol=decision.symbol,
+
+            action=decision.bias,
+
+            status=_order_status,
+
+            route="pending" if use_limit else "market",
+
+            volume=lots,
+
+            duration_ms=_order_timer.elapsed_ms,
+
+            setup_id=setup_id,
+
+        )
+
+
+
+        if _order_status == "UNKNOWN":
+
+            logger.error(
+
+                f"🚨 UNKNOWN broker execution state for setup_id={setup_id} {decision.symbol}. "
+
+                f"Broker response: {res}. Risk reservation held. Reconcile with MT5 positions/deals before any duplicate dispatch."
+
+            )
+
+
+
+        # §2: Re-anchor SL/TP to actual fill price if slippage occurred & validate post-fill risk
+
+        is_fill = res and (res.get("status") == "FILLED" or _order_status == "FILLED")
+
+        is_placed = res and (res.get("status") == "PLACED" or _order_status == "ACCEPTED")
+
+
+
+        if is_fill:
+
+            ticket = res.get("ticket")
+
+            fill_price = float(res.get("price", decision.entry_price))
+
+            sl_dist = getattr(decision, "sl_distance", 0.0)
+
+            tp_dist = getattr(decision, "tp_distance", 0.0)
+
+
+
+            if ticket and sl_dist > 0 and abs(fill_price - decision.entry_price) > 1e-5:
+
+                if decision.bias == "BUY":
+
+                    actual_sl = fill_price - sl_dist
+
+                    actual_tp = (fill_price + tp_dist) if tp_dist > 0 else decision.take_profit
+
+                else:
+
+                    actual_sl = fill_price + sl_dist
+
+                    actual_tp = (fill_price - tp_dist) if tp_dist > 0 else decision.take_profit
+
+
+
+                actual_rr = round(tp_dist / (sl_dist + 1e-9), 2)
+
+                logger.info(
+
+                    f"⚓ RE-ANCHORING SL/TP to real fill: Ticket=#{ticket} Fill={fill_price} "
+
+                    f"(planned {decision.entry_price}) -> Real SL={actual_sl:.4f}, TP={actual_tp:.4f} (R:R={actual_rr})"
+
+                )
+
+                mod_res = self.mt5_client.modify_position(ticket=ticket, sl=actual_sl, tp=actual_tp)
+
+                if mod_res and mod_res.get("status") == "MODIFIED":
+
+                    res["sl"] = actual_sl
+
+                    res["tp"] = actual_tp
+
+                    res["real_fill_anchored"] = True
+
+
+
+            # ── Post-Fill Monetary Risk Audit (LOG ONLY) ──────────────────
+
+            # IMPORTANT: This block no longer tightens the SL.  The old code
+
+            # crushed structural stops (e.g. 35-pt Gold) down to $13–$15 of
+
+            # monetary risk, placing the SL inside sub-session noise.  Forensic
+
+            # analysis of 465 trades showed 92.5% exiting by SL hit, with 269
+
+            # trades lasting < 5 minutes (–$884).  The position sizer already
+
+            # approved this trade at the given lot size; if the monetary risk is
+
+            # too large, the correct place to reject is BEFORE dispatch — not
+
+            # after fill by destroying the structural stop.
+
+            if ticket:
+
+                tick_val = float(sym_spec.get("trade_tick_value", 1.0) or 1.0)
+
+                tick_sz = float(sym_spec.get("trade_tick_size", point) or point)
+
+                dollar_per_unit = tick_val / max(tick_sz, 1e-9)
+
+                actual_sl_final = float(res.get("sl", decision.stop_loss))
+
+                realized_risk_usd = abs(fill_price - actual_sl_final) * dollar_per_unit * lots
+
                 
+
+                account_equity = self.state_manager.account.equity if self.state_manager.account else 10000.0
+
+                from jarvis.config.settings import SETTINGS
+
+                base_target = account_equity * (SETTINGS.risk.max_risk_per_trade_pct / 100.0)
+
+                is_gold_trade = any(k in str(decision.symbol).upper() for k in ["XAU", "GOLD"])
+
+                micro_floor = 28.0 if is_gold_trade else 15.0
+
+                target_risk_usd = max(base_target, micro_floor) if account_equity < 2500.0 else base_target
+
+                
+
+                if realized_risk_usd > target_risk_usd * 1.10:
+
+                    logger.warning(
+
+                        f"⚠️ POST-FILL RISK NOTE on #{ticket}: Realized risk ${realized_risk_usd:.2f} > target ${target_risk_usd:.2f} "
+
+                        f"(Lots: {lots}, Stop Dist: {abs(fill_price - actual_sl_final):.5f}). "
+
+                        f"Structural SL preserved — position sizer approved this geometry."
+
+                    )
+
+
+
+        if is_fill or is_placed:
+
+            ticket = (res or {}).get("ticket")
+
+            fill_price = float((res or {}).get("price", decision.entry_price))
+
+            try:
+
+                import json
+
+                from jarvis.data.database import TRADE_DB
+
+                
+
                 # Extract rich feature vector from MarketContext and DecisionObject
+
                 ctx = getattr(decision, "context", None)
+
                 if not ctx and hasattr(self.state_manager, "get_market_context"):
+
                     ctx = self.state_manager.get_market_context(decision.symbol)
+
                 if not ctx and hasattr(self.state_manager, "market_contexts") and isinstance(self.state_manager.market_contexts, dict):
+
                     ctx = self.state_manager.market_contexts.get(decision.symbol)
 
+
+
                 session_name = ctx.session.current_session if ctx and ctx.session else "UNKNOWN"
+
                 is_prime = ctx.session.is_prime_session if ctx and ctx.session else True
+
                 adx_val = float(ctx.momentum.adx) if ctx and ctx.momentum else 0.0
+
                 plus_di = float(ctx.momentum.plus_di) if ctx and ctx.momentum else 0.0
+
                 minus_di = float(ctx.momentum.minus_di) if ctx and ctx.momentum else 0.0
+
                 # Reporting only: prefer the real per-bar spread the feed
+
                 # measured (points→pips) over the registry constant, so trade
+
                 # analytics record what was actually quoted. `getattr` keeps a
+
                 # context built before this field existed working. No decision
+
                 # reads this value.
+
                 _live_spread = getattr(ctx, "live_spread_pips", None) if ctx else None
+
                 spread_pips = (
+
                     float(_live_spread)
+
                     if _live_spread is not None
+
                     else (float(ctx.volatility.current_spread_pips) if ctx and ctx.volatility else 0.0)
+
                 )
+
                 mtf_str = json.dumps(ctx.mtf_alignment) if ctx and ctx.mtf_alignment else ""
+
                 threats_json = json.dumps(decision.risk_factors or [])
+
                 real_ai_score = getattr(decision, "ai_score", 0.0) or 0.0
+
                 if real_ai_score <= 0.0:
+
                     real_ai_score = decision.model_confidence * 100.0
+
                 features_json = json.dumps({
+
                     "strategy": decision.strategy,
+
                     "adversarial_penalty": decision.adversarial_penalty,
+
                     "expected_value": decision.expected_value,
+
                     "rr_ratio": decision.risk_reward_ratio,
+
                     "model_confidence": decision.model_confidence,
+
                     "ai_score": round(real_ai_score, 1),
+
                     "setup_id": setup_id
+
                 })
 
+
+
                 TRADE_DB.log_trade(
+
                     ticket=ticket,
+
                     symbol=decision.symbol,
+
                     action=decision.bias,
+
                     entry=fill_price,
+
                     sl=res.get("sl", decision.stop_loss),
+
                     tp=res.get("tp", decision.take_profit),
+
                     volume=lots,
+
                     score=round(real_ai_score, 1),
+
                     regime=decision.regime.primary_regime.value if decision.regime else "UNKNOWN",
+
                     ev=decision.expected_value,
+
                     executor="BOT (AI)",
+
                     session_name=session_name,
+
                     is_prime_session=is_prime,
+
                     adx=adx_val,
+
                     plus_di=plus_di,
+
                     minus_di=minus_di,
+
                     spread_pips=spread_pips,
+
                     mtf_alignment=mtf_str,
+
                     threats_json=threats_json,
+
                     features_json=features_json,
+
                     # D2: the position id, not the order ticket, is what the exit
+
                     # deal will be keyed on. Without it the row can never close.
+
                     position_id=res.get("position_id"),
+
                     # D1: say where the fill price came from, so a statistic over
+
                     # this table can separate real money from simulated.
+
                     origin=self._price_origin(res),
+
                     # D1 (completed): and say whether it WAS real money. These
+
                     # are different questions -- a live fill whose client had
+
                     # lost the terminal is origin='synthetic' but
+
                     # execution_mode='live', and that row used to be
+
                     # unclassifiable.
+
                     execution_mode=self._execution_mode(res),
+
                 )
+
             except Exception as e:
+
                 logger.error(f"Failed to log trade to DB: {e}")
 
+
+
         return res
+

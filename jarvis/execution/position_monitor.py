@@ -411,13 +411,29 @@ class PositionMonitorEngine:
                     self._execute_exit(pos, reason="NEWS_EVENT_BANK")
                     continue
                 if verdict in ("BANK", "PROTECT") and current_r >= NEWS_PROTECT_FLOOR_R:
+                    pos_dur = self._get_position_duration_sec(pos)
+                    if pos_dur > 0 and pos_dur < 900.0:
+                        # Fresh trades (< 15 min old) need room to breathe and must not be choked by pre-release ratchets
+                        continue
+
                     buffer_dist = max(pip_size * 2.5, risk_dist * 0.05)
-                    floor = pos.open_price + (risk_dist * NEWS_PROTECT_FLOOR_R)
-                    floor = round((floor + buffer_dist) if is_buy else (floor - buffer_dist), digits)
-                    improves = (
-                        (floor > new_sl) if is_buy
-                        else (new_sl == 0 or floor < new_sl)
-                    )
+                    # NEWS_PROTECT_FLOOR_R is -0.25 (capping loss to 0.25R instead of 1.0R).
+                    # For BUY: SL moves up to open_price - (0.25 * risk_dist) + buffer_dist
+                    # For SELL: SL moves down to open_price + (0.25 * risk_dist) - buffer_dist
+                    if is_buy:
+                        floor = round(pos.open_price - (risk_dist * abs(NEWS_PROTECT_FLOOR_R)) + buffer_dist, digits)
+                        improves = (floor > new_sl)
+                    else:
+                        floor = round(pos.open_price + (risk_dist * abs(NEWS_PROTECT_FLOOR_R)) - buffer_dist, digits)
+                        improves = (new_sl == 0 or floor < new_sl)
+
+                    # Sanity guard: Floor must maintain minimum distance from current price to prevent spread stop-outs
+                    min_market_dist = max(pip_size * 10, risk_dist * 0.35)
+                    if is_buy and (pos.current_price - floor) < min_market_dist:
+                        improves = False
+                    elif not is_buy and (floor - pos.current_price) < min_market_dist:
+                        improves = False
+
                     if improves:
                         action_key = f"{floor:.{digits}f}_EVENTFLOOR"
                         if self._last_action.get(pos.ticket) != action_key:

@@ -1,1007 +1,1009 @@
-"""
-HM Algo 2.0 — Dynamic Risk & Volatility-Adaptive Levels Engine.
-Computes purely structural, volatility-adaptive SL, TP, and scale-out plans with zero static tables:
-- Dynamic Structural SL: Outer boundary of recent swing point / Order Block / FVG + dynamic volatility buffer.
-- Liquidity-Anchored Dynamic TP: Nearest opposing unmitigated Order Block / FVG / Liquidity Pool (1.5R to 3.5R+).
-- Adaptive Scale-Out Plan: Structural first target, regime-adaptive partial volume %, and ATR runner trailing.
-"""
-from typing import Dict, List, Any, Optional
-from datetime import datetime, timezone
-import logging
-import pandas as pd
-
-logger = logging.getLogger("JARVIS_DynamicLevels")
-
-from jarvis.data.schemas import (
-    MarketContext,
-    RegimeOutput,
-    MarketRegime,
-    is_observed_price,
-)
-from jarvis.data.symbol_registry import resolve as resolve_symbol
-from jarvis.intelligence.institutional_entry_engine import InstitutionalEntryEngine, INSTITUTIONAL_ENTRY_ENGINE
-from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config, get_style_profile
-
-
-class DynamicRiskAndLevelsEngine:
-    """
-    Autonomous mathematical engine for calculating market-structure-anchored,
-    volatility-adaptive Stop Loss, Take Profit, and Scale-Out levels.
-    Eliminates hardcoded asset/regime tables in favor of dynamic formulas.
-    """
-
-    def __init__(
-        self,
-        alpha_base: float = 0.12,     # Baseline buffer coefficient (12% ATR)
-        beta_vol: float = 0.05,       # Volatility ratio sensitivity coefficient
-        gamma_spread: float = 0.05,   # Spread ratio sensitivity coefficient
-        institutional_engine: Optional[InstitutionalEntryEngine] = None
-    ):
-        self.alpha_base = alpha_base
-        self.beta_vol = beta_vol
-        self.gamma_spread = gamma_spread
-        self.institutional_engine = institutional_engine or INSTITUTIONAL_ENTRY_ENGINE
-        # Symbols already warned about an unobserved price. This runs per symbol per
-        # radar cycle, so an un-deduplicated warning during a feed outage is the same
-        # ~3 300-lines-in-17-minutes flood the data feed had.
-        self._no_price_warned: set = set()
-
-    def calculate_levels(
-        self,
-        context: MarketContext,
-        regime: RegimeOutput,
-        tentative_bias: str,
-        account_balance: float = 10000.0,
-        risk_per_trade_pct: float = 0.5,
-        trade_style: str = "SWING",
-        mtf_data: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Calculate dynamic structural SL, liquidity-anchored TP, and adaptive scale-out parameters.
-
-        Returns:
-            Dict containing:
-                - bias: str ("BUY", "SELL", "HOLD")
-                - entry_price: float
-                - sl_price: float
-                - tp_price: float
-                - risk_dist: float
-                - tp_dist: float
-                - rr_ratio: float
-                - first_target_price: Optional[float]
-                - first_target_volume_pct: float
-                - runner_trail_distance_atr: float
-        """
-        st = context.structure
-        vol = context.volatility
-        c_price = context.current_price
-        sym_name = str(context.symbol).upper()
-        style = (trade_style or getattr(context, "trade_style", "SWING") or "SWING").upper()
-
-        spec = resolve_symbol(context.symbol)
-        digits = spec.digits
-        pip_size = spec.pip_size if spec.pip_size > 0 else 0.0001
-
-        # ── An entry price must derive from an OBSERVED price ──────────────────
-        # Every entry price below is minted from `context.ask` (BUY) or
-        # `context.bid` (SELL), and `market_context.build_context` sets
-        # `current_price = bid = 0.0` with `ask = spread * pip_size` when the
-        # primary frame is empty (feed down, cold symbol). Without this guard the
-        # engine turned a price nobody observed into a real-looking order: measured
-        # for BTCUSD, entry 0.02 with a stop of -0.04, from which the sizer — reading
-        # a risk distance of 0.06 against a 65 000 instrument — returned 100 lots,
-        # i.e. 6.5M USD of exposure for a 50 USD risk budget.
-        #
-        # Refuse rather than fabricate. A zero/NaN/absent price yields no levels; the
-        # callers must read `data_unavailable` and stand down. `bias` is forced to
-        # HOLD so nothing downstream can mistake this for a directional setup.
-        if not (
-            is_observed_price(context.current_price)
-            and is_observed_price(context.bid)
-            and is_observed_price(context.ask)
-        ):
-            if context.symbol not in self._no_price_warned:
-                self._no_price_warned.add(context.symbol)
-                logger.warning(
-                    "No observed price for %s (current_price=%r, bid=%r, ask=%r); refusing to "
-                    "compute entry/SL/TP. This is logged once per symbol per outage.",
-                    context.symbol, context.current_price, context.bid, context.ask,
-                )
-            return {
-                "bias": "HOLD",
-                "entry_price": 0.0,
-                "sl_price": 0.0,
-                "tp_price": 0.0,
-                "tp1_price": None,
-                "tp2_price": 0.0,
-                "tp3_price": 0.0,
-                "risk_dist": 0.0,
-                "tp_dist": 0.0,
-                "rr_ratio": 0.0,
-                "first_target_price": None,
-                "first_target_volume_pct": 0.0,
-                "runner_trail_distance_atr": 0.0,
-                "entry_type": "UNAVAILABLE",
-                "protocol_details": {"protocol": "NO_OBSERVED_PRICE"},
-                "data_unavailable": True,
-            }
-
-        # The price is back; re-arm the warning so a later outage still reports.
-        if self._no_price_warned:
-            logger.info(
-                "Observed price restored for %d symbol(s); dynamic levels resumed.",
-                len(self._no_price_warned),
-            )
-            self._no_price_warned.clear()
-
-        # 1. Volatility & Spread Normalization
-        atr = vol.atr if vol.atr > 0 else (c_price * 0.005)
-        spread_dist = max(0.0, context.ask - context.bid) if (context.ask > 0 and context.bid > 0) else (vol.current_spread_pips * pip_size)
-
-        typical_atr_pct = getattr(spec, "typical_atr_pct", 0.5)
-        typical_atr = c_price * (typical_atr_pct / 100.0) if typical_atr_pct > 0 else atr
-        atr_median = typical_atr if typical_atr > 0 else atr
-        atr_ratio = min(3.0, max(0.33, atr / max(atr_median, 1e-6)))
-
-        typ_spread = spec.typical_spread_pips if getattr(spec, "typical_spread_pips", 0) > 0 else 1.5
-        cur_spread = vol.current_spread_pips if vol.current_spread_pips > 0 else (spread_dist / pip_size if pip_size > 0 else 1.0)
-        spread_ratio = min(4.0, max(0.5, cur_spread / max(typ_spread, 1e-4)))
-
-        # Dynamic Volatility Buffer: ATR * (alpha_base + beta_vol * (ATR_cur/ATR_median) + gamma_spread * (Spread/TypSpread))
-        buffer_mult = self.alpha_base + (self.beta_vol * atr_ratio) + (self.gamma_spread * spread_ratio)
-        dynamic_buffer = atr * buffer_mult
-
-        # Anti-Wick Shield: Asset-specific buffer to absorb stop-hunts and wick probes
-        # Asset-Class Specific Intelligence
-        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name)
-        is_silver = ("XAG" in sym_name) or ("SILVER" in sym_name)
-        is_oil = ("WTI" in sym_name) or ("OIL" in sym_name)
-        is_crypto = getattr(spec, "is_crypto", False) or (getattr(spec, "asset_class", "").upper() == "CRYPTO") or ("BTC" in sym_name) or ("ETH" in sym_name) or ("SOL" in sym_name)
-        is_index = ("US500" in sym_name) or ("NAS100" in sym_name) or ("US30" in sym_name) or (getattr(spec, "asset_class", "").upper() == "INDEX")
-        is_forex = (getattr(spec, "asset_class", "").upper() == "FOREX") and not (is_gold or is_silver or is_oil or is_crypto or is_index)
-
-        # Anti-Wick Shield: Asset-specific buffer to absorb stop-hunts and wick probes
-        cfg = get_symbol_profile_config(sym_name)
-        sp = get_style_profile(sym_name, style)
-        anti_wick_mult = sp.anti_wick_buffer_atr
-
-        # Dynamic Volatility Adaptation: Scale anti-wick shield during volatility expansion / spikes
-        vol_ratio_eff = getattr(vol, "volatility_ratio", atr_ratio) or atr_ratio
-        if getattr(vol, "state", "NORMAL").upper() in ("EXPANSION", "EXTREME") or (vol_ratio_eff and vol_ratio_eff > 1.3):
-            anti_wick_mult = anti_wick_mult * max(1.0, min(1.8, float(vol_ratio_eff)))
-
-        anti_wick_buffer = atr * anti_wick_mult
-        effective_buffer = max(dynamic_buffer, anti_wick_buffer)
-
-        # Regime & State Flags
-        is_strong_trend = (
-            regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.TREND_BEAR)
-            and getattr(regime, "confidence", 0.0) >= 0.70
-            and getattr(context.momentum, "adx", 0.0) >= 22.0
-        )
-        is_ranging = regime.primary_regime in (
-            MarketRegime.RANGE, MarketRegime.LOW_VOLATILITY, MarketRegime.CONSOLIDATION, MarketRegime.COMPRESSION
-        )
-        # NOTE (dead-code cleanup): an `is_breakout` flag
-        # (regime.primary_regime in (BREAKOUT, POST_BREAKOUT, HIGH_VOLATILITY)) was computed here
-        # but never read anywhere. It has been removed as dead code. The upshot is that
-        # breakout-regime handling is *absent* — the flag was sketched but never applied to the
-        # stop/entry logic below. This is reported, not silently "fixed": no breakout-specific
-        # behaviour was added, because doing so would change trade geometry.
-        vol_state = getattr(vol, "state", "NORMAL").upper()
-
-        # 2. Dynamic Structural Stop Loss & Entry Calculation
-        if tentative_bias == "BUY":
-            # Determine impulse swing boundaries for OTE retracement
-            sw_low = float(getattr(st, "swing_low", 0.0) or 0.0)
-            candidate_lows = [sw_low] if 0 < sw_low < c_price else []
-            if st.demand_zone[0] > 0 and st.demand_zone[0] < c_price:
-                candidate_lows.append(float(st.demand_zone[0]))
-            if st.demand_zone[1] > 0 and st.demand_zone[1] < c_price:
-                candidate_lows.append(float(st.demand_zone[1]))
-            for ob in getattr(st, "order_blocks", []):
-                if ob.get("type") == "BULLISH_ORDER_BLOCK" and 0 < ob.get("low", 0) < c_price and not ob.get("mitigated", False):
-                    candidate_lows.append(float(ob["low"]))
-            ch_low = float(getattr(st, "channel_lower", 0.0) or 0.0)
-            if 0 < ch_low < c_price:
-                candidate_lows.append(ch_low)
-
-            ref_low = max(candidate_lows) if candidate_lows else (c_price - (1.5 * atr))
-            sw_high = float(getattr(st, "swing_high", 0.0) or 0.0)
-            ref_high = max(c_price, sw_high if sw_high > 0 else c_price)
-            leg_range = max(ref_high - ref_low, atr * 0.5)
-
-            # 62% - 70.5% OTE retracement (midpoint 66%)
-            ote_calc = ref_high - (leg_range * 0.66)
-
-            # Check for Bullish Fair Value Gap Consequent Encroachment (50% midpoint)
-            fvg_ce = None
-            for fvg in getattr(st, "fair_value_gaps", []):
-                if fvg.get("type") == "BULLISH_FVG" and not fvg.get("mitigated", False):
-                    top = float(fvg.get("top", 0))
-                    bot = float(fvg.get("bottom", 0))
-                    if top > bot > 0 and bot < c_price:
-                        fvg_ce = (top + bot) / 2.0
-                        break
-
-            eq_price = ref_low + (0.50 * leg_range)
-            if fvg_ce is not None and fvg_ce <= eq_price and fvg_ce < c_price:
-                ote_entry = fvg_ce
-            else:
-                ote_entry = min(ote_calc, eq_price)
-
-            entry_price = round(context.ask, digits)
-
-            # Support anchors strictly below entry
-            candidate_anchors: List[float] = []
-            if st.demand_zone[0] > 0 and st.demand_zone[0] < entry_price:
-                candidate_anchors.append(st.demand_zone[0])
-            if st.demand_zone[1] > 0 and st.demand_zone[1] < entry_price:
-                candidate_anchors.append(st.demand_zone[1])
-
-            for ob in st.order_blocks:
-                if ob.get("type") == "BULLISH_ORDER_BLOCK" and 0 < ob.get("low", 0) < entry_price and not ob.get("mitigated", False):
-                    candidate_anchors.append(float(ob["low"]))
-
-            for fvg in st.fair_value_gaps:
-                if fvg.get("type") == "BULLISH_FVG" and 0 < fvg.get("bottom", 0) < entry_price and not fvg.get("mitigated", False):
-                    candidate_anchors.append(float(fvg["bottom"]))
-
-            # B2: never anchor a stop AT a liquidity pool. Pools exist so they
-            # CAN be swept -- that sweep is the very entry trigger. If a sweep
-            # has already printed, the stop must sit BEYOND the sweep extreme.
-            _liq = context.liquidity
-            _pool = float(getattr(_liq, "sell_side_liquidity", 0.0) or 0.0)
-            if bool(getattr(_liq, "sweep_detected", False)):
-                _beyond = (float(getattr(_liq, "sweep_level", 0.0) or 0.0)
-                           - max(float(getattr(_liq, "sweep_magnitude", 0.0) or 0.0), 0.5) * atr)
-                if 0 < _beyond < entry_price:
-                    candidate_anchors.append(_beyond)
-            elif 0 < _pool < entry_price:
-                _beyond = _pool - (0.5 * atr)
-                if 0 < _beyond < entry_price:
-                    candidate_anchors.append(_beyond)
-
-            for kl in getattr(st, "key_levels", []):
-                if 0 < kl.get("price", 0) < entry_price:
-                    candidate_anchors.append(float(kl["price"]))
-
-            if candidate_anchors:
-                # Anti-Wick Shield: Nearest structural support boundary max(candidate_anchors) within local breathing room
-                max_anchor_dist = 1.20 * atr if (is_gold or is_crypto) else 1.80 * atr
-                anchors_in_range = [a for a in candidate_anchors if 0 < (entry_price - a) <= max_anchor_dist]
-                anchor = max(anchors_in_range) if anchors_in_range else (entry_price - (0.85 * atr))
-                struct_sl_dist = (entry_price - anchor) + effective_buffer + spread_dist
-            else:
-                struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
-
-            # Spread symmetry: the SELL branch below adds `spread_dist` at every one
-            # of these sites, because the fill always pays the spread — a BUY enters
-            # at the ask and a SELL at the bid, and either stop fills on the far side.
-            # The BUY branch used to omit it, which made every BUY stop systematically
-            # one spread tighter than the mirrored SELL stop for identical structure.
-            # That is a directional asymmetry introduced by an inconsistency, not a
-            # trading view, so BUY is widened to match SELL rather than the reverse.
-            if style == "SCALP":
-                sl_dist = min(1.10 * atr + spread_dist, max(0.65 * atr + spread_dist, struct_sl_dist * 0.60))
-                min_target_rr = 1.8
-                asym_rr = 2.5
-            elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
-                if is_index:
-                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
-                    min_target_rr = 2.0
-                    asym_rr = 2.8
-                elif is_forex:
-                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
-                    min_target_rr = 2.0
-                    asym_rr = 2.8
-                elif is_gold:
-                    sl_dist = min(14.0 + spread_dist, max(8.0 + spread_dist, struct_sl_dist))
-                    min_target_rr = 2.0
-                    asym_rr = 3.0
-                else:
-                    sl_dist = min(2.20 * atr + spread_dist, max(1.25 * atr + spread_dist, struct_sl_dist))
-                    min_target_rr = 2.0
-                    asym_rr = 2.8
-            else:  # SWING
-                if is_gold:
-                    # The old \-12 clamp put the stop INSIDE one H1 candle's normal
-                    # range on a volatile gold session (H1 ATR alone reaches \+);
-                    # every retest of the anchor zone then grazes the stop out.
-                    # Stops now scale with gold's realized volatility, with a
-                    # small-account ceiling of \ instead of a fixed \ cap.
-                    max_swing_sl = min(18.0, max(9.0, 1.5 * atr))
-                    min_target_rr = 2.0 if is_ranging else 2.5
-                    asym_rr = 2.5 if is_ranging else 3.8
-                elif is_crypto:
-                    if "ETH" in sym_name and "ETHBTC" not in sym_name:
-                        max_swing_sl = min(32.0, max(18.0, 1.40 * atr))
-                    elif "BTC" in sym_name:
-                        max_swing_sl = min(750.0, max(400.0, 1.40 * atr))
-                    else:
-                        max_swing_sl = cfg.sl_atr_multiplier * atr
-                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
-                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
-                else:
-                    max_swing_sl = max(cfg.sl_atr_multiplier * atr, 1.80 * atr)
-                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
-                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
-
-                if "ETHBTC" in sym_name:
-                    min_floor_sl = max(1.50 * atr + spread_dist, 0.00030)
-                else:
-                    min_floor_sl = max(1.50 * atr + spread_dist, 3.5 * spread_dist)
-
-                sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
-
-            # Floor is derived from current conditions: >=3.5x spread and style-scaled ATR to protect against noise
-            if is_gold:
-                min_sl_dist = max(3.5 * spread_dist, 7.0, min(13.0, 0.75 * atr + spread_dist))
-            else:
-                atr_floor_mult = 0.60 if style == "SCALP" else (1.10 if style in ("DAY_TRADING", "DAY", "INTRADAY") else 1.55)
-                min_sl_dist = max(3.5 * spread_dist, atr_floor_mult * atr + spread_dist)
-            if is_silver:
-                min_sl_dist = max(min_sl_dist, 0.35)
-            elif is_oil:
-                min_sl_dist = max(min_sl_dist, 0.65)
-            elif is_crypto:
-                if "ETHBTC" in sym_name:
-                    min_crypto_pts = max(3.5 * spread_dist, 0.00030)
-                elif "ETH" in sym_name:
-                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
-                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, eth_base_floor)
-                elif "BTC" in sym_name:
-                    btc_base_floor = 300.0 if "SCALP" in style.upper() else 450.0
-                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, btc_base_floor)
-                else:
-                    min_crypto_pts = 2.50
-                min_sl_dist = max(min_sl_dist, min_crypto_pts)
-
-            sl_dist = max(sl_dist, min_sl_dist)
-            if is_gold:
-                sl_dist = min(sl_dist, 12.0 + spread_dist)
-            elif is_silver:
-                sl_dist = min(sl_dist, 0.85 + spread_dist)
-            elif is_crypto:
-                if "ETH" in sym_name and "ETHBTC" not in sym_name:
-                    max_eth_sl = 18.0 if "SCALP" in style.upper() else (28.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 38.0)
-                    sl_dist = min(sl_dist, max_eth_sl + spread_dist)
-                elif "BTC" in sym_name:
-                    max_btc_sl = 550.0 if "SCALP" in style.upper() else (850.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 1200.0)
-                    sl_dist = min(sl_dist, max_btc_sl + spread_dist)
-            sl_price = round(entry_price - sl_dist, digits)
-            risk_dist = abs(sl_price - entry_price)
-
-            # 3. Liquidity-Anchored Dynamic Take Profit with Institutional Front-Running
-            # Front-run institutional liquidity barriers & order blocks (SKILL.md §3 & §8)
-            # Levels are zones; institutional buying/selling absorbs orders right before the barrier.
-            base_buffer = max(pip_size * 2.5, spread_dist * 1.5, atr * 0.12)
-            if is_gold:
-                front_run_buffer = max(base_buffer, 0.35, atr * 0.15)
-            elif is_crypto:
-                front_run_buffer = max(base_buffer, c_price * 0.0008, atr * 0.15)
-            elif is_forex:
-                front_run_buffer = max(base_buffer, pip_size * 3.0)
-            else:
-                front_run_buffer = base_buffer
-
-            opposing_targets: List[float] = []
-            if st.supply_zone[0] > entry_price:
-                opposing_targets.append(st.supply_zone[0])
-            if st.supply_zone[1] > entry_price:
-                opposing_targets.append(st.supply_zone[1])
-
-            for ob in st.order_blocks:
-                if ob.get("type") == "BEARISH_ORDER_BLOCK" and ob.get("low", 0) > entry_price:
-                    opposing_targets.append(float(ob.get("low", 0)))
-
-            for fvg in st.fair_value_gaps:
-                if fvg.get("type") == "BEARISH_FVG" and fvg.get("bottom", 0) > entry_price and not fvg.get("mitigated", False):
-                    opposing_targets.append(float(fvg.get("bottom", 0)))
-
-            if context.liquidity.buy_side_liquidity > entry_price:
-                opposing_targets.append(float(context.liquidity.buy_side_liquidity))
-
-            for p in getattr(context.liquidity, "liquidity_pools", []):
-                if p.get("type") == "BUY_SIDE_LIQUIDITY" and p.get("price", 0) > entry_price:
-                    opposing_targets.append(float(p["price"]))
-
-            for kl in getattr(st, "key_levels", []):
-                if kl.get("price", 0) > entry_price:
-                    opposing_targets.append(float(kl["price"]))
-
-            # Filter targets offering at least min_target_rr after front-running tuck
-            valid_targets = [t for t in opposing_targets if ((t - front_run_buffer) - entry_price) >= (risk_dist * min_target_rr)]
-
-            if valid_targets:
-                target_cand = min(valid_targets)
-                front_run_target = max(entry_price + (risk_dist * min_target_rr), target_cand - front_run_buffer)
-                max_tp_mult = asym_rr * (1.25 if is_strong_trend else 1.0)
-                tp_dist = min(front_run_target - entry_price, risk_dist * max_tp_mult)
-            else:
-                tp_dist = risk_dist * (2.2 if is_ranging else (asym_rr * (1.10 if is_strong_trend else 1.0)))
-
-            tp_price = round(entry_price + tp_dist, digits)
-            rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
-
-            # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
-            # TP1: Initial scale-out milestone anchored to style & regime-calibrated fast_cash_r
-            target_fast_cash_r = sp.fast_cash_r if not is_ranging else min(sp.fast_cash_r, 1.00)
-            minor_resistance = [t for t in opposing_targets if entry_price + (risk_dist * (target_fast_cash_r * 0.85)) <= (t - front_run_buffer) < tp_price]
-            if minor_resistance:
-                first_target_price = round(min(minor_resistance) - front_run_buffer, digits)
-            else:
-                fc_mult = (target_fast_cash_r * 0.90) if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else target_fast_cash_r
-                first_target_price = round(entry_price + (risk_dist * fc_mult), digits)
-
-            tp1_price = first_target_price
-            tp2_price = tp_price
-
-            # TP3: Macro extension / runner target at +3.0R to +4.5R+ (higher liquidity pool or expansion)
-            extended_targets = [t for t in opposing_targets if (t - front_run_buffer) > tp_price]
-            if extended_targets:
-                tp3_price = round(min(extended_targets) - front_run_buffer, digits)
-            else:
-                tp3_mult = max(3.0, asym_rr * (1.5 if is_strong_trend else 1.35))
-                tp3_price = round(entry_price + (risk_dist * tp3_mult), digits)
-
-        elif tentative_bias == "SELL":
-            # Determine impulse swing boundaries for OTE retracement
-            sw_high = float(getattr(st, "swing_high", 0.0) or 0.0)
-            candidate_highs = [sw_high] if sw_high > c_price else []
-            if st.supply_zone[0] > c_price:
-                candidate_highs.append(float(st.supply_zone[0]))
-            if st.supply_zone[1] > c_price:
-                candidate_highs.append(float(st.supply_zone[1]))
-            for ob in getattr(st, "order_blocks", []):
-                if ob.get("type") == "BEARISH_ORDER_BLOCK" and ob.get("high", 0) > c_price and not ob.get("mitigated", False):
-                    candidate_highs.append(float(ob["high"]))
-            ch_high = float(getattr(st, "channel_upper", 0.0) or 0.0)
-            if ch_high > c_price:
-                candidate_highs.append(ch_high)
-
-            ref_high = min(candidate_highs) if candidate_highs else (c_price + (1.5 * atr))
-            sw_low = float(getattr(st, "swing_low", 0.0) or 0.0)
-            ref_low = min(c_price, sw_low if sw_low > 0 else c_price)
-            leg_range = max(ref_high - ref_low, atr * 0.5)
-
-            # 62% - 70.5% OTE retracement (midpoint 66%)
-            ote_calc = ref_low + (leg_range * 0.66)
-
-            # Check for Bearish Fair Value Gap Consequent Encroachment (50% midpoint)
-            fvg_ce = None
-            for fvg in getattr(st, "fair_value_gaps", []):
-                if fvg.get("type") == "BEARISH_FVG" and not fvg.get("mitigated", False):
-                    top = float(fvg.get("top", 0))
-                    bot = float(fvg.get("bottom", 0))
-                    if top > bot > 0 and top > c_price:
-                        fvg_ce = (top + bot) / 2.0
-                        break
-
-            eq_price = ref_low + (0.50 * leg_range)
-            if fvg_ce is not None and fvg_ce >= eq_price and fvg_ce > c_price:
-                ote_entry = fvg_ce
-            else:
-                ote_entry = max(ote_calc, eq_price)
-
-            entry_price = round(context.bid, digits)
-
-            # Resistance anchors strictly above entry
-            candidate_anchors = []
-            if st.supply_zone[1] > entry_price:
-                candidate_anchors.append(st.supply_zone[1])
-            if st.supply_zone[0] > entry_price:
-                candidate_anchors.append(st.supply_zone[0])
-
-            for ob in st.order_blocks:
-                if ob.get("type") == "BEARISH_ORDER_BLOCK" and ob.get("high", 0) > entry_price and not ob.get("mitigated", False):
-                    candidate_anchors.append(float(ob["high"]))
-
-            for fvg in st.fair_value_gaps:
-                if fvg.get("type") == "BEARISH_FVG" and fvg.get("top", 0) > entry_price and not fvg.get("mitigated", False):
-                    candidate_anchors.append(float(fvg["top"]))
-
-            # B2 (SELL mirror): stop must sit BEYOND the swept liquidity.
-            _liq = context.liquidity
-            _pool = float(getattr(_liq, "buy_side_liquidity", 0.0) or 0.0)
-            if bool(getattr(_liq, "sweep_detected", False)):
-                _beyond = (float(getattr(_liq, "sweep_level", 0.0) or 0.0)
-                           + max(float(getattr(_liq, "sweep_magnitude", 0.0) or 0.0), 0.5) * atr)
-                if _beyond > entry_price:
-                    candidate_anchors.append(_beyond)
-            elif _pool > entry_price:
-                _beyond = _pool + (0.5 * atr)
-                if _beyond > entry_price:
-                    candidate_anchors.append(_beyond)
-
-            for kl in getattr(st, "key_levels", []):
-                if kl.get("price", 0) > entry_price:
-                    candidate_anchors.append(float(kl["price"]))
-
-            if candidate_anchors:
-                # Anti-Wick Shield: Nearest structural resistance boundary min(candidate_anchors) within local breathing room
-                max_anchor_dist = 1.20 * atr if (is_gold or is_crypto) else 1.80 * atr
-                anchors_in_range = [a for a in candidate_anchors if 0 < (a - entry_price) <= max_anchor_dist]
-                anchor = min(anchors_in_range) if anchors_in_range else (entry_price + (0.85 * atr))
-                struct_sl_dist = (anchor - entry_price) + effective_buffer + spread_dist
-            else:
-                struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
-
-            if style == "SCALP":
-                sl_dist = min(1.10 * atr + spread_dist, max(0.65 * atr + spread_dist, struct_sl_dist * 0.60))
-                min_target_rr = 1.8
-                asym_rr = 2.5
-            elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
-                if is_index:
-                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
-                    min_target_rr = 2.0
-                    asym_rr = 2.8
-                elif is_forex:
-                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
-                    min_target_rr = 2.0
-                    asym_rr = 2.8
-                elif is_gold:
-                    sl_dist = min(14.0 + spread_dist, max(8.0 + spread_dist, struct_sl_dist))
-                    min_target_rr = 2.0
-                    asym_rr = 3.0
-                else:
-                    sl_dist = min(2.20 * atr + spread_dist, max(1.25 * atr + spread_dist, struct_sl_dist))
-                    min_target_rr = 2.0
-                    asym_rr = 2.8
-            else:  # SWING
-                if is_gold:
-                    # The old \-12 clamp put the stop INSIDE one H1 candle's normal
-                    # range on a volatile gold session (H1 ATR alone reaches \+);
-                    # every retest of the anchor zone then grazes the stop out.
-                    # Stops now scale with gold's realized volatility, with a
-                    # small-account ceiling of \ instead of a fixed \ cap.
-                    max_swing_sl = min(18.0, max(9.0, 1.5 * atr))
-                    min_target_rr = 2.0 if is_ranging else 2.5
-                    asym_rr = 2.5 if is_ranging else 3.8
-                elif is_crypto:
-                    if "ETH" in sym_name and "ETHBTC" not in sym_name:
-                        max_swing_sl = min(32.0, max(18.0, 1.40 * atr))
-                    elif "BTC" in sym_name:
-                        max_swing_sl = min(750.0, max(400.0, 1.40 * atr))
-                    else:
-                        max_swing_sl = cfg.sl_atr_multiplier * atr
-                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
-                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
-                else:
-                    max_swing_sl = max(cfg.sl_atr_multiplier * atr, 1.80 * atr)
-                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
-                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
-
-                if "ETHBTC" in sym_name:
-                    min_floor_sl = max(1.50 * atr + spread_dist, 0.00030)
-                else:
-                    min_floor_sl = max(1.50 * atr + spread_dist, 3.5 * spread_dist)
-
-                sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
-
-            # Floor is derived from current conditions: >=3.5x spread and style-scaled ATR to protect against noise
-            if is_gold:
-                min_sl_dist = max(3.5 * spread_dist, 7.0, min(13.0, 0.75 * atr + spread_dist))
-            else:
-                atr_floor_mult = 0.60 if style == "SCALP" else (1.10 if style in ("DAY_TRADING", "DAY", "INTRADAY") else 1.55)
-                min_sl_dist = max(3.5 * spread_dist, atr_floor_mult * atr + spread_dist)
-            if is_silver:
-                min_sl_dist = max(min_sl_dist, 0.35)
-            elif is_oil:
-                min_sl_dist = max(min_sl_dist, 0.65)
-            elif is_crypto:
-                if "ETHBTC" in sym_name:
-                    min_crypto_pts = max(3.5 * spread_dist, 0.00030)
-                elif "ETH" in sym_name:
-                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
-                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, eth_base_floor)
-                elif "BTC" in sym_name:
-                    btc_base_floor = 300.0 if "SCALP" in style.upper() else 450.0
-                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, btc_base_floor)
-                else:
-                    min_crypto_pts = 2.50
-                min_sl_dist = max(min_sl_dist, min_crypto_pts)
-
-            sl_dist = max(sl_dist, min_sl_dist)
-            if is_gold:
-                sl_dist = min(sl_dist, 12.0 + spread_dist)
-            elif is_silver:
-                sl_dist = min(sl_dist, 0.85 + spread_dist)
-            elif is_crypto:
-                if "ETH" in sym_name and "ETHBTC" not in sym_name:
-                    max_eth_sl = 18.0 if "SCALP" in style.upper() else (28.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 38.0)
-                    sl_dist = min(sl_dist, max_eth_sl + spread_dist)
-                elif "BTC" in sym_name:
-                    max_btc_sl = 550.0 if "SCALP" in style.upper() else (850.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 1200.0)
-                    sl_dist = min(sl_dist, max_btc_sl + spread_dist)
-            sl_price = round(entry_price + sl_dist, digits)
-            risk_dist = abs(sl_price - entry_price)
-
-            # 3. Liquidity-Anchored Dynamic Take Profit with Spread Buffering & Front-Running
-            # In MT5, closing a SELL position requires a BUY TO COVER at the ASK price (ASK = BID + SPREAD).
-            # Charts display the BID price. Opposing structural targets (t) are identified from BID.
-            # Adding spread_dist + front_run_buffer ensures that when BID reaches the front-run zone,
-            # ASK cleanly fills the TP without requiring price to plunge below support by the full spread.
-            base_buffer = max(pip_size * 2.5, spread_dist * 1.5, atr * 0.12)
-            if is_gold:
-                front_run_buffer = max(base_buffer, 0.35, atr * 0.15)
-            elif is_crypto:
-                front_run_buffer = max(base_buffer, c_price * 0.0008, atr * 0.15)
-            elif is_forex:
-                front_run_buffer = max(base_buffer, pip_size * 3.0)
-            else:
-                front_run_buffer = base_buffer
-
-            opposing_targets = []
-            if 0 < st.demand_zone[1] < entry_price:
-                opposing_targets.append(st.demand_zone[1])
-            if 0 < st.demand_zone[0] < entry_price:
-                opposing_targets.append(st.demand_zone[0])
-
-            for ob in st.order_blocks:
-                if ob.get("type") == "BULLISH_ORDER_BLOCK" and 0 < ob.get("high", 0) < entry_price:
-                    opposing_targets.append(float(ob.get("high", 0)))
-
-            for fvg in st.fair_value_gaps:
-                if fvg.get("type") == "BULLISH_FVG" and 0 < fvg.get("top", 0) < entry_price:
-                    opposing_targets.append(float(fvg.get("top", 0)))
-
-            if 0 < context.liquidity.sell_side_liquidity < entry_price:
-                opposing_targets.append(float(context.liquidity.sell_side_liquidity))
-
-            for p in getattr(context.liquidity, "liquidity_pools", []):
-                if p.get("type") == "SELL_SIDE_LIQUIDITY" and 0 < p.get("price", 0) < entry_price:
-                    opposing_targets.append(float(p["price"]))
-
-            for kl in getattr(st, "key_levels", []):
-                if 0 < kl.get("price", 0) < entry_price:
-                    opposing_targets.append(float(kl["price"]))
-
-            # Filter targets offering at least min_target_rr after spread buffer and front-running
-            valid_targets = [t for t in opposing_targets if (entry_price - (t + front_run_buffer + spread_dist)) >= (risk_dist * min_target_rr)]
-
-            if valid_targets:
-                target_cand = max(valid_targets)
-                front_run_target = min(entry_price - (risk_dist * min_target_rr), target_cand + front_run_buffer + spread_dist)
-                max_tp_mult = asym_rr * (1.25 if is_strong_trend else (0.85 if is_ranging else 1.0))
-                tp_dist = min(entry_price - front_run_target, risk_dist * max_tp_mult)
-                tp_price = round(entry_price - tp_dist, digits)
-            else:
-                tp_dist = risk_dist * (2.2 if is_ranging else (asym_rr * (1.10 if is_strong_trend else 1.0)))
-                tp_price = round(entry_price - tp_dist + spread_dist, digits)
-
-            # Ensure valid sell TP below entry
-            if tp_price >= entry_price:
-                tp_price = round(entry_price - max(risk_dist * min_target_rr, pip_size * 5), digits)
-            tp_dist = abs(entry_price - tp_price)
-            rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
-
-            # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
-            # TP1: Initial scale-out milestone anchored to style & regime-calibrated fast_cash_r
-            target_fast_cash_r = sp.fast_cash_r if not is_ranging else min(sp.fast_cash_r, 1.00)
-            minor_support = [t for t in opposing_targets if tp_price < (t + front_run_buffer + spread_dist) <= entry_price - (risk_dist * (target_fast_cash_r * 0.85))]
-            if minor_support:
-                first_target_price = round(max(minor_support) + front_run_buffer + spread_dist, digits)
-            else:
-                fc_mult = (target_fast_cash_r * 0.90) if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else target_fast_cash_r
-                first_target_price = round(entry_price - (risk_dist * fc_mult) + spread_dist, digits)
-
-            if first_target_price >= entry_price:
-                first_target_price = round(entry_price - (risk_dist * target_fast_cash_r * 0.8), digits)
-
-            tp1_price = first_target_price
-            tp2_price = tp_price
-
-            # TP3: Macro extension / runner target at +3.0R to +4.5R+ (higher liquidity pool or expansion)
-            extended_targets = [t for t in opposing_targets if 0 < (t + front_run_buffer + spread_dist) < tp_price]
-            if extended_targets:
-                tp3_price = round(max(extended_targets) + front_run_buffer + spread_dist, digits)
-            else:
-                tp3_mult = max(3.0, (2.2 if is_ranging else asym_rr) * (1.5 if is_strong_trend else 1.35))
-                tp3_price = round(entry_price - (risk_dist * tp3_mult) + spread_dist, digits)
-
-        else:
-            # Bias is HOLD / MONITOR — compute a structural reference bracket
-            is_bear_tilt = (st.bias == "BEARISH") or (getattr(context.momentum, "trend_score", 0.0) < 0)
-            entry_price = round(context.bid if is_bear_tilt else context.ask, digits)
-            if style == "SCALP":
-                sl_dist = 0.40 * atr
-                tp_dist = sl_dist * 2.0
-                rr_ratio = 2.0
-            elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
-                sl_dist = 0.80 * atr
-                tp_dist = sl_dist * 2.8
-                rr_ratio = 2.8
-            else:
-                sl_dist = atr * (1.2 if is_ranging else 1.5)
-                rr_ratio = 2.2 if is_ranging else 4.2
-                tp_dist = sl_dist * rr_ratio
-            sl_price = round(entry_price + sl_dist if is_bear_tilt else entry_price - sl_dist, digits)
-            tp_price = round(entry_price - tp_dist if is_bear_tilt else entry_price + tp_dist, digits)
-            risk_dist = abs(entry_price - sl_price)
-            tp1_price = round(entry_price - (risk_dist * 1.5) if is_bear_tilt else entry_price + (risk_dist * 1.5), digits)
-            tp2_price = tp_price
-            tp3_price = round(entry_price - (risk_dist * (rr_ratio + 1.5)) if is_bear_tilt else entry_price + (risk_dist * (rr_ratio + 1.5)), digits)
-            first_target_price = None
-
-        # 5. Adaptive Scale-Out Volume % Calculation
-        of_data = getattr(context, "order_flow", {})
-        delta_score = float(of_data.get("delta_score", 0.0)) if isinstance(of_data, dict) else 0.0
-        aligned_delta = (
-            (tentative_bias == "BUY" and delta_score >= 0)
-            or (tentative_bias == "SELL" and delta_score <= 0)
-            or delta_score == 0.0
-        )
-
-        if (is_strong_trend or vol_state in ("EXPANSION", "EXTREME")) and aligned_delta:
-            first_target_volume_pct = 0.25 if ((is_gold) and style == "SWING") else (sp.fast_cash_volume_pct if "SCALP" in style else min(sp.fast_cash_volume_pct, 0.33))
-        elif is_ranging or vol_state == "COMPRESSION":
-            first_target_volume_pct = 0.50
-        else:
-            first_target_volume_pct = sp.fast_cash_volume_pct
-
-        # 6. Runner Trailing Distance: 1.0 + 0.4 * 1_{EXPANSION} + 0.8 * 1_{EXTREME}
-        is_expansion_val = 1.0 if vol_state == "EXPANSION" else 0.0
-        is_extreme_val = 1.0 if vol_state == "EXTREME" else 0.0
-        runner_trail_distance_atr = round(1.0 + (0.4 * is_expansion_val) + (0.8 * is_extreme_val), 2)
-
-        base_result = {
-            "bias": tentative_bias,
-            "entry_price": entry_price,
-            "sl_price": sl_price,
-            "tp_price": tp_price,
-            "tp1_price": tp1_price,
-            "tp2_price": tp2_price,
-            "tp3_price": tp3_price,
-            "risk_dist": risk_dist,
-            "tp_dist": tp_dist,
-            "rr_ratio": rr_ratio,
-            "first_target_price": first_target_price,
-            "first_target_volume_pct": first_target_volume_pct,
-            "runner_trail_distance_atr": runner_trail_distance_atr,
-            "entry_type": "DYNAMIC_STRUCTURAL",
-            "protocol_details": {"protocol": "BASELINE_DYNAMIC_LEVELS"},
-            "as_limit_price": entry_price if abs(entry_price - c_price) > (pip_size * 0.5) else None
-        }
-
-        # Seamless Institutional Entry Engine Integration
-        if mtf_data and any(isinstance(v, pd.DataFrame) and not v.empty for v in mtf_data.values()):
-            try:
-                inst_res = self.institutional_engine.calculate_entry_and_levels(
-                    context=context,
-                    regime=regime,
-                    tentative_bias=tentative_bias,
-                    trade_style=style,
-                    mtf_data=mtf_data
-                )
-                if inst_res and isinstance(inst_res, dict):
-                    inst_entry = float(inst_res.get("entry_price", entry_price))
-                    inst_risk = float(inst_res.get("risk_dist", risk_dist))
-                    # Use institutional stop or baseline structural risk floor
-                    base_risk_floor = float(base_result.get("risk_dist", 0.0))
-                    clamped_risk = max(inst_risk, base_risk_floor) if base_risk_floor > 0 else inst_risk
-                    if tentative_bias == "BUY":
-                        clamped_sl = round(inst_entry - clamped_risk, digits)
-                    else:
-                        clamped_sl = round(inst_entry + clamped_risk, digits)
-
-                    inst_tp = float(inst_res.get("tp_price", tp_price))
-                    inst_tp1 = float(inst_res.get("tp1_price", tp1_price))
-                    inst_tp2 = float(inst_res.get("tp2_price", tp2_price))
-                    inst_tp3 = float(inst_res.get("tp3_price", tp3_price))
-                    clamped_tp_dist = abs(inst_tp - inst_entry)
-
-                    # Preserve institutional R:R: When stop is widened to satisfy structural floor,
-                    # TP must ALWAYS maintain at least min_target_rr (never clamped to 3x small scalp TP).
-                    min_target_rr = 2.0 if is_gold else 1.8
-                    min_structural_tp_dist = clamped_risk * min_target_rr
-
-                    if clamped_risk > inst_risk and inst_risk > 0:
-                        raw_expansion = clamped_risk / inst_risk
-                        expanded_tp_dist = clamped_tp_dist * raw_expansion
-                        clamped_tp_dist = max(expanded_tp_dist, min_structural_tp_dist)
-                    else:
-                        clamped_tp_dist = max(clamped_tp_dist, min_structural_tp_dist)
-
-                    if tentative_bias == "BUY":
-                        clamped_tp = round(inst_entry + clamped_tp_dist, digits)
-                        clamped_tp1 = round(inst_entry + (clamped_risk * 1.2), digits)
-                        clamped_tp2 = clamped_tp
-                        clamped_tp3 = round(inst_entry + (clamped_risk * 3.5), digits)
-                    else:
-                        clamped_tp = round(inst_entry - clamped_tp_dist, digits)
-                        clamped_tp1 = round(inst_entry - (clamped_risk * 1.2), digits)
-                        clamped_tp2 = clamped_tp
-                        clamped_tp3 = round(inst_entry - (clamped_risk * 3.5), digits)
-
-                    clamped_rr = round(clamped_tp_dist / max(clamped_risk, 1e-9), 2)
-
-                    return {
-                        "bias": tentative_bias,
-                        "entry_price": inst_entry,
-                        "sl_price": clamped_sl,
-                        "tp_price": clamped_tp,
-                        "tp1_price": clamped_tp1,
-                        "tp2_price": clamped_tp2,
-                        "tp3_price": clamped_tp3,
-                        "risk_dist": clamped_risk,
-                        "tp_dist": clamped_tp_dist,
-                        "rr_ratio": clamped_rr,
-                        "first_target_price": clamped_tp1,
-                        "first_target_volume_pct": inst_res.get("first_target_volume_pct", first_target_volume_pct),
-                        "runner_trail_distance_atr": inst_res.get("runner_trail_atr", runner_trail_distance_atr),
-                        "entry_type": inst_res.get("entry_type", "INSTITUTIONAL"),
-                        "protocol_details": inst_res.get("protocol_details", {}),
-                        "as_limit_price": inst_res.get("as_limit_price", entry_price if abs(inst_entry - c_price) > (pip_size * 0.5) else None)
-                    }
-            except Exception as e:
-                logger.warning(f"InstitutionalEntryEngine execution failed: {e}. Falling back to baseline dynamic levels.")
-
-        return base_result
-
-    def calculate_manual_trade_levels(
-        self,
-        symbol: str,
-        action: str,
-        current_price: Optional[float] = None,
-        trade_style: str = "SWING"
-    ) -> Dict[str, Any]:
-        """
-        Calculate AI-assisted dynamic structural SL, TP1, and TP2 for manual orders.
-        Anchor beyond recent swing / OB / FVG + dynamic ATR buffer.
-        TP1: 1.0R - 1.2R, TP2: 2.0R - 3.5R.
-        """
-        norm_action = (action or "BUY").strip().upper()
-        if norm_action not in ("BUY", "SELL"):
-            norm_action = "BUY"
-
-        spec = resolve_symbol(symbol)
-        digits = spec.digits
-        pip_size = spec.pip_size if spec.pip_size > 0 else 0.0001
-        spread_pips = spec.typical_spread_pips if getattr(spec, "typical_spread_pips", 0) > 0 else 2.0
-        spread_dist = spread_pips * pip_size
-
-        ctx: Optional[MarketContext] = None
-        mtf_data_fetched: Optional[Dict[str, Any]] = None
-
-        # 1. Try to retrieve context from global state manager if available
-        try:
-            from jarvis.application.state_manager import GLOBAL_STATE
-            ctx = GLOBAL_STATE.get_market_context(symbol)
-        except Exception as ex:
-            logger.debug(f"Could not retrieve context from GLOBAL_STATE for {symbol}: {ex}")
-
-        # 2. If no context in state manager, build fresh context via DataFeedEngine + MarketContextEngine
-        if ctx is None or ctx.current_price <= 0:
-            try:
-                from jarvis.market.data_feed import DataFeedEngine
-                from jarvis.market.market_context import MarketContextEngine
-                df_engine = DataFeedEngine()
-                mtf = df_engine.fetch_multi_timeframe(symbol, trade_style=trade_style)
-                if mtf and any(not df.empty for df in mtf.values()):
-                    mtf_data_fetched = mtf
-                    ce = MarketContextEngine()
-                    ctx = ce.build_context(
-                        symbol,
-                        mtf,
-                        current_spread_pips=spread_pips,
-                        max_allowed_spread_pips=spec.max_spread_pips,
-                        trade_style=trade_style
-                    )
-            except Exception as ex:
-                logger.debug(f"Could not build context via data feed for {symbol}: {ex}")
-
-        # 3. Fallback synthetic context if live data is unavailable
-        if ctx is None or ctx.current_price <= 0:
-            price = current_price if (current_price is not None and current_price > 0) else (spec.base_price if spec.base_price > 0 else 100.0)
-            typical_atr_pct = getattr(spec, "typical_atr_pct", 0.5)
-            typical_atr = price * (typical_atr_pct / 100.0) if typical_atr_pct > 0 else (price * 0.005)
-            atr = typical_atr if typical_atr > 0 else (price * 0.005)
-
-            from jarvis.data.schemas import (
-                StructureContext, LiquidityContext, VolatilityContext,
-                MomentumContext, SessionContext
-            )
-            st = StructureContext(
-                bias="BULLISH" if norm_action == "BUY" else "BEARISH",
-                swing_high=round(price + (atr * 1.5), digits),
-                swing_low=round(price - (atr * 1.5), digits),
-                supply_zone=(round(price + (atr * 2.0), digits), round(price + (atr * 2.5), digits)),
-                demand_zone=(round(price - (atr * 2.5), digits), round(price - (atr * 2.0), digits)),
-                order_blocks=[],
-                fair_value_gaps=[]
-            )
-            liq = LiquidityContext(
-                buy_side_liquidity=0.0,
-                sell_side_liquidity=0.0
-            )
-            vol = VolatilityContext(
-                atr=atr,
-                current_spread_pips=spread_pips
-            )
-            mom = MomentumContext(
-                trend_score=30 if norm_action == "BUY" else -30,
-                adx=25.0
-            )
-            sess = SessionContext()
-            ctx = MarketContext(
-                symbol=symbol,
-                timestamp=datetime.now(timezone.utc),
-                current_price=price,
-                bid=price,
-                ask=price + spread_dist,
-                structure=st,
-                liquidity=liq,
-                volatility=vol,
-                momentum=mom,
-                session=sess
-            )
-
-        # If custom current_price is provided, anchor the context around it
-        if current_price is not None and current_price > 0:
-            ctx.current_price = float(current_price)
-            ctx.bid = float(current_price)
-            ctx.ask = float(current_price + spread_dist)
-
-        # 4. Classify regime or use default
-        try:
-            from jarvis.intelligence.regime_engine import MarketRegimeClassifier
-            rc = MarketRegimeClassifier()
-            regime = rc.classify_regime(ctx)
-        except Exception:
-            regime = RegimeOutput(
-                primary_regime=MarketRegime.TREND_BULL if norm_action == "BUY" else MarketRegime.TREND_BEAR,
-                probabilities={"trend_bull": 0.8, "trend_bear": 0.2} if norm_action == "BUY" else {"trend_bull": 0.2, "trend_bear": 0.8},
-                confidence=0.80
-            )
-
-        # 5. Calculate structural levels using the mathematical engine
-        levels = self.calculate_levels(
-            context=ctx,
-            regime=regime,
-            tentative_bias=norm_action,
-            trade_style=trade_style,
-            mtf_data=mtf_data_fetched
-        )
-
-        entry = float(levels.get("entry_price", ctx.current_price))
-        sl = float(levels.get("sl_price", 0.0))
-        tp = float(levels.get("tp_price", 0.0))
-        risk_dist = float(levels.get("risk_dist", abs(entry - sl)))
-        if risk_dist <= 0:
-            atr_val = ctx.volatility.atr if ctx.volatility.atr > 0 else (entry * 0.005)
-            risk_dist = max(pip_size * 5, atr_val * 1.2)
-            sl = round(entry - risk_dist if norm_action == "BUY" else entry + risk_dist, digits)
-
-        rr = float(levels.get("rr_ratio", 2.0))
-
-        # Calculate dynamic TP1 (1.0R - 1.2R) and dynamic TP2 (2.0R - 3.5R)
-        first_target = levels.get("tp1_price") or levels.get("first_target_price")
-        if first_target is not None and first_target > 0:
-            if norm_action == "BUY" and first_target > entry:
-                tp1 = round(float(first_target), digits)
-            elif norm_action == "SELL" and first_target < entry:
-                tp1 = round(float(first_target), digits)
-            else:
-                tp1 = round(entry + (risk_dist * 1.1) if norm_action == "BUY" else entry - (risk_dist * 1.1), digits)
-        else:
-            tp1 = round(entry + (risk_dist * 1.1) if norm_action == "BUY" else entry - (risk_dist * 1.1), digits)
-
-        tp2 = round(tp, digits) if tp > 0 else (round(entry + (risk_dist * 2.5), digits) if norm_action == "BUY" else round(entry - (risk_dist * 2.5), digits))
-
-        return {
-            "sl": float(sl),
-            "tp": float(tp2),
-            "tp1": float(tp1),
-            "tp2": float(tp2),
-            "risk_dist": float(risk_dist),
-            "rr": float(rr),
-            "entry_price": float(entry),
-            "bias": norm_action,
-            "entry_type": levels.get("entry_type", "MANUAL_LIMIT"),
-            "protocol_details": levels.get("protocol_details", {})
-        }
-
-
-DYNAMIC_LEVELS_ENGINE = DynamicRiskAndLevelsEngine()
-
+"""
+HM Algo 2.0 — Dynamic Risk & Volatility-Adaptive Levels Engine.
+Computes purely structural, volatility-adaptive SL, TP, and scale-out plans with zero static tables:
+- Dynamic Structural SL: Outer boundary of recent swing point / Order Block / FVG + dynamic volatility buffer.
+- Liquidity-Anchored Dynamic TP: Nearest opposing unmitigated Order Block / FVG / Liquidity Pool (1.5R to 3.5R+).
+- Adaptive Scale-Out Plan: Structural first target, regime-adaptive partial volume %, and ATR runner trailing.
+"""
+from typing import Dict, List, Any, Optional
+from datetime import datetime, timezone
+import logging
+import pandas as pd
+
+logger = logging.getLogger("JARVIS_DynamicLevels")
+
+from jarvis.data.schemas import (
+    MarketContext,
+    RegimeOutput,
+    MarketRegime,
+    is_observed_price,
+)
+from jarvis.data.symbol_registry import resolve as resolve_symbol
+from jarvis.intelligence.institutional_entry_engine import InstitutionalEntryEngine, INSTITUTIONAL_ENTRY_ENGINE
+from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config, get_style_profile
+
+
+class DynamicRiskAndLevelsEngine:
+    """
+    Autonomous mathematical engine for calculating market-structure-anchored,
+    volatility-adaptive Stop Loss, Take Profit, and Scale-Out levels.
+    Eliminates hardcoded asset/regime tables in favor of dynamic formulas.
+    """
+
+    def __init__(
+        self,
+        alpha_base: float = 0.12,     # Baseline buffer coefficient (12% ATR)
+        beta_vol: float = 0.05,       # Volatility ratio sensitivity coefficient
+        gamma_spread: float = 0.05,   # Spread ratio sensitivity coefficient
+        institutional_engine: Optional[InstitutionalEntryEngine] = None
+    ):
+        self.alpha_base = alpha_base
+        self.beta_vol = beta_vol
+        self.gamma_spread = gamma_spread
+        self.institutional_engine = institutional_engine or INSTITUTIONAL_ENTRY_ENGINE
+        # Symbols already warned about an unobserved price. This runs per symbol per
+        # radar cycle, so an un-deduplicated warning during a feed outage is the same
+        # ~3 300-lines-in-17-minutes flood the data feed had.
+        self._no_price_warned: set = set()
+
+    def calculate_levels(
+        self,
+        context: MarketContext,
+        regime: RegimeOutput,
+        tentative_bias: str,
+        account_balance: float = 10000.0,
+        risk_per_trade_pct: float = 0.5,
+        trade_style: str = "SWING",
+        mtf_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Calculate dynamic structural SL, liquidity-anchored TP, and adaptive scale-out parameters.
+
+        Returns:
+            Dict containing:
+                - bias: str ("BUY", "SELL", "HOLD")
+                - entry_price: float
+                - sl_price: float
+                - tp_price: float
+                - risk_dist: float
+                - tp_dist: float
+                - rr_ratio: float
+                - first_target_price: Optional[float]
+                - first_target_volume_pct: float
+                - runner_trail_distance_atr: float
+        """
+        st = context.structure
+        vol = context.volatility
+        c_price = context.current_price
+        sym_name = str(context.symbol).upper()
+        style = (trade_style or getattr(context, "trade_style", "SWING") or "SWING").upper()
+
+        spec = resolve_symbol(context.symbol)
+        digits = spec.digits
+        pip_size = spec.pip_size if spec.pip_size > 0 else 0.0001
+
+        # ── An entry price must derive from an OBSERVED price ──────────────────
+        # Every entry price below is minted from `context.ask` (BUY) or
+        # `context.bid` (SELL), and `market_context.build_context` sets
+        # `current_price = bid = 0.0` with `ask = spread * pip_size` when the
+        # primary frame is empty (feed down, cold symbol). Without this guard the
+        # engine turned a price nobody observed into a real-looking order: measured
+        # for BTCUSD, entry 0.02 with a stop of -0.04, from which the sizer — reading
+        # a risk distance of 0.06 against a 65 000 instrument — returned 100 lots,
+        # i.e. 6.5M USD of exposure for a 50 USD risk budget.
+        #
+        # Refuse rather than fabricate. A zero/NaN/absent price yields no levels; the
+        # callers must read `data_unavailable` and stand down. `bias` is forced to
+        # HOLD so nothing downstream can mistake this for a directional setup.
+        if not (
+            is_observed_price(context.current_price)
+            and is_observed_price(context.bid)
+            and is_observed_price(context.ask)
+        ):
+            if context.symbol not in self._no_price_warned:
+                self._no_price_warned.add(context.symbol)
+                logger.warning(
+                    "No observed price for %s (current_price=%r, bid=%r, ask=%r); refusing to "
+                    "compute entry/SL/TP. This is logged once per symbol per outage.",
+                    context.symbol, context.current_price, context.bid, context.ask,
+                )
+            return {
+                "bias": "HOLD",
+                "entry_price": 0.0,
+                "sl_price": 0.0,
+                "tp_price": 0.0,
+                "tp1_price": None,
+                "tp2_price": 0.0,
+                "tp3_price": 0.0,
+                "risk_dist": 0.0,
+                "tp_dist": 0.0,
+                "rr_ratio": 0.0,
+                "first_target_price": None,
+                "first_target_volume_pct": 0.0,
+                "runner_trail_distance_atr": 0.0,
+                "entry_type": "UNAVAILABLE",
+                "protocol_details": {"protocol": "NO_OBSERVED_PRICE"},
+                "data_unavailable": True,
+            }
+
+        # The price is back; re-arm the warning so a later outage still reports.
+        if self._no_price_warned:
+            logger.info(
+                "Observed price restored for %d symbol(s); dynamic levels resumed.",
+                len(self._no_price_warned),
+            )
+            self._no_price_warned.clear()
+
+        # 1. Volatility & Spread Normalization
+        atr = vol.atr if vol.atr > 0 else (c_price * 0.005)
+        spread_dist = max(0.0, context.ask - context.bid) if (context.ask > 0 and context.bid > 0) else (vol.current_spread_pips * pip_size)
+
+        typical_atr_pct = getattr(spec, "typical_atr_pct", 0.5)
+        typical_atr = c_price * (typical_atr_pct / 100.0) if typical_atr_pct > 0 else atr
+        atr_median = typical_atr if typical_atr > 0 else atr
+        atr_ratio = min(3.0, max(0.33, atr / max(atr_median, 1e-6)))
+
+        typ_spread = spec.typical_spread_pips if getattr(spec, "typical_spread_pips", 0) > 0 else 1.5
+        cur_spread = vol.current_spread_pips if vol.current_spread_pips > 0 else (spread_dist / pip_size if pip_size > 0 else 1.0)
+        spread_ratio = min(4.0, max(0.5, cur_spread / max(typ_spread, 1e-4)))
+
+        # Dynamic Volatility Buffer: ATR * (alpha_base + beta_vol * (ATR_cur/ATR_median) + gamma_spread * (Spread/TypSpread))
+        buffer_mult = self.alpha_base + (self.beta_vol * atr_ratio) + (self.gamma_spread * spread_ratio)
+        dynamic_buffer = atr * buffer_mult
+
+        # Anti-Wick Shield: Asset-specific buffer to absorb stop-hunts and wick probes
+        # Asset-Class Specific Intelligence
+        is_gold = ("XAU" in sym_name) or ("GOLD" in sym_name)
+        is_silver = ("XAG" in sym_name) or ("SILVER" in sym_name)
+        is_oil = ("WTI" in sym_name) or ("OIL" in sym_name)
+        is_crypto = getattr(spec, "is_crypto", False) or (getattr(spec, "asset_class", "").upper() == "CRYPTO") or ("BTC" in sym_name) or ("ETH" in sym_name) or ("SOL" in sym_name)
+        is_index = ("US500" in sym_name) or ("NAS100" in sym_name) or ("US30" in sym_name) or (getattr(spec, "asset_class", "").upper() == "INDEX")
+        is_forex = (getattr(spec, "asset_class", "").upper() == "FOREX") and not (is_gold or is_silver or is_oil or is_crypto or is_index)
+
+        # Anti-Wick Shield: Asset-specific buffer to absorb stop-hunts and wick probes
+        cfg = get_symbol_profile_config(sym_name)
+        sp = get_style_profile(sym_name, style)
+        anti_wick_mult = sp.anti_wick_buffer_atr
+
+        # Dynamic Volatility Adaptation: Scale anti-wick shield during volatility expansion / spikes
+        vol_ratio_eff = getattr(vol, "volatility_ratio", atr_ratio) or atr_ratio
+        if getattr(vol, "state", "NORMAL").upper() in ("EXPANSION", "EXTREME") or (vol_ratio_eff and vol_ratio_eff > 1.3):
+            anti_wick_mult = anti_wick_mult * max(1.0, min(1.8, float(vol_ratio_eff)))
+
+        anti_wick_buffer = atr * anti_wick_mult
+        effective_buffer = max(dynamic_buffer, anti_wick_buffer)
+
+        # Regime & State Flags
+        is_strong_trend = (
+            regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.TREND_BEAR)
+            and getattr(regime, "confidence", 0.0) >= 0.70
+            and getattr(context.momentum, "adx", 0.0) >= 22.0
+        )
+        is_ranging = regime.primary_regime in (
+            MarketRegime.RANGE, MarketRegime.LOW_VOLATILITY, MarketRegime.CONSOLIDATION, MarketRegime.COMPRESSION
+        )
+        # NOTE (dead-code cleanup): an `is_breakout` flag
+        # (regime.primary_regime in (BREAKOUT, POST_BREAKOUT, HIGH_VOLATILITY)) was computed here
+        # but never read anywhere. It has been removed as dead code. The upshot is that
+        # breakout-regime handling is *absent* — the flag was sketched but never applied to the
+        # stop/entry logic below. This is reported, not silently "fixed": no breakout-specific
+        # behaviour was added, because doing so would change trade geometry.
+        vol_state = getattr(vol, "state", "NORMAL").upper()
+
+        # 2. Dynamic Structural Stop Loss & Entry Calculation
+        if tentative_bias == "BUY":
+            # Determine impulse swing boundaries for OTE retracement
+            sw_low = float(getattr(st, "swing_low", 0.0) or 0.0)
+            candidate_lows = [sw_low] if 0 < sw_low < c_price else []
+            if st.demand_zone[0] > 0 and st.demand_zone[0] < c_price:
+                candidate_lows.append(float(st.demand_zone[0]))
+            if st.demand_zone[1] > 0 and st.demand_zone[1] < c_price:
+                candidate_lows.append(float(st.demand_zone[1]))
+            for ob in getattr(st, "order_blocks", []):
+                if ob.get("type") == "BULLISH_ORDER_BLOCK" and 0 < ob.get("low", 0) < c_price and not ob.get("mitigated", False):
+                    candidate_lows.append(float(ob["low"]))
+            ch_low = float(getattr(st, "channel_lower", 0.0) or 0.0)
+            if 0 < ch_low < c_price:
+                candidate_lows.append(ch_low)
+
+            ref_low = max(candidate_lows) if candidate_lows else (c_price - (1.5 * atr))
+            sw_high = float(getattr(st, "swing_high", 0.0) or 0.0)
+            ref_high = max(c_price, sw_high if sw_high > 0 else c_price)
+            leg_range = max(ref_high - ref_low, atr * 0.5)
+
+            # 62% - 70.5% OTE retracement (midpoint 66%)
+            ote_calc = ref_high - (leg_range * 0.66)
+
+            # Check for Bullish Fair Value Gap Consequent Encroachment (50% midpoint)
+            fvg_ce = None
+            for fvg in getattr(st, "fair_value_gaps", []):
+                if fvg.get("type") == "BULLISH_FVG" and not fvg.get("mitigated", False):
+                    top = float(fvg.get("top", 0))
+                    bot = float(fvg.get("bottom", 0))
+                    if top > bot > 0 and bot < c_price:
+                        fvg_ce = (top + bot) / 2.0
+                        break
+
+            eq_price = ref_low + (0.50 * leg_range)
+            if fvg_ce is not None and fvg_ce <= eq_price and fvg_ce < c_price:
+                ote_entry = fvg_ce
+            else:
+                ote_entry = min(ote_calc, eq_price)
+
+            as_limit_price = round(ote_entry, digits) if (c_price - ote_entry) > (pip_size * 2.0) else None
+            entry_price = round(context.ask, digits)
+
+            # Support anchors strictly below entry
+            candidate_anchors: List[float] = []
+            if st.demand_zone[0] > 0 and st.demand_zone[0] < entry_price:
+                candidate_anchors.append(st.demand_zone[0])
+            if st.demand_zone[1] > 0 and st.demand_zone[1] < entry_price:
+                candidate_anchors.append(st.demand_zone[1])
+
+            for ob in st.order_blocks:
+                if ob.get("type") == "BULLISH_ORDER_BLOCK" and 0 < ob.get("low", 0) < entry_price and not ob.get("mitigated", False):
+                    candidate_anchors.append(float(ob["low"]))
+
+            for fvg in st.fair_value_gaps:
+                if fvg.get("type") == "BULLISH_FVG" and 0 < fvg.get("bottom", 0) < entry_price and not fvg.get("mitigated", False):
+                    candidate_anchors.append(float(fvg["bottom"]))
+
+            # B2: never anchor a stop AT a liquidity pool. Pools exist so they
+            # CAN be swept -- that sweep is the very entry trigger. If a sweep
+            # has already printed, the stop must sit BEYOND the sweep extreme.
+            _liq = context.liquidity
+            _pool = float(getattr(_liq, "sell_side_liquidity", 0.0) or 0.0)
+            if bool(getattr(_liq, "sweep_detected", False)):
+                _beyond = (float(getattr(_liq, "sweep_level", 0.0) or 0.0)
+                           - max(float(getattr(_liq, "sweep_magnitude", 0.0) or 0.0), 0.5) * atr)
+                if 0 < _beyond < entry_price:
+                    candidate_anchors.append(_beyond)
+            elif 0 < _pool < entry_price:
+                _beyond = _pool - (0.5 * atr)
+                if 0 < _beyond < entry_price:
+                    candidate_anchors.append(_beyond)
+
+            for kl in getattr(st, "key_levels", []):
+                if 0 < kl.get("price", 0) < entry_price:
+                    candidate_anchors.append(float(kl["price"]))
+
+            if candidate_anchors:
+                # Anti-Wick Shield: Nearest structural support boundary max(candidate_anchors) within local breathing room
+                max_anchor_dist = 1.20 * atr if (is_gold or is_crypto) else 1.80 * atr
+                anchors_in_range = [a for a in candidate_anchors if 0 < (entry_price - a) <= max_anchor_dist]
+                anchor = max(anchors_in_range) if anchors_in_range else (entry_price - (0.85 * atr))
+                struct_sl_dist = (entry_price - anchor) + effective_buffer + spread_dist
+            else:
+                struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
+
+            # Spread symmetry: the SELL branch below adds `spread_dist` at every one
+            # of these sites, because the fill always pays the spread — a BUY enters
+            # at the ask and a SELL at the bid, and either stop fills on the far side.
+            # The BUY branch used to omit it, which made every BUY stop systematically
+            # one spread tighter than the mirrored SELL stop for identical structure.
+            # That is a directional asymmetry introduced by an inconsistency, not a
+            # trading view, so BUY is widened to match SELL rather than the reverse.
+            if style == "SCALP":
+                sl_dist = min(1.10 * atr + spread_dist, max(0.65 * atr + spread_dist, struct_sl_dist * 0.60))
+                min_target_rr = 1.8
+                asym_rr = 2.5
+            elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
+                if is_index:
+                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
+                elif is_forex:
+                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
+                elif is_gold:
+                    sl_dist = min(14.0 + spread_dist, max(8.0 + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 3.0
+                else:
+                    sl_dist = min(2.20 * atr + spread_dist, max(1.25 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
+            else:  # SWING
+                if is_gold:
+                    # The old \-12 clamp put the stop INSIDE one H1 candle's normal
+                    # range on a volatile gold session (H1 ATR alone reaches \+);
+                    # every retest of the anchor zone then grazes the stop out.
+                    # Stops now scale with gold's realized volatility, with a
+                    # small-account ceiling of \ instead of a fixed \ cap.
+                    max_swing_sl = min(18.0, max(9.0, 1.5 * atr))
+                    min_target_rr = 2.0 if is_ranging else 2.5
+                    asym_rr = 2.5 if is_ranging else 3.8
+                elif is_crypto:
+                    if "ETH" in sym_name and "ETHBTC" not in sym_name:
+                        max_swing_sl = min(32.0, max(18.0, 1.40 * atr))
+                    elif "BTC" in sym_name:
+                        max_swing_sl = min(750.0, max(400.0, 1.40 * atr))
+                    else:
+                        max_swing_sl = cfg.sl_atr_multiplier * atr
+                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
+                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
+                else:
+                    max_swing_sl = max(cfg.sl_atr_multiplier * atr, 1.80 * atr)
+                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
+                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
+
+                if "ETHBTC" in sym_name:
+                    min_floor_sl = max(1.50 * atr + spread_dist, 0.00030)
+                else:
+                    min_floor_sl = max(1.50 * atr + spread_dist, 3.5 * spread_dist)
+
+                sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
+
+            # Floor is derived from current conditions: >=3.5x spread and style-scaled ATR to protect against noise
+            if is_gold:
+                min_sl_dist = max(3.5 * spread_dist, 7.0, min(13.0, 0.75 * atr + spread_dist))
+            else:
+                atr_floor_mult = 0.60 if style == "SCALP" else (1.10 if style in ("DAY_TRADING", "DAY", "INTRADAY") else 1.55)
+                min_sl_dist = max(3.5 * spread_dist, atr_floor_mult * atr + spread_dist)
+            if is_silver:
+                min_sl_dist = max(min_sl_dist, 0.35)
+            elif is_oil:
+                min_sl_dist = max(min_sl_dist, 0.65)
+            elif is_crypto:
+                if "ETHBTC" in sym_name:
+                    min_crypto_pts = max(3.5 * spread_dist, 0.00030)
+                elif "ETH" in sym_name:
+                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
+                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, eth_base_floor)
+                elif "BTC" in sym_name:
+                    btc_base_floor = 300.0 if "SCALP" in style.upper() else 450.0
+                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, btc_base_floor)
+                else:
+                    min_crypto_pts = 2.50
+                min_sl_dist = max(min_sl_dist, min_crypto_pts)
+
+            sl_dist = max(sl_dist, min_sl_dist)
+            if is_gold:
+                sl_dist = min(sl_dist, 12.0 + spread_dist)
+            elif is_silver:
+                sl_dist = min(sl_dist, 0.85 + spread_dist)
+            elif is_crypto:
+                if "ETH" in sym_name and "ETHBTC" not in sym_name:
+                    max_eth_sl = 18.0 if "SCALP" in style.upper() else (28.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 38.0)
+                    sl_dist = min(sl_dist, max_eth_sl + spread_dist)
+                elif "BTC" in sym_name:
+                    max_btc_sl = 550.0 if "SCALP" in style.upper() else (850.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 1200.0)
+                    sl_dist = min(sl_dist, max_btc_sl + spread_dist)
+            sl_price = round(entry_price - sl_dist, digits)
+            risk_dist = abs(sl_price - entry_price)
+
+            # 3. Liquidity-Anchored Dynamic Take Profit with Institutional Front-Running
+            # Front-run institutional liquidity barriers & order blocks (SKILL.md §3 & §8)
+            # Levels are zones; institutional buying/selling absorbs orders right before the barrier.
+            base_buffer = max(pip_size * 2.5, spread_dist * 1.5, atr * 0.12)
+            if is_gold:
+                front_run_buffer = max(base_buffer, 0.35, atr * 0.15)
+            elif is_crypto:
+                front_run_buffer = max(base_buffer, c_price * 0.0008, atr * 0.15)
+            elif is_forex:
+                front_run_buffer = max(base_buffer, pip_size * 3.0)
+            else:
+                front_run_buffer = base_buffer
+
+            opposing_targets: List[float] = []
+            if st.supply_zone[0] > entry_price:
+                opposing_targets.append(st.supply_zone[0])
+            if st.supply_zone[1] > entry_price:
+                opposing_targets.append(st.supply_zone[1])
+
+            for ob in st.order_blocks:
+                if ob.get("type") == "BEARISH_ORDER_BLOCK" and ob.get("low", 0) > entry_price:
+                    opposing_targets.append(float(ob.get("low", 0)))
+
+            for fvg in st.fair_value_gaps:
+                if fvg.get("type") == "BEARISH_FVG" and fvg.get("bottom", 0) > entry_price and not fvg.get("mitigated", False):
+                    opposing_targets.append(float(fvg.get("bottom", 0)))
+
+            if context.liquidity.buy_side_liquidity > entry_price:
+                opposing_targets.append(float(context.liquidity.buy_side_liquidity))
+
+            for p in getattr(context.liquidity, "liquidity_pools", []):
+                if p.get("type") == "BUY_SIDE_LIQUIDITY" and p.get("price", 0) > entry_price:
+                    opposing_targets.append(float(p["price"]))
+
+            for kl in getattr(st, "key_levels", []):
+                if kl.get("price", 0) > entry_price:
+                    opposing_targets.append(float(kl["price"]))
+
+            # Filter targets offering at least min_target_rr after front-running tuck
+            valid_targets = [t for t in opposing_targets if ((t - front_run_buffer) - entry_price) >= (risk_dist * min_target_rr)]
+
+            if valid_targets:
+                target_cand = min(valid_targets)
+                front_run_target = max(entry_price + (risk_dist * min_target_rr), target_cand - front_run_buffer)
+                max_tp_mult = asym_rr * (1.25 if is_strong_trend else 1.0)
+                tp_dist = min(front_run_target - entry_price, risk_dist * max_tp_mult)
+            else:
+                tp_dist = risk_dist * (2.2 if is_ranging else (asym_rr * (1.10 if is_strong_trend else 1.0)))
+
+            tp_price = round(entry_price + tp_dist, digits)
+            rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
+
+            # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
+            # TP1: Initial scale-out milestone anchored to style & regime-calibrated fast_cash_r
+            target_fast_cash_r = sp.fast_cash_r if not is_ranging else min(sp.fast_cash_r, 1.00)
+            minor_resistance = [t for t in opposing_targets if entry_price + (risk_dist * (target_fast_cash_r * 0.85)) <= (t - front_run_buffer) < tp_price]
+            if minor_resistance:
+                first_target_price = round(min(minor_resistance) - front_run_buffer, digits)
+            else:
+                fc_mult = (target_fast_cash_r * 0.90) if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else target_fast_cash_r
+                first_target_price = round(entry_price + (risk_dist * fc_mult), digits)
+
+            tp1_price = first_target_price
+            tp2_price = tp_price
+
+            # TP3: Macro extension / runner target at +3.0R to +4.5R+ (higher liquidity pool or expansion)
+            extended_targets = [t for t in opposing_targets if (t - front_run_buffer) > tp_price]
+            if extended_targets:
+                tp3_price = round(min(extended_targets) - front_run_buffer, digits)
+            else:
+                tp3_mult = max(3.0, asym_rr * (1.5 if is_strong_trend else 1.35))
+                tp3_price = round(entry_price + (risk_dist * tp3_mult), digits)
+
+        elif tentative_bias == "SELL":
+            # Determine impulse swing boundaries for OTE retracement
+            sw_high = float(getattr(st, "swing_high", 0.0) or 0.0)
+            candidate_highs = [sw_high] if sw_high > c_price else []
+            if st.supply_zone[0] > c_price:
+                candidate_highs.append(float(st.supply_zone[0]))
+            if st.supply_zone[1] > c_price:
+                candidate_highs.append(float(st.supply_zone[1]))
+            for ob in getattr(st, "order_blocks", []):
+                if ob.get("type") == "BEARISH_ORDER_BLOCK" and ob.get("high", 0) > c_price and not ob.get("mitigated", False):
+                    candidate_highs.append(float(ob["high"]))
+            ch_high = float(getattr(st, "channel_upper", 0.0) or 0.0)
+            if ch_high > c_price:
+                candidate_highs.append(ch_high)
+
+            ref_high = min(candidate_highs) if candidate_highs else (c_price + (1.5 * atr))
+            sw_low = float(getattr(st, "swing_low", 0.0) or 0.0)
+            ref_low = min(c_price, sw_low if sw_low > 0 else c_price)
+            leg_range = max(ref_high - ref_low, atr * 0.5)
+
+            # 62% - 70.5% OTE retracement (midpoint 66%)
+            ote_calc = ref_low + (leg_range * 0.66)
+
+            # Check for Bearish Fair Value Gap Consequent Encroachment (50% midpoint)
+            fvg_ce = None
+            for fvg in getattr(st, "fair_value_gaps", []):
+                if fvg.get("type") == "BEARISH_FVG" and not fvg.get("mitigated", False):
+                    top = float(fvg.get("top", 0))
+                    bot = float(fvg.get("bottom", 0))
+                    if top > bot > 0 and top > c_price:
+                        fvg_ce = (top + bot) / 2.0
+                        break
+
+            eq_price = ref_low + (0.50 * leg_range)
+            if fvg_ce is not None and fvg_ce >= eq_price and fvg_ce > c_price:
+                ote_entry = fvg_ce
+            else:
+                ote_entry = max(ote_calc, eq_price)
+
+            as_limit_price = round(ote_entry, digits) if (ote_entry - c_price) > (pip_size * 2.0) else None
+            entry_price = round(context.bid, digits)
+
+            # Resistance anchors strictly above entry
+            candidate_anchors = []
+            if st.supply_zone[1] > entry_price:
+                candidate_anchors.append(st.supply_zone[1])
+            if st.supply_zone[0] > entry_price:
+                candidate_anchors.append(st.supply_zone[0])
+
+            for ob in st.order_blocks:
+                if ob.get("type") == "BEARISH_ORDER_BLOCK" and ob.get("high", 0) > entry_price and not ob.get("mitigated", False):
+                    candidate_anchors.append(float(ob["high"]))
+
+            for fvg in st.fair_value_gaps:
+                if fvg.get("type") == "BEARISH_FVG" and fvg.get("top", 0) > entry_price and not fvg.get("mitigated", False):
+                    candidate_anchors.append(float(fvg["top"]))
+
+            # B2 (SELL mirror): stop must sit BEYOND the swept liquidity.
+            _liq = context.liquidity
+            _pool = float(getattr(_liq, "buy_side_liquidity", 0.0) or 0.0)
+            if bool(getattr(_liq, "sweep_detected", False)):
+                _beyond = (float(getattr(_liq, "sweep_level", 0.0) or 0.0)
+                           + max(float(getattr(_liq, "sweep_magnitude", 0.0) or 0.0), 0.5) * atr)
+                if _beyond > entry_price:
+                    candidate_anchors.append(_beyond)
+            elif _pool > entry_price:
+                _beyond = _pool + (0.5 * atr)
+                if _beyond > entry_price:
+                    candidate_anchors.append(_beyond)
+
+            for kl in getattr(st, "key_levels", []):
+                if kl.get("price", 0) > entry_price:
+                    candidate_anchors.append(float(kl["price"]))
+
+            if candidate_anchors:
+                # Anti-Wick Shield: Nearest structural resistance boundary min(candidate_anchors) within local breathing room
+                max_anchor_dist = 1.20 * atr if (is_gold or is_crypto) else 1.80 * atr
+                anchors_in_range = [a for a in candidate_anchors if 0 < (a - entry_price) <= max_anchor_dist]
+                anchor = min(anchors_in_range) if anchors_in_range else (entry_price + (0.85 * atr))
+                struct_sl_dist = (anchor - entry_price) + effective_buffer + spread_dist
+            else:
+                struct_sl_dist = atr * (0.85 if is_strong_trend else (1.0 if is_ranging else 0.95)) + effective_buffer + spread_dist
+
+            if style == "SCALP":
+                sl_dist = min(1.10 * atr + spread_dist, max(0.65 * atr + spread_dist, struct_sl_dist * 0.60))
+                min_target_rr = 1.8
+                asym_rr = 2.5
+            elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
+                if is_index:
+                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
+                elif is_forex:
+                    sl_dist = min(2.0 * atr + spread_dist, max(1.20 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
+                elif is_gold:
+                    sl_dist = min(14.0 + spread_dist, max(8.0 + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 3.0
+                else:
+                    sl_dist = min(2.20 * atr + spread_dist, max(1.25 * atr + spread_dist, struct_sl_dist))
+                    min_target_rr = 2.0
+                    asym_rr = 2.8
+            else:  # SWING
+                if is_gold:
+                    # The old \-12 clamp put the stop INSIDE one H1 candle's normal
+                    # range on a volatile gold session (H1 ATR alone reaches \+);
+                    # every retest of the anchor zone then grazes the stop out.
+                    # Stops now scale with gold's realized volatility, with a
+                    # small-account ceiling of \ instead of a fixed \ cap.
+                    max_swing_sl = min(18.0, max(9.0, 1.5 * atr))
+                    min_target_rr = 2.0 if is_ranging else 2.5
+                    asym_rr = 2.5 if is_ranging else 3.8
+                elif is_crypto:
+                    if "ETH" in sym_name and "ETHBTC" not in sym_name:
+                        max_swing_sl = min(32.0, max(18.0, 1.40 * atr))
+                    elif "BTC" in sym_name:
+                        max_swing_sl = min(750.0, max(400.0, 1.40 * atr))
+                    else:
+                        max_swing_sl = cfg.sl_atr_multiplier * atr
+                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
+                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
+                else:
+                    max_swing_sl = max(cfg.sl_atr_multiplier * atr, 1.80 * atr)
+                    min_target_rr = max(2.0, cfg.min_target_rr) if not is_ranging else max(1.8, cfg.min_target_rr - 0.2)
+                    asym_rr = cfg.asym_rr if not is_ranging else max(2.5, cfg.asym_rr - 0.5)
+
+                if "ETHBTC" in sym_name:
+                    min_floor_sl = max(1.50 * atr + spread_dist, 0.00030)
+                else:
+                    min_floor_sl = max(1.50 * atr + spread_dist, 3.5 * spread_dist)
+
+                sl_dist = min(max_swing_sl + spread_dist, max(min_floor_sl, struct_sl_dist))
+
+            # Floor is derived from current conditions: >=3.5x spread and style-scaled ATR to protect against noise
+            if is_gold:
+                min_sl_dist = max(3.5 * spread_dist, 7.0, min(13.0, 0.75 * atr + spread_dist))
+            else:
+                atr_floor_mult = 0.60 if style == "SCALP" else (1.10 if style in ("DAY_TRADING", "DAY", "INTRADAY") else 1.55)
+                min_sl_dist = max(3.5 * spread_dist, atr_floor_mult * atr + spread_dist)
+            if is_silver:
+                min_sl_dist = max(min_sl_dist, 0.35)
+            elif is_oil:
+                min_sl_dist = max(min_sl_dist, 0.65)
+            elif is_crypto:
+                if "ETHBTC" in sym_name:
+                    min_crypto_pts = max(3.5 * spread_dist, 0.00030)
+                elif "ETH" in sym_name:
+                    eth_base_floor = 10.0 if "SCALP" in style.upper() else (20.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 30.0)
+                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, eth_base_floor)
+                elif "BTC" in sym_name:
+                    btc_base_floor = 300.0 if "SCALP" in style.upper() else 450.0
+                    min_crypto_pts = max(3.5 * spread_dist, 1.20 * atr, btc_base_floor)
+                else:
+                    min_crypto_pts = 2.50
+                min_sl_dist = max(min_sl_dist, min_crypto_pts)
+
+            sl_dist = max(sl_dist, min_sl_dist)
+            if is_gold:
+                sl_dist = min(sl_dist, 12.0 + spread_dist)
+            elif is_silver:
+                sl_dist = min(sl_dist, 0.85 + spread_dist)
+            elif is_crypto:
+                if "ETH" in sym_name and "ETHBTC" not in sym_name:
+                    max_eth_sl = 18.0 if "SCALP" in style.upper() else (28.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 38.0)
+                    sl_dist = min(sl_dist, max_eth_sl + spread_dist)
+                elif "BTC" in sym_name:
+                    max_btc_sl = 550.0 if "SCALP" in style.upper() else (850.0 if any(x in style.upper() for x in ("DAY", "INTRADAY")) else 1200.0)
+                    sl_dist = min(sl_dist, max_btc_sl + spread_dist)
+            sl_price = round(entry_price + sl_dist, digits)
+            risk_dist = abs(sl_price - entry_price)
+
+            # 3. Liquidity-Anchored Dynamic Take Profit with Spread Buffering & Front-Running
+            # In MT5, closing a SELL position requires a BUY TO COVER at the ASK price (ASK = BID + SPREAD).
+            # Charts display the BID price. Opposing structural targets (t) are identified from BID.
+            # Adding spread_dist + front_run_buffer ensures that when BID reaches the front-run zone,
+            # ASK cleanly fills the TP without requiring price to plunge below support by the full spread.
+            base_buffer = max(pip_size * 2.5, spread_dist * 1.5, atr * 0.12)
+            if is_gold:
+                front_run_buffer = max(base_buffer, 0.35, atr * 0.15)
+            elif is_crypto:
+                front_run_buffer = max(base_buffer, c_price * 0.0008, atr * 0.15)
+            elif is_forex:
+                front_run_buffer = max(base_buffer, pip_size * 3.0)
+            else:
+                front_run_buffer = base_buffer
+
+            opposing_targets = []
+            if 0 < st.demand_zone[1] < entry_price:
+                opposing_targets.append(st.demand_zone[1])
+            if 0 < st.demand_zone[0] < entry_price:
+                opposing_targets.append(st.demand_zone[0])
+
+            for ob in st.order_blocks:
+                if ob.get("type") == "BULLISH_ORDER_BLOCK" and 0 < ob.get("high", 0) < entry_price:
+                    opposing_targets.append(float(ob.get("high", 0)))
+
+            for fvg in st.fair_value_gaps:
+                if fvg.get("type") == "BULLISH_FVG" and 0 < fvg.get("top", 0) < entry_price:
+                    opposing_targets.append(float(fvg.get("top", 0)))
+
+            if 0 < context.liquidity.sell_side_liquidity < entry_price:
+                opposing_targets.append(float(context.liquidity.sell_side_liquidity))
+
+            for p in getattr(context.liquidity, "liquidity_pools", []):
+                if p.get("type") == "SELL_SIDE_LIQUIDITY" and 0 < p.get("price", 0) < entry_price:
+                    opposing_targets.append(float(p["price"]))
+
+            for kl in getattr(st, "key_levels", []):
+                if 0 < kl.get("price", 0) < entry_price:
+                    opposing_targets.append(float(kl["price"]))
+
+            # Filter targets offering at least min_target_rr after spread buffer and front-running
+            valid_targets = [t for t in opposing_targets if (entry_price - (t + front_run_buffer + spread_dist)) >= (risk_dist * min_target_rr)]
+
+            if valid_targets:
+                target_cand = max(valid_targets)
+                front_run_target = min(entry_price - (risk_dist * min_target_rr), target_cand + front_run_buffer + spread_dist)
+                max_tp_mult = asym_rr * (1.25 if is_strong_trend else (0.85 if is_ranging else 1.0))
+                tp_dist = min(entry_price - front_run_target, risk_dist * max_tp_mult)
+                tp_price = round(entry_price - tp_dist, digits)
+            else:
+                tp_dist = risk_dist * (2.2 if is_ranging else (asym_rr * (1.10 if is_strong_trend else 1.0)))
+                tp_price = round(entry_price - tp_dist + spread_dist, digits)
+
+            # Ensure valid sell TP below entry
+            if tp_price >= entry_price:
+                tp_price = round(entry_price - max(risk_dist * min_target_rr, pip_size * 5), digits)
+            tp_dist = abs(entry_price - tp_price)
+            rr_ratio = round(tp_dist / (risk_dist + 1e-9), 2)
+
+            # 4. Adaptive 3-Tier Milestone Targets (TP1, TP2, TP3)
+            # TP1: Initial scale-out milestone anchored to style & regime-calibrated fast_cash_r
+            target_fast_cash_r = sp.fast_cash_r if not is_ranging else min(sp.fast_cash_r, 1.00)
+            minor_support = [t for t in opposing_targets if tp_price < (t + front_run_buffer + spread_dist) <= entry_price - (risk_dist * (target_fast_cash_r * 0.85))]
+            if minor_support:
+                first_target_price = round(max(minor_support) + front_run_buffer + spread_dist, digits)
+            else:
+                fc_mult = (target_fast_cash_r * 0.90) if (is_forex and any(k in sym_name for k in ["AUD", "CHF"])) else target_fast_cash_r
+                first_target_price = round(entry_price - (risk_dist * fc_mult) + spread_dist, digits)
+
+            if first_target_price >= entry_price:
+                first_target_price = round(entry_price - (risk_dist * target_fast_cash_r * 0.8), digits)
+
+            tp1_price = first_target_price
+            tp2_price = tp_price
+
+            # TP3: Macro extension / runner target at +3.0R to +4.5R+ (higher liquidity pool or expansion)
+            extended_targets = [t for t in opposing_targets if 0 < (t + front_run_buffer + spread_dist) < tp_price]
+            if extended_targets:
+                tp3_price = round(max(extended_targets) + front_run_buffer + spread_dist, digits)
+            else:
+                tp3_mult = max(3.0, (2.2 if is_ranging else asym_rr) * (1.5 if is_strong_trend else 1.35))
+                tp3_price = round(entry_price - (risk_dist * tp3_mult) + spread_dist, digits)
+
+        else:
+            # Bias is HOLD / MONITOR — compute a structural reference bracket
+            is_bear_tilt = (st.bias == "BEARISH") or (getattr(context.momentum, "trend_score", 0.0) < 0)
+            entry_price = round(context.bid if is_bear_tilt else context.ask, digits)
+            if style == "SCALP":
+                sl_dist = 0.40 * atr
+                tp_dist = sl_dist * 2.0
+                rr_ratio = 2.0
+            elif style in ("DAY_TRADING", "DAY", "INTRADAY"):
+                sl_dist = 0.80 * atr
+                tp_dist = sl_dist * 2.8
+                rr_ratio = 2.8
+            else:
+                sl_dist = atr * (1.2 if is_ranging else 1.5)
+                rr_ratio = 2.2 if is_ranging else 4.2
+                tp_dist = sl_dist * rr_ratio
+            sl_price = round(entry_price + sl_dist if is_bear_tilt else entry_price - sl_dist, digits)
+            tp_price = round(entry_price - tp_dist if is_bear_tilt else entry_price + tp_dist, digits)
+            risk_dist = abs(entry_price - sl_price)
+            tp1_price = round(entry_price - (risk_dist * 1.5) if is_bear_tilt else entry_price + (risk_dist * 1.5), digits)
+            tp2_price = tp_price
+            tp3_price = round(entry_price - (risk_dist * (rr_ratio + 1.5)) if is_bear_tilt else entry_price + (risk_dist * (rr_ratio + 1.5)), digits)
+            first_target_price = None
+
+        # 5. Adaptive Scale-Out Volume % Calculation
+        of_data = getattr(context, "order_flow", {})
+        delta_score = float(of_data.get("delta_score", 0.0)) if isinstance(of_data, dict) else 0.0
+        aligned_delta = (
+            (tentative_bias == "BUY" and delta_score >= 0)
+            or (tentative_bias == "SELL" and delta_score <= 0)
+            or delta_score == 0.0
+        )
+
+        if (is_strong_trend or vol_state in ("EXPANSION", "EXTREME")) and aligned_delta:
+            first_target_volume_pct = 0.25 if ((is_gold) and style == "SWING") else (sp.fast_cash_volume_pct if "SCALP" in style else min(sp.fast_cash_volume_pct, 0.33))
+        elif is_ranging or vol_state == "COMPRESSION":
+            first_target_volume_pct = 0.50
+        else:
+            first_target_volume_pct = sp.fast_cash_volume_pct
+
+        # 6. Runner Trailing Distance: 1.0 + 0.4 * 1_{EXPANSION} + 0.8 * 1_{EXTREME}
+        is_expansion_val = 1.0 if vol_state == "EXPANSION" else 0.0
+        is_extreme_val = 1.0 if vol_state == "EXTREME" else 0.0
+        runner_trail_distance_atr = round(1.0 + (0.4 * is_expansion_val) + (0.8 * is_extreme_val), 2)
+
+        base_result = {
+            "bias": tentative_bias,
+            "entry_price": entry_price,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "tp1_price": tp1_price,
+            "tp2_price": tp2_price,
+            "tp3_price": tp3_price,
+            "risk_dist": risk_dist,
+            "tp_dist": tp_dist,
+            "rr_ratio": rr_ratio,
+            "first_target_price": first_target_price,
+            "first_target_volume_pct": first_target_volume_pct,
+            "runner_trail_distance_atr": runner_trail_distance_atr,
+            "entry_type": "DYNAMIC_STRUCTURAL",
+            "protocol_details": {"protocol": "BASELINE_DYNAMIC_LEVELS"},
+            "as_limit_price": as_limit_price if ('as_limit_price' in locals() and as_limit_price is not None) else (entry_price if abs(entry_price - c_price) > (pip_size * 0.5) else None)
+        }
+
+        # Seamless Institutional Entry Engine Integration
+        if mtf_data and any(isinstance(v, pd.DataFrame) and not v.empty for v in mtf_data.values()):
+            try:
+                inst_res = self.institutional_engine.calculate_entry_and_levels(
+                    context=context,
+                    regime=regime,
+                    tentative_bias=tentative_bias,
+                    trade_style=style,
+                    mtf_data=mtf_data
+                )
+                if inst_res and isinstance(inst_res, dict):
+                    inst_entry = float(inst_res.get("entry_price", entry_price))
+                    inst_risk = float(inst_res.get("risk_dist", risk_dist))
+                    # Use institutional stop or baseline structural risk floor
+                    base_risk_floor = float(base_result.get("risk_dist", 0.0))
+                    clamped_risk = max(inst_risk, base_risk_floor) if base_risk_floor > 0 else inst_risk
+                    if tentative_bias == "BUY":
+                        clamped_sl = round(inst_entry - clamped_risk, digits)
+                    else:
+                        clamped_sl = round(inst_entry + clamped_risk, digits)
+
+                    inst_tp = float(inst_res.get("tp_price", tp_price))
+                    inst_tp1 = float(inst_res.get("tp1_price", tp1_price))
+                    inst_tp2 = float(inst_res.get("tp2_price", tp2_price))
+                    inst_tp3 = float(inst_res.get("tp3_price", tp3_price))
+                    clamped_tp_dist = abs(inst_tp - inst_entry)
+
+                    # Preserve institutional R:R: When stop is widened to satisfy structural floor,
+                    # TP must ALWAYS maintain at least min_target_rr (never clamped to 3x small scalp TP).
+                    min_target_rr = 2.0 if is_gold else 1.8
+                    min_structural_tp_dist = clamped_risk * min_target_rr
+
+                    if clamped_risk > inst_risk and inst_risk > 0:
+                        raw_expansion = clamped_risk / inst_risk
+                        expanded_tp_dist = clamped_tp_dist * raw_expansion
+                        clamped_tp_dist = max(expanded_tp_dist, min_structural_tp_dist)
+                    else:
+                        clamped_tp_dist = max(clamped_tp_dist, min_structural_tp_dist)
+
+                    if tentative_bias == "BUY":
+                        clamped_tp = round(inst_entry + clamped_tp_dist, digits)
+                        clamped_tp1 = round(inst_entry + (clamped_risk * 1.2), digits)
+                        clamped_tp2 = clamped_tp
+                        clamped_tp3 = round(inst_entry + (clamped_risk * 3.5), digits)
+                    else:
+                        clamped_tp = round(inst_entry - clamped_tp_dist, digits)
+                        clamped_tp1 = round(inst_entry - (clamped_risk * 1.2), digits)
+                        clamped_tp2 = clamped_tp
+                        clamped_tp3 = round(inst_entry - (clamped_risk * 3.5), digits)
+
+                    clamped_rr = round(clamped_tp_dist / max(clamped_risk, 1e-9), 2)
+
+                    return {
+                        "bias": tentative_bias,
+                        "entry_price": inst_entry,
+                        "sl_price": clamped_sl,
+                        "tp_price": clamped_tp,
+                        "tp1_price": clamped_tp1,
+                        "tp2_price": clamped_tp2,
+                        "tp3_price": clamped_tp3,
+                        "risk_dist": clamped_risk,
+                        "tp_dist": clamped_tp_dist,
+                        "rr_ratio": clamped_rr,
+                        "first_target_price": clamped_tp1,
+                        "first_target_volume_pct": inst_res.get("first_target_volume_pct", first_target_volume_pct),
+                        "runner_trail_distance_atr": inst_res.get("runner_trail_atr", runner_trail_distance_atr),
+                        "entry_type": inst_res.get("entry_type", "INSTITUTIONAL"),
+                        "protocol_details": inst_res.get("protocol_details", {}),
+                        "as_limit_price": inst_res.get("as_limit_price", entry_price if abs(inst_entry - c_price) > (pip_size * 0.5) else None)
+                    }
+            except Exception as e:
+                logger.warning(f"InstitutionalEntryEngine execution failed: {e}. Falling back to baseline dynamic levels.")
+
+        return base_result
+
+    def calculate_manual_trade_levels(
+        self,
+        symbol: str,
+        action: str,
+        current_price: Optional[float] = None,
+        trade_style: str = "SWING"
+    ) -> Dict[str, Any]:
+        """
+        Calculate AI-assisted dynamic structural SL, TP1, and TP2 for manual orders.
+        Anchor beyond recent swing / OB / FVG + dynamic ATR buffer.
+        TP1: 1.0R - 1.2R, TP2: 2.0R - 3.5R.
+        """
+        norm_action = (action or "BUY").strip().upper()
+        if norm_action not in ("BUY", "SELL"):
+            norm_action = "BUY"
+
+        spec = resolve_symbol(symbol)
+        digits = spec.digits
+        pip_size = spec.pip_size if spec.pip_size > 0 else 0.0001
+        spread_pips = spec.typical_spread_pips if getattr(spec, "typical_spread_pips", 0) > 0 else 2.0
+        spread_dist = spread_pips * pip_size
+
+        ctx: Optional[MarketContext] = None
+        mtf_data_fetched: Optional[Dict[str, Any]] = None
+
+        # 1. Try to retrieve context from global state manager if available
+        try:
+            from jarvis.application.state_manager import GLOBAL_STATE
+            ctx = GLOBAL_STATE.get_market_context(symbol)
+        except Exception as ex:
+            logger.debug(f"Could not retrieve context from GLOBAL_STATE for {symbol}: {ex}")
+
+        # 2. If no context in state manager, build fresh context via DataFeedEngine + MarketContextEngine
+        if ctx is None or ctx.current_price <= 0:
+            try:
+                from jarvis.market.data_feed import DataFeedEngine
+                from jarvis.market.market_context import MarketContextEngine
+                df_engine = DataFeedEngine()
+                mtf = df_engine.fetch_multi_timeframe(symbol, trade_style=trade_style)
+                if mtf and any(not df.empty for df in mtf.values()):
+                    mtf_data_fetched = mtf
+                    ce = MarketContextEngine()
+                    ctx = ce.build_context(
+                        symbol,
+                        mtf,
+                        current_spread_pips=spread_pips,
+                        max_allowed_spread_pips=spec.max_spread_pips,
+                        trade_style=trade_style
+                    )
+            except Exception as ex:
+                logger.debug(f"Could not build context via data feed for {symbol}: {ex}")
+
+        # 3. Fallback synthetic context if live data is unavailable
+        if ctx is None or ctx.current_price <= 0:
+            price = current_price if (current_price is not None and current_price > 0) else (spec.base_price if spec.base_price > 0 else 100.0)
+            typical_atr_pct = getattr(spec, "typical_atr_pct", 0.5)
+            typical_atr = price * (typical_atr_pct / 100.0) if typical_atr_pct > 0 else (price * 0.005)
+            atr = typical_atr if typical_atr > 0 else (price * 0.005)
+
+            from jarvis.data.schemas import (
+                StructureContext, LiquidityContext, VolatilityContext,
+                MomentumContext, SessionContext
+            )
+            st = StructureContext(
+                bias="BULLISH" if norm_action == "BUY" else "BEARISH",
+                swing_high=round(price + (atr * 1.5), digits),
+                swing_low=round(price - (atr * 1.5), digits),
+                supply_zone=(round(price + (atr * 2.0), digits), round(price + (atr * 2.5), digits)),
+                demand_zone=(round(price - (atr * 2.5), digits), round(price - (atr * 2.0), digits)),
+                order_blocks=[],
+                fair_value_gaps=[]
+            )
+            liq = LiquidityContext(
+                buy_side_liquidity=0.0,
+                sell_side_liquidity=0.0
+            )
+            vol = VolatilityContext(
+                atr=atr,
+                current_spread_pips=spread_pips
+            )
+            mom = MomentumContext(
+                trend_score=30 if norm_action == "BUY" else -30,
+                adx=25.0
+            )
+            sess = SessionContext()
+            ctx = MarketContext(
+                symbol=symbol,
+                timestamp=datetime.now(timezone.utc),
+                current_price=price,
+                bid=price,
+                ask=price + spread_dist,
+                structure=st,
+                liquidity=liq,
+                volatility=vol,
+                momentum=mom,
+                session=sess
+            )
+
+        # If custom current_price is provided, anchor the context around it
+        if current_price is not None and current_price > 0:
+            ctx.current_price = float(current_price)
+            ctx.bid = float(current_price)
+            ctx.ask = float(current_price + spread_dist)
+
+        # 4. Classify regime or use default
+        try:
+            from jarvis.intelligence.regime_engine import MarketRegimeClassifier
+            rc = MarketRegimeClassifier()
+            regime = rc.classify_regime(ctx)
+        except Exception:
+            regime = RegimeOutput(
+                primary_regime=MarketRegime.TREND_BULL if norm_action == "BUY" else MarketRegime.TREND_BEAR,
+                probabilities={"trend_bull": 0.8, "trend_bear": 0.2} if norm_action == "BUY" else {"trend_bull": 0.2, "trend_bear": 0.8},
+                confidence=0.80
+            )
+
+        # 5. Calculate structural levels using the mathematical engine
+        levels = self.calculate_levels(
+            context=ctx,
+            regime=regime,
+            tentative_bias=norm_action,
+            trade_style=trade_style,
+            mtf_data=mtf_data_fetched
+        )
+
+        entry = float(levels.get("entry_price", ctx.current_price))
+        sl = float(levels.get("sl_price", 0.0))
+        tp = float(levels.get("tp_price", 0.0))
+        risk_dist = float(levels.get("risk_dist", abs(entry - sl)))
+        if risk_dist <= 0:
+            atr_val = ctx.volatility.atr if ctx.volatility.atr > 0 else (entry * 0.005)
+            risk_dist = max(pip_size * 5, atr_val * 1.2)
+            sl = round(entry - risk_dist if norm_action == "BUY" else entry + risk_dist, digits)
+
+        rr = float(levels.get("rr_ratio", 2.0))
+
+        # Calculate dynamic TP1 (1.0R - 1.2R) and dynamic TP2 (2.0R - 3.5R)
+        first_target = levels.get("tp1_price") or levels.get("first_target_price")
+        if first_target is not None and first_target > 0:
+            if norm_action == "BUY" and first_target > entry:
+                tp1 = round(float(first_target), digits)
+            elif norm_action == "SELL" and first_target < entry:
+                tp1 = round(float(first_target), digits)
+            else:
+                tp1 = round(entry + (risk_dist * 1.1) if norm_action == "BUY" else entry - (risk_dist * 1.1), digits)
+        else:
+            tp1 = round(entry + (risk_dist * 1.1) if norm_action == "BUY" else entry - (risk_dist * 1.1), digits)
+
+        tp2 = round(tp, digits) if tp > 0 else (round(entry + (risk_dist * 2.5), digits) if norm_action == "BUY" else round(entry - (risk_dist * 2.5), digits))
+
+        return {
+            "sl": float(sl),
+            "tp": float(tp2),
+            "tp1": float(tp1),
+            "tp2": float(tp2),
+            "risk_dist": float(risk_dist),
+            "rr": float(rr),
+            "entry_price": float(entry),
+            "bias": norm_action,
+            "entry_type": levels.get("entry_type", "MANUAL_LIMIT"),
+            "protocol_details": levels.get("protocol_details", {})
+        }
+
+
+DYNAMIC_LEVELS_ENGINE = DynamicRiskAndLevelsEngine()
+
