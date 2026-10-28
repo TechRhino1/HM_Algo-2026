@@ -140,15 +140,15 @@ class TestTheCeilingBinds:
             )
 
     def test_multipliers_only_reduce_below_the_ceiling(self):
-        """A drawdown penalty must lower risk; it must never raise it."""
+        """A drawdown/heat penalty must lower risk; it must never raise it."""
         clean = _risk_pct(25000.0, "EURUSD", 1.1000, 1.0950)
         penalised = _risk_pct(
-            25000.0, "EURUSD", 1.1000, 1.0950, current_drawdown_pct=9.0
+            25000.0, "EURUSD", 1.1000, 1.0950, portfolio_heat_multiplier=0.5
         )
         assert penalised <= clean, (
-            f"a 9% drawdown raised risk from {clean:.3f}% to {penalised:.3f}%"
+            f"a 0.5x heat penalty raised risk from {clean:.3f}% to {penalised:.3f}%"
         )
-        assert penalised < clean, "the drawdown penalty did nothing at all"
+        assert penalised < clean, "the heat penalty did nothing at all"
 
 
 class TestDegenerateInputs:

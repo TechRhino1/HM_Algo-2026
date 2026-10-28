@@ -427,7 +427,9 @@ class ExecutionEngine:
                 account_equity = self.state_manager.account.equity if self.state_manager.account else 10000.0
                 from jarvis.config.settings import SETTINGS
                 base_target = account_equity * (SETTINGS.risk.max_risk_per_trade_pct / 100.0)
-                target_risk_usd = max(base_target, 15.0) if account_equity < 2500.0 else base_target
+                is_gold_trade = any(k in str(decision.symbol).upper() for k in ["XAU", "GOLD"])
+                micro_floor = 28.0 if is_gold_trade else 15.0
+                target_risk_usd = max(base_target, micro_floor) if account_equity < 2500.0 else base_target
                 
                 if realized_risk_usd > target_risk_usd * 1.10:
                     logger.warning(

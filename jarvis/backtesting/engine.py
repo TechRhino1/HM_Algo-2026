@@ -701,9 +701,13 @@ class BacktestEngine:
                 # learned regime policy. Without one, the legacy 29-check stack
                 # decides, exactly as before.
                 if wr_profile is not None:
+                    score_val = max(
+                        float(getattr(decision, "model_confidence", 0.0) or 0.0),
+                        float(getattr(decision, "ai_score", 0.0) or 0.0) / 100.0,
+                    )
                     entry_dec = evaluate_entry(
                         quality_gate=decision.quality_gate,
-                        score=float(getattr(decision, "model_confidence", 0.0) or 0.0),
+                        score=score_val,
                         regime=regime_name,
                         profile=wr_profile,
                     )

@@ -751,9 +751,13 @@ class JarvisOrchestrator:
             if hasattr(regime.primary_regime, "value")
             else str(regime.primary_regime)
         )
+        score_val = max(
+            float(getattr(decision, "model_confidence", 0.0) or 0.0),
+            float(getattr(decision, "ai_score", 0.0) or 0.0) / 100.0,
+        )
         return evaluate_entry(
             quality_gate=getattr(decision, "quality_gate", None),
-            score=float(getattr(decision, "model_confidence", 0.0) or 0.0),
+            score=score_val,
             regime=regime_name,
             profile=profile,
         )
@@ -1261,9 +1265,15 @@ class JarvisOrchestrator:
             auth_res = {"authorized": False, "reason": f"STYLE_FILTER: Opportunity style {active_trade_style} does not match active trading style {orch_style}"}
         elif entry_dec is not None:
             # High-conviction elite setup bypass: If blended AI score is elite (>=80.0), quality gate passed, and positive EV (>=0.40R),
-            # allow entry authorization
-            is_elite_setup = float(getattr(decision, "ai_score", 0.0) or 0.0) >= 80.0 and gate_passed and decision.expected_value >= 0.40
+            # allow entry authorization while ensuring no hard capital protection failures
+            is_elite_setup = (
+                float(getattr(decision, "ai_score", 0.0) or 0.0) >= 80.0
+                and gate_passed
+                and decision.expected_value >= 0.40
+                and len(entry_dec.protection_failures) == 0
+            )
             is_auth = bool(entry_dec.allowed) or is_elite_setup
+            entry_override = is_auth
             auth_res = {
                 "authorized": is_auth,
                 "reason": None if is_auth else f"CALIBRATED_ENTRY: {entry_dec.reason}",
@@ -1854,8 +1864,15 @@ class JarvisOrchestrator:
                     except Exception as _arb_exc:
                         logger.debug("Arbiter calibrated-entry check failed: %s", _arb_exc)
                         _arb_entry = None
+                _is_elite = (
+                    float(getattr(decision, "ai_score", 0.0) or 0.0) >= 80.0
+                    and getattr(decision, "quality_gate", None)
+                    and getattr(decision.quality_gate, "passed", False)
+                    and getattr(decision, "expected_value", 0.0) >= 0.40
+                    and (not _arb_entry or len(_arb_entry.protection_failures) == 0)
+                )
                 _arb_entry_override = (
-                    None if _arb_entry is None else bool(_arb_entry.allowed)
+                    None if _arb_entry is None else (bool(_arb_entry.allowed) or _is_elite)
                 )
 
                 auth_res = self.risk_engine.authorize_execution(

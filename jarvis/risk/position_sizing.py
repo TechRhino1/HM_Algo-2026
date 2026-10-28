@@ -146,13 +146,15 @@ class PositionSizer:
             f"(base {risk_pct:.2f}% after vol_scalar {vol_scalar:.2f}; "
             f"kelly {kelly_pct:.2f}% computed)"
         )
-        risk_amount_dollars = account_balance * (effective_risk_pct / 100.0)
-        if account_balance < 2500.0:
-            risk_amount_dollars = min(risk_amount_dollars, 12.0)
-
         from jarvis.data.symbol_registry import get_dollar_risk_per_price_unit
         
         sym_key = sym_name if sym_name else (str(symbol_info.get("canonical", "EURUSD")).upper() if symbol_info else "EURUSD")
+        is_gold_symbol = any(k in sym_key.upper() for k in ["XAU", "GOLD"])
+
+        risk_amount_dollars = account_balance * (effective_risk_pct / 100.0)
+        if account_balance < 2500.0:
+            max_micro_dollars = 28.0 if is_gold_symbol else 12.0
+            risk_amount_dollars = min(risk_amount_dollars, max_micro_dollars)
         dollar_risk_per_unit = get_dollar_risk_per_price_unit(sym_key, symbol_info)
         dollar_risk_per_lot = risk_distance * dollar_risk_per_unit
 
@@ -178,11 +180,13 @@ class PositionSizer:
             actual_risk_pct = (actual_risk_dollars / (account_balance + 1e-9)) * 100.0
 
             if account_balance < 2500.0:
+                max_dollars = 28.0 if is_gold_symbol else 12.0
+                max_pct = 5.50 if is_gold_symbol else 2.50
                 min_lot_ok = (
-                    actual_risk_dollars <= 12.0 + 1e-9
-                    and actual_risk_pct <= 2.50 + 1e-9
+                    actual_risk_dollars <= max_dollars + 1e-9
+                    and actual_risk_pct <= max_pct + 1e-9
                 )
-                cap_text = "$12.00 / 2.50% absolute"
+                cap_text = f"${max_dollars:.2f} / {max_pct:.2f}% absolute"
             else:
                 max_pct = max(float(risk_pct), 1.0)
                 min_lot_ok = actual_risk_pct <= max_pct + 1e-9
