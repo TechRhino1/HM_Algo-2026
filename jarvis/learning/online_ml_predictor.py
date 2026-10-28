@@ -69,7 +69,7 @@ class OnlineMLPredictor:
         0.25,   # 9. bos_choch_signal
         0.20,   # 10. discount_premium_alignment
         0.30,   # 11. liquidity_sweep_alignment
-        0.25,   # 12. order_block_fvg_confluence
+        0.30,   # 12. order_block_fvg_confluence (direction-signed)
         0.30,   # 13. mtf_confluence_score
         0.20,   # 14. session_prime_flag
         0.25,   # 15. killzone_active_flag
@@ -79,11 +79,11 @@ class OnlineMLPredictor:
         0.15,   # 19. risk_reward_ratio
         0.10,   # 20. trade_style_encoding
         0.15,   # 21. strategy_type_score
-        0.20,   # 22. order_flow_imbalance
+        0.25,   # 22. order_flow_imbalance
         0.10,   # 23. vwap_distance_normalized
         0.25,   # 24. confluence_master_score
         0.25,   # 25. order_book_imbalance
-        -0.20,  # 26. vpin_toxicity
+        0.20,   # 26. vpin_toxicity (direction-signed)
         -0.15,  # 27. parkinson_vol_ratio
         0.30    # 28. cvd_divergence_signal
     ], dtype=float)
@@ -266,12 +266,31 @@ class OnlineMLPredictor:
         else:
             sweep_align = 0.0
 
-        # 12. Order Block / FVG Confluence (0.0 to 1.0)
+        # 12. Order Block / FVG Confluence (-1.0 to +1.0 direction-signed)
         obs = getattr(st, "order_blocks", []) or []
         fvgs = getattr(st, "fair_value_gaps", []) or []
-        has_ob = 1.0 if len(obs) > 0 else 0.0
-        has_fvg = 1.0 if len(fvgs) > 0 else 0.0
-        ob_fvg_conf = (has_ob + has_fvg) / 2.0
+        bull_blocks = sum(1 for b in obs if b.get("direction") == "BULLISH") + sum(1 for f in fvgs if f.get("direction") == "BULLISH")
+        bear_blocks = sum(1 for b in obs if b.get("direction") == "BEARISH") + sum(1 for f in fvgs if f.get("direction") == "BEARISH")
+        if bias == "BUY":
+            if bull_blocks > 0 and bear_blocks == 0:
+                ob_fvg_conf = 1.0
+            elif bull_blocks > bear_blocks:
+                ob_fvg_conf = 0.5
+            elif bear_blocks > bull_blocks:
+                ob_fvg_conf = -1.0
+            else:
+                ob_fvg_conf = 0.0
+        elif bias == "SELL":
+            if bear_blocks > 0 and bull_blocks == 0:
+                ob_fvg_conf = 1.0
+            elif bear_blocks > bull_blocks:
+                ob_fvg_conf = 0.5
+            elif bull_blocks > bear_blocks:
+                ob_fvg_conf = -1.0
+            else:
+                ob_fvg_conf = 0.0
+        else:
+            ob_fvg_conf = 0.0
 
         # 13. MTF Confluence Score (-1.0 to +1.0)
         confluence = 0.0
@@ -369,9 +388,10 @@ class OnlineMLPredictor:
         raw_obi = float(of_data.get("obi", 0.0) or 0.0) if isinstance(of_data, dict) else 0.0
         obi_aligned = raw_obi if bias == "BUY" else (-raw_obi if bias == "SELL" else 0.0)
 
-        # 26. VPIN Toxicity (0.0 to 1.0)
+        # 26. VPIN Toxicity Direction-Signed (-1.0 to +1.0)
         vpin_val = float(of_data.get("vpin", 0.0) or 0.0) if isinstance(of_data, dict) else 0.0
-        vpin_norm = min(1.0, max(0.0, vpin_val))
+        vpin_dir = 1.0 if of_align >= 0 else -1.0
+        vpin_norm = min(1.0, max(-1.0, vpin_val * vpin_dir))
 
         # 27. Parkinson / GK Volatility Ratio (-1.0 to 1.5)
         raw_vol_ratio = float(getattr(vol, "volatility_ratio", 1.0) or 1.0) if vol else 1.0

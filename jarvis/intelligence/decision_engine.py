@@ -1564,27 +1564,52 @@ class DecisionEngine:
             try:
                 _fvg_res = self.fvg_engine.analyze(mtf_data["primary"])
                 if _fvg_res:
-                    _in_fvg = _fvg_res.get("price_in_fvg", False)
-                    _in_ob = _fvg_res.get("price_in_ob", False)
+                    _in_bull_fvg = _fvg_res.get("price_in_bullish_fvg", False)
+                    _in_bear_fvg = _fvg_res.get("price_in_bearish_fvg", False)
+                    _in_bull_ob = _fvg_res.get("price_in_bullish_ob", False)
+                    _in_bear_ob = _fvg_res.get("price_in_bearish_ob", False)
                     _fvg_ob_conf = _fvg_res.get("fvg_ob_confluence", False)
                     _ote = _fvg_res.get("ote_zone", {})
-                    _in_ote_dir = (tentative_bias == "BUY" and _ote.get("direction") == "BULLISH") or (tentative_bias == "SELL" and _ote.get("direction") == "BEARISH")
+                    _in_ote = _ote.get("is_price_in_ote", False)
+                    _ote_dir = _ote.get("direction", "")
                     
                     _fvg_boost = 0.0
-                    if _in_fvg or _in_ob:
-                        _fvg_boost += 0.04
-                        ai_score = min(100.0, ai_score + 6.0)
-                    if _fvg_ob_conf:
-                        _fvg_boost += 0.06
-                        ai_score = min(100.0, ai_score + 8.0)
-                    if _in_ote_dir:
-                        _fvg_boost += 0.04
-                        ai_score = min(100.0, ai_score + 5.0)
-                        
+                    if tentative_bias == "BUY":
+                        if _in_bull_fvg or _in_bull_ob:
+                            _fvg_boost += 0.04
+                            ai_score = min(100.0, ai_score + 6.0)
+                        elif _in_bear_fvg or _in_bear_ob:
+                            # Sitting inside opposing bearish supply gap is an obstacle!
+                            ai_score = max(0.0, ai_score - 8.0)
+
+                        if _fvg_ob_conf and _in_bull_fvg:
+                            _fvg_boost += 0.06
+                            ai_score = min(100.0, ai_score + 8.0)
+
+                        if _in_ote and _ote_dir == "BULLISH":
+                            _fvg_boost += 0.04
+                            ai_score = min(100.0, ai_score + 5.0)
+
+                    elif tentative_bias == "SELL":
+                        if _in_bear_fvg or _in_bear_ob:
+                            _fvg_boost += 0.04
+                            ai_score = min(100.0, ai_score + 6.0)
+                        elif _in_bull_fvg or _in_bull_ob:
+                            # Sitting inside opposing bullish demand gap is an obstacle!
+                            ai_score = max(0.0, ai_score - 8.0)
+
+                        if _fvg_ob_conf and _in_bear_fvg:
+                            _fvg_boost += 0.06
+                            ai_score = min(100.0, ai_score + 8.0)
+
+                        if _in_ote and _ote_dir == "BEARISH":
+                            _fvg_boost += 0.04
+                            ai_score = min(100.0, ai_score + 5.0)
+
                     if _fvg_boost > 0:
                         calibrated_win_p = _bounded_bayesian_probability_update(calibrated_win_p, _fvg_boost, style, is_micro_mode)
                         final_win_p = _bounded_bayesian_probability_update(final_win_p, _fvg_boost, style, is_micro_mode)
-                        logger.info(f"[{context.symbol}] ICT FVG/OB Confluence boost +{_fvg_boost:.3f} (in_fvg={_in_fvg}, in_ob={_in_ob}, fvg_ob_conf={_fvg_ob_conf})")
+                        logger.info(f"[{context.symbol}] ICT FVG/OB Confluence boost +{_fvg_boost:.3f} (bias={tentative_bias}, ote={_in_ote}, fvg_ob_conf={_fvg_ob_conf})")
             except Exception as e:
                 logger.warning(f"[{context.symbol}] FVG analysis error: {e}")
 

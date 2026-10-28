@@ -511,9 +511,15 @@ class RiskEngine:
                     daily_risk_mult,
                 )
 
-            # 9. Dynamic Position Sizing with Heat, Drawdown Tier, & 2nd Position Scaling
+            # 9. Dynamic Position Sizing with Heat, Drawdown Tier, Streak Deleveraging & 2nd Position Scaling
             sample_size = getattr(decision, "pattern_sample_size", 0)
-            combined_multiplier = heat_res.risk_multiplier * dd_risk_mult * daily_risk_mult
+            streak_mult = self.circuit_breaker.get_streak_risk_multiplier() if hasattr(self, "circuit_breaker") else 1.0
+            if streak_mult < 1.0:
+                logger.info(
+                    "STREAK_DELEVERAGING: Consecutive losses = %d; scaling position size to %.2fx.",
+                    self.circuit_breaker.consecutive_losses, streak_mult
+                )
+            combined_multiplier = heat_res.risk_multiplier * dd_risk_mult * daily_risk_mult * streak_mult
 
             # Micro-account adaptive risk boost: the base 0.5% is designed for
             # $10k+ accounts.  On a $100 account 0.5% = $0.50, which cannot buy

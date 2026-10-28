@@ -48,6 +48,10 @@ class CircuitBreaker:
         # run to run (USDJPY 53 vs 63, XAUUSD 97 vs 84 on identical inputs).
         self._now = clock if clock is not None else time.time
         self.consecutive_loss_limit = max(3, int(consecutive_loss_limit))
+        from collections import deque
+        self._loss_timestamps = deque(maxlen=20)
+        self.loss_velocity_window_sec = 2700.0  # 45 minutes
+        self.loss_velocity_threshold = 3        # 3 losses within 45m trips cooling halt
         # Anchored on the repo data dir — a CWD-relative path let the breaker
         # "forget" it had tripped when launched from a different directory.
         db_path = resolve_db_path(db_path)
@@ -170,6 +174,17 @@ class CircuitBreaker:
             self._save_state()
         else:
             self.consecutive_losses += 1
+            self._loss_timestamps.append(now)
+
+            # Check Loss Velocity Clustering: 3 losses in 45m triggers cooling halt
+            recent_losses = sum(1 for t in self._loss_timestamps if (now - t) <= self.loss_velocity_window_sec)
+            if recent_losses >= self.loss_velocity_threshold and not self.is_tripped:
+                self.trip(
+                    f"Loss velocity threshold reached: {recent_losses} losses in "
+                    f"{int(self.loss_velocity_window_sec / 60)} minutes. Market regime shock cooling halt."
+                )
+                return
+
             if symbol:
                 self.symbol_losses[symbol] = self.symbol_losses.get(symbol, 0) + 1
                 if self.symbol_losses[symbol] >= 2:
@@ -203,6 +218,29 @@ class CircuitBreaker:
         pause_until = self.regime_paused_until.get(regime, 0.0)
         return self._now() < pause_until
 
+    def get_streak_risk_multiplier(self) -> float:
+        """
+        Calculates institutional streak deleveraging multiplier.
+        Graduated sizing reduction to contain downside before hitting hard limits:
+          0 or 1 loss: 1.00x sizing
+          2 losses:    0.65x sizing (-35%)
+          3 losses:    0.45x sizing (-55%)
+          4 losses:    0.25x sizing (-75% defensive probe)
+          >= 5 losses: 0.00x (Halted)
+        """
+        if not self.enabled or self.is_tripped:
+            return 0.0
+        if self.consecutive_losses <= 1:
+            return 1.00
+        elif self.consecutive_losses == 2:
+            return 0.65
+        elif self.consecutive_losses == 3:
+            return 0.45
+        elif self.consecutive_losses == 4:
+            return 0.25
+        else:
+            return 0.00
+
     def trip(self, reason: str):
         self.is_tripped = True
         self.tripped_timestamp = self._now()
@@ -225,6 +263,7 @@ class CircuitBreaker:
     def reset(self):
         self.is_tripped = False
         self.consecutive_losses = 0
+        self._loss_timestamps.clear()
         self.symbol_losses.clear()
         self.regime_losses.clear()
         self.symbol_paused_until.clear()

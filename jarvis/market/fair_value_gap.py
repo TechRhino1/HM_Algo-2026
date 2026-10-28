@@ -6,7 +6,8 @@ logger = logging.getLogger('JARVIS_FVG')
 
 class FairValueGapEngine:
     """ICT Fair Value Gap (FVG) & Order Block (OB) Detection Engine.
-    Detects institutional price imbalance zones for high-probability entries."""
+    Detects institutional price imbalance zones, Consequent Encroachment (CE),
+    and Optimal Trade Entry (OTE) Fibonacci retracement pockets."""
 
     def analyze(self, df: pd.DataFrame) -> dict:
         """Analyze dataframe for FVGs, Order Blocks, and OTE zones."""
@@ -20,8 +21,13 @@ class FairValueGapEngine:
             'active_bullish_ob': None,
             'active_bearish_ob': None,
             'price_in_fvg': False,
+            'price_in_bullish_fvg': False,
+            'price_in_bearish_fvg': False,
             'price_in_ob': False,
+            'price_in_bullish_ob': False,
+            'price_in_bearish_ob': False,
             'ote_zone': {},
+            'is_price_in_ote': False,
             'fvg_ob_confluence': False
         }
         
@@ -48,43 +54,63 @@ class FairValueGapEngine:
             
         atr_14 = max(atr_14, 1e-5)
 
-        # 1. FVG Detection & Mitigation (Last 50 candles)
+        # 1. FVG Detection with Displacement and Consequent Encroachment (Last 50 candles)
         fvg_lookback = min(50, n_bars)
         fvg_start = n_bars - fvg_lookback
         bullish_fvgs = []
         bearish_fvgs = []
         
+        min_gap_size = 0.15 * atr_14
+        min_disp_body = 0.75 * atr_14
+        
         for i in range(fvg_start + 2, n_bars):
             c1_high = float(highs[i - 2])
             c1_low = float(lows[i - 2])
+            c2_open = float(opens[i - 1])
+            c2_close = float(closes[i - 1])
             c3_high = float(highs[i])
             c3_low = float(lows[i])
             
-            # Bullish FVG: c1_high < c3_low
+            c2_body = abs(c2_close - c2_open)
+            has_displacement = c2_body >= min_disp_body
+            
+            # Bullish FVG: c1_high < c3_low with upward displacement on candle 2
             if c1_high < c3_low:
-                top = c3_low
-                bottom = c1_high
-                mitigated = bool(np.any(lows[i + 1:] <= bottom)) if i + 1 < n_bars else False
-                bullish_fvgs.append({
-                    'top': top,
-                    'bottom': bottom,
-                    'direction': 'BULLISH',
-                    'bar_idx': i - 2,
-                    'mitigated': mitigated
-                })
+                gap_size = c3_low - c1_high
+                if gap_size >= min_gap_size and (has_displacement or c2_close > c2_open):
+                    top = c3_low
+                    bottom = c1_high
+                    ce = (top + bottom) / 2.0  # Consequent Encroachment (50% midpoint)
+                    mitigated = bool(np.any(lows[i + 1:] <= bottom)) if i + 1 < n_bars else False
+                    tested_ce = bool(np.any(lows[i + 1:] <= ce)) if i + 1 < n_bars else False
+                    bullish_fvgs.append({
+                        'top': top,
+                        'bottom': bottom,
+                        'ce': ce,
+                        'direction': 'BULLISH',
+                        'bar_idx': i - 2,
+                        'mitigated': mitigated,
+                        'tested_ce': tested_ce
+                    })
                 
-            # Bearish FVG: c1_low > c3_high
+            # Bearish FVG: c1_low > c3_high with downward displacement on candle 2
             elif c1_low > c3_high:
-                top = c1_low
-                bottom = c3_high
-                mitigated = bool(np.any(highs[i + 1:] >= top)) if i + 1 < n_bars else False
-                bearish_fvgs.append({
-                    'top': top,
-                    'bottom': bottom,
-                    'direction': 'BEARISH',
-                    'bar_idx': i - 2,
-                    'mitigated': mitigated
-                })
+                gap_size = c1_low - c3_high
+                if gap_size >= min_gap_size and (has_displacement or c2_close < c2_open):
+                    top = c1_low
+                    bottom = c3_high
+                    ce = (top + bottom) / 2.0  # Consequent Encroachment (50% midpoint)
+                    mitigated = bool(np.any(highs[i + 1:] >= top)) if i + 1 < n_bars else False
+                    tested_ce = bool(np.any(highs[i + 1:] >= ce)) if i + 1 < n_bars else False
+                    bearish_fvgs.append({
+                        'top': top,
+                        'bottom': bottom,
+                        'ce': ce,
+                        'direction': 'BEARISH',
+                        'bar_idx': i - 2,
+                        'mitigated': mitigated,
+                        'tested_ce': tested_ce
+                    })
 
         result['bullish_fvgs'] = bullish_fvgs
         result['bearish_fvgs'] = bearish_fvgs
@@ -100,7 +126,7 @@ class FairValueGapEngine:
             curr_o, curr_c = float(opens[i]), float(closes[i])
             
             body_size = abs(curr_c - curr_o)
-            if body_size > (1.5 * atr_14):
+            if body_size > (1.25 * atr_14):
                 if curr_c > curr_o and prev_c < prev_o:
                     # Bullish OB
                     top, bottom = prev_h, prev_l
@@ -128,7 +154,7 @@ class FairValueGapEngine:
         result['bullish_obs'] = bullish_obs
         result['bearish_obs'] = bearish_obs
         
-        # Active unmitigated FVGs and OBs
+        # Active unmitigated FVGs and OBs with explicit directional flags
         unmitigated_bullish_fvgs = [f for f in bullish_fvgs if not f['mitigated']]
         unmitigated_bearish_fvgs = [f for f in bearish_fvgs if not f['mitigated']]
         
@@ -136,11 +162,13 @@ class FairValueGapEngine:
             result['active_bullish_fvg'] = unmitigated_bullish_fvgs[-1]
             if result['active_bullish_fvg']['bottom'] <= current_price <= result['active_bullish_fvg']['top']:
                 result['price_in_fvg'] = True
+                result['price_in_bullish_fvg'] = True
                 
         if unmitigated_bearish_fvgs:
             result['active_bearish_fvg'] = unmitigated_bearish_fvgs[-1]
             if result['active_bearish_fvg']['bottom'] <= current_price <= result['active_bearish_fvg']['top']:
                 result['price_in_fvg'] = True
+                result['price_in_bearish_fvg'] = True
 
         unmitigated_bullish_obs = [ob for ob in bullish_obs if not ob['mitigated']]
         unmitigated_bearish_obs = [ob for ob in bearish_obs if not ob['mitigated']]
@@ -149,11 +177,13 @@ class FairValueGapEngine:
             result['active_bullish_ob'] = unmitigated_bullish_obs[-1]
             if result['active_bullish_ob']['bottom'] <= current_price <= result['active_bullish_ob']['top']:
                 result['price_in_ob'] = True
+                result['price_in_bullish_ob'] = True
                 
         if unmitigated_bearish_obs:
             result['active_bearish_ob'] = unmitigated_bearish_obs[-1]
             if result['active_bearish_ob']['bottom'] <= current_price <= result['active_bearish_ob']['top']:
                 result['price_in_ob'] = True
+                result['price_in_bearish_ob'] = True
 
         # 3. Confluence Detection (Active FVG overlaps with Active OB of SAME direction)
         active_fvgs = []
@@ -170,7 +200,7 @@ class FairValueGapEngine:
                     result['fvg_ob_confluence'] = True
                     break
 
-        # 4. OTE Zone Calculation (Recent 60 bars)
+        # 4. True ICT OTE Fibonacci Golden Pocket Zone Calculation (Recent 60 bars)
         pivot_window = 5
         ote_start = max(0, n_bars - 60)
         h_slice = highs[ote_start:]
@@ -183,29 +213,47 @@ class FairValueGapEngine:
             
             for i in range(pivot_window, n_slice - pivot_window):
                 if h_slice[i] == np.max(h_slice[i - pivot_window : i + pivot_window + 1]):
-                    swing_highs.append(float(h_slice[i]))
+                    swing_highs.append((float(h_slice[i]), i))
                 if l_slice[i] == np.min(l_slice[i - pivot_window : i + pivot_window + 1]):
-                    swing_lows.append(float(l_slice[i]))
+                    swing_lows.append((float(l_slice[i]), i))
                     
             if swing_highs and swing_lows:
-                recent_sh = swing_highs[-1]
-                recent_sl = swing_lows[-1]
+                recent_sh, sh_idx = swing_highs[-1]
+                recent_sl, sl_idx = swing_lows[-1]
                 swing_range = recent_sh - recent_sl
-                equilibrium = (recent_sh + recent_sl) / 2.0
                 
-                if current_price > equilibrium:
-                    result['ote_zone'] = {
-                        'ote_62': recent_sh - 0.62 * swing_range,
-                        'ote_705': recent_sh - 0.705 * swing_range,
-                        'ote_79': recent_sh - 0.79 * swing_range,
-                        'direction': 'BEARISH'
-                    }
-                else:
-                    result['ote_zone'] = {
-                        'ote_62': recent_sl + 0.62 * swing_range,
-                        'ote_705': recent_sl + 0.705 * swing_range,
-                        'ote_79': recent_sl + 0.79 * swing_range,
-                        'direction': 'BULLISH'
-                    }
+                if swing_range > 0:
+                    # In ICT SMC:
+                    # If Swing High is more recent than Swing Low, the impulse was upward.
+                    # Price pulling back down into the 61.8%-78.6% discount zone is a BULLISH OTE.
+                    is_bullish_leg = (sh_idx >= sl_idx)
+                    if is_bullish_leg:
+                        ote_62 = recent_sh - 0.618 * swing_range
+                        ote_705 = recent_sh - 0.705 * swing_range
+                        ote_79 = recent_sh - 0.786 * swing_range
+                        in_ote = (ote_79 <= current_price <= ote_62)
+                        result['ote_zone'] = {
+                            'ote_62': ote_62,
+                            'ote_705': ote_705,
+                            'ote_79': ote_79,
+                            'direction': 'BULLISH',
+                            'is_price_in_ote': in_ote
+                        }
+                        result['is_price_in_ote'] = in_ote
+                    else:
+                        # If Swing Low is more recent, the impulse was downward.
+                        # Price retracing up into the 61.8%-78.6% premium zone is a BEARISH OTE.
+                        ote_62 = recent_sl + 0.618 * swing_range
+                        ote_705 = recent_sl + 0.705 * swing_range
+                        ote_79 = recent_sl + 0.786 * swing_range
+                        in_ote = (ote_62 <= current_price <= ote_79)
+                        result['ote_zone'] = {
+                            'ote_62': ote_62,
+                            'ote_705': ote_705,
+                            'ote_79': ote_79,
+                            'direction': 'BEARISH',
+                            'is_price_in_ote': in_ote
+                        }
+                        result['is_price_in_ote'] = in_ote
                     
         return result
