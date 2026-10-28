@@ -42,6 +42,7 @@ from jarvis.config.settings import verify_execution_mode, SETTINGS
 from jarvis.config.paths import mode_scoped_db_path
 from jarvis.market.sessions import SessionEngine
 from jarvis.execution.entry_policy import evaluate_entry
+from jarvis.intelligence.gate_policy import canonical_gate
 from jarvis.intelligence.winrate_targeting import load_profiles
 from jarvis.intelligence.llm_controller import AutonomousLLMSystemController
 from jarvis.observability import log_event
@@ -1691,7 +1692,11 @@ class JarvisOrchestrator:
         if ranked_candidates and not dry_run:
             for candidate in ranked_candidates:
                 d_action = getattr(candidate.decision_obj, "decision", "") if candidate.decision_obj else ""
-                failing_cnt = len(getattr(candidate.decision_obj.quality_gate, "failing_reasons", [])) if (candidate.decision_obj and getattr(candidate.decision_obj, "quality_gate", None)) else 99
+                qg = getattr(candidate.decision_obj, "quality_gate", None) if candidate.decision_obj else None
+                raw_fails = getattr(qg, "failing_reasons", []) or []
+                softened_set = {canonical_gate(g) for g in (getattr(qg, "softened_gates", []) or [])}
+                unsoftened_fails = [r for r in raw_fails if canonical_gate(r) not in softened_set]
+                failing_cnt = len(unsoftened_fails) if qg else 99
 
                 is_exec_ready = (
                     candidate.is_actionable

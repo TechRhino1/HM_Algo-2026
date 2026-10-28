@@ -81,10 +81,12 @@ class AdaptiveGatePolicy:
             return ("BLOCK", hard)
         if not soft:
             return ("PASS", [])
-        # If soft gates are failing, allow softening up to max_soft_fail only when performance
-        # has acceptable historical evidence (recent_win_rate >= min_recent_win_rate).
+        # If soft gates are failing, allow softening up to max_soft_fail when performance
+        # has acceptable historical evidence (recent_win_rate >= 0.30) or during cold start / fresh sessions.
+        # Capital-protection hard gates NEVER soften under any circumstance.
         if len(soft) <= self.max_soft_fail:
-            if recent_win_rate is not None and recent_win_rate >= self.min_recent_win_rate:
+            effective_min_wr = min(0.30, self.min_recent_win_rate)
+            if recent_win_rate is None or recent_win_rate >= effective_min_wr:
                 return ("SOFTEN", soft)
         return ("BLOCK", soft)
 

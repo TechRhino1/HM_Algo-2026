@@ -1216,7 +1216,7 @@ class DecisionEngine:
             "Spread Protection": spread <= max_spread and not context.volatility.is_excessive_spread,
             "Volatility Spike Circuit Breaker": not getattr(context.volatility, "volatility_spike_breaker", False),
             "AI Multi-Score Gate": ai_score >= min_score,
-            "Devil Adversarial Guard": devil_report.penalty_score <= (self.max_devil_penalty + (5.0 if ai_score >= 80.0 else 0.0)) and len(devil_report.threats_detected) < 3,
+            "Devil Adversarial Guard": devil_report.penalty_score <= (self.max_devil_penalty + (10.0 if ai_score >= 75.0 else 0.0)) and len(devil_report.threats_detected) <= 3,
             "Calibrated Win Prob >= 50%": calibrated_win_p >= (required_win_p - 0.005),
             "Valid Stop Loss Distance": risk_dist >= (context.volatility.atr * min_sl_atr_mult),
             "Premium/Discount Alignment": premium_discount_valid,

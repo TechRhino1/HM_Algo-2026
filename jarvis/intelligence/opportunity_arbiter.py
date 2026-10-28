@@ -457,18 +457,39 @@ class UniversalOpportunityArbiter:
                         risk_factors.append(f"Opposing SMT Bearish Divergence active ({leader} leading)")
 
         # Setup Grade Assignment:
-        # GRADE A+ if Utility >= 1.80, Win Prob >= 70%, Confluence >= 75, EV >= 0.85R
-        # GRADE A if Utility >= 1.35, Win Prob >= 60%, Confluence >= 65, EV >= 0.50R
-        # GRADE B if Utility >= 0.95
-        # GRADE C otherwise
-        if utility_score >= 1.80 and (win_prob_pct >= 62.0 or ml_prob >= 0.70) and confluence_score >= 28.0 and expected_value >= 0.80:
-            setup_grade = "GRADE A+"
-        elif utility_score >= 1.30 and (win_prob_pct >= 55.0 or ml_prob >= 0.60) and confluence_score >= 22.0 and expected_value >= 0.40:
-            setup_grade = "GRADE A"
-        elif utility_score >= 0.95 and expected_value > 0:
-            setup_grade = "GRADE B"
+        # Dynamic style-aware utility tiers: Scalp and Day Trading naturally produce smaller
+        # EV (0.3R to 0.9R) than multi-day Swing (1.2R to 2.5R). Calibrate tiers per style:
+        if style_norm == "SCALP":
+            if utility_score >= 0.85 and (win_prob_pct >= 60.0 or ml_prob >= 0.65) and confluence_score >= 25.0 and expected_value >= 0.50:
+                setup_grade = "GRADE A+"
+            elif utility_score >= 0.45 and expected_value >= 0.25:
+                setup_grade = "GRADE A"
+            elif utility_score >= 0.20 and expected_value > 0:
+                setup_grade = "GRADE B"
+            else:
+                setup_grade = "GRADE C"
+            min_actionable_utility = 0.20
+        elif style_norm == "DAY_TRADING":
+            if utility_score >= 1.20 and (win_prob_pct >= 60.0 or ml_prob >= 0.65) and confluence_score >= 25.0 and expected_value >= 0.80:
+                setup_grade = "GRADE A+"
+            elif utility_score >= 0.60 and expected_value >= 0.35:
+                setup_grade = "GRADE A"
+            elif utility_score >= 0.20 and expected_value > 0:
+                setup_grade = "GRADE B"
+            else:
+                setup_grade = "GRADE C"
+            min_actionable_utility = 0.20
         else:
-            setup_grade = "GRADE C"
+            # SWING / Default:
+            if utility_score >= 1.80 and (win_prob_pct >= 62.0 or ml_prob >= 0.70) and confluence_score >= 28.0 and expected_value >= 0.80:
+                setup_grade = "GRADE A+"
+            elif utility_score >= 1.30 and (win_prob_pct >= 55.0 or ml_prob >= 0.60) and confluence_score >= 22.0 and expected_value >= 0.40:
+                setup_grade = "GRADE A"
+            elif utility_score >= 0.50 and expected_value > 0:
+                setup_grade = "GRADE B"
+            else:
+                setup_grade = "GRADE C"
+            min_actionable_utility = 0.50
 
         # Actionability Determination: Require Grade A/A+ or solid Grade B with positive EV and passed/acceptable quality gate
         failing_reasons = getattr(decision_obj.quality_gate, "failing_reasons", []) if (decision_obj and getattr(decision_obj, "quality_gate", None)) else []
@@ -502,15 +523,17 @@ class UniversalOpportunityArbiter:
             effective_passed = bool(getattr(decision_obj.quality_gate, "passed", False)) if decision_obj else False
         gate_acceptable = (
             bool(effective_passed)
-            and len(set(unsoftened_failures)) <= 1
-            and len(critical_failures) == 0
-            and len(hard_failures) == 0
+            or (
+                len(set(unsoftened_failures)) <= 1
+                and len(critical_failures) == 0
+                and len(hard_failures) == 0
+            )
         )
         decision_val = getattr(decision_obj, "decision", "")
 
         is_actionable = bool(
             bias in ("BUY", "SELL") and
-            utility_score >= 0.95 and
+            utility_score >= min_actionable_utility and
             expected_value > 0 and
             gate_acceptable and
             setup_grade in ("GRADE A+", "GRADE A", "GRADE B") and

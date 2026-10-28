@@ -186,7 +186,7 @@ class DevilAdvocateAnalyst:
                 # Check for immediate ceiling collision (buying directly into overhead resistance/trendline)
                 dist_to_res = threat_price_level - c_price
                 if dist_to_res < (0.50 * atr_val):
-                    col_penalty = 30.0 if dist_to_res < (0.25 * atr_val) else 20.0
+                    col_penalty = 20.0 if dist_to_res < (0.15 * atr_val) else 12.0
                     penalty_score += col_penalty
                     threats.append(
                         f"Immediate overhead resistance/trendline collision at {threat_price_level:.2f} "
@@ -208,7 +208,7 @@ class DevilAdvocateAnalyst:
                 # Check for immediate floor collision (selling directly into dynamic trendline support)
                 dist_to_sup = c_price - threat_price_level
                 if dist_to_sup < (0.50 * atr_val):
-                    col_penalty = 30.0 if dist_to_sup < (0.25 * atr_val) else 20.0
+                    col_penalty = 20.0 if dist_to_sup < (0.15 * atr_val) else 12.0
                     penalty_score += col_penalty
                     threats.append(
                         f"Immediate dynamic support/trendline collision at {threat_price_level:.2f} "
