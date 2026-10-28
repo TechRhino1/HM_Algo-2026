@@ -193,6 +193,19 @@ class CircuitBreaker:
         self.tripped_timestamp = self._now()
         self.trip_reason = reason
         self._save_state()
+        try:
+            from jarvis.observability.alerting import AlertSeverity, dispatch_alert
+            dispatch_alert(
+                title="Circuit Breaker Tripped",
+                message=reason,
+                severity=AlertSeverity.CRITICAL,
+                source="CircuitBreaker",
+                details={"consecutive_losses": self.consecutive_losses},
+                event_key="circuit_breaker_tripped",
+                debounce_seconds=120.0,
+            )
+        except Exception:
+            pass
 
     def reset(self):
         self.is_tripped = False

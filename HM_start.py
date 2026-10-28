@@ -300,7 +300,8 @@ def hm_start(mode: str = "live", port: int = 8501, host: str = "127.0.0.1", trad
     print(f" -> Local Network Address      : {local_ip}", flush=True)
     print(f" -> Mobile Access Link         : https://hm2026.serveousercontent.com", flush=True)
     print(f" -> Remote Tunnel              : {'enabled' if enable_tunnel else 'disabled'}", flush=True)
-    print(f" -> Admin Login                : admin / hm2026admin", flush=True)
+    admin_source = "JARVIS_ADMIN_PASS env" if os.environ.get("JARVIS_ADMIN_PASS") else "jarvis/.jarvis_admin_pass"
+    print(f" -> Admin Login                : admin / [configured via {admin_source}]", flush=True)
     print("=" * 95, flush=True)
 
     # Attach to the MetaTrader terminal BEFORE anything is served.

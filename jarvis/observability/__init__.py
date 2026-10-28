@@ -57,7 +57,17 @@ from .metrics import (
     histogram,
 )
 
+from .alerting import (
+    ALERT_MANAGER,
+    Alert,
+    AlertManager,
+    AlertSeverity,
+    dispatch_alert,
+)
+
 __all__ = [
+    # alerting
+    "ALERT_MANAGER", "Alert", "AlertManager", "AlertSeverity", "dispatch_alert",
     # context
     "CANONICAL_KEYS", "COMPONENT", "DURATION_MS", "ERROR_TYPE", "EVENT",
     "OUTCOME", "REQUEST_ID", "ROUTE", "SOURCE", "SYMBOL",

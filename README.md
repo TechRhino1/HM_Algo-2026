@@ -62,6 +62,14 @@ An institutional-grade, multi-factor adaptive algorithmic trading architecture b
 - **Crypto (BTCUSD, ETHUSD, SOLUSD):** High-volatility swing momentum and multi-timeframe FVG pullbacks.
 - **Indices (US30, NAS100, GER40, UK100):** Breakout momentum and session-driven volatility capture.
 
+### 11. Production Engineering & Active Alerting (6-Pillar Standards)
+- **Modular Microservices**: Decoupled packages with strict bounded contexts across intelligence, risk, execution, and API services.
+- **Version Control & Hygiene**: Strict `.gitignore` policy excluding all credentials, environment overrides, and private keys.
+- **Automated Test Coverage**: 180+ test files and ~3,900 unit and integration tests verifying risk gates, sizing, and execution.
+- **Zero Hardcoded Secrets**: Fully dynamic credential resolution via environment variables and local protected files.
+- **Active Alerting Engine**: Asynchronous, debounced real-time notifications for circuit breakers, drawdowns, and disconnects via webhooks (`JARVIS_ALERT_WEBHOOK_URL`).
+- **Comprehensive Runbooks**: See [`docs/PRODUCTION_ENGINEERING_STANDARDS.md`](docs/PRODUCTION_ENGINEERING_STANDARDS.md).
+
 ---
 
 ## 🎯 New in v5.0 — Calibrated Win-Rate Pipeline

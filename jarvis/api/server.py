@@ -432,7 +432,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 "/options", "/options.html", "/india/options", "/india-options", "/fno",
                 "/positions", "/positions.html",
                 "/api/telemetry_state", "/api/telemetry", "/api/candles", "/api/rates",
-                "/api/radar", "/api/market-status", "/api/news", "/api/history",
+                "/api/radar", "/api/market-status", "/api/news", "/api/history", "/api/alerts",
                 "/api/tunnel_info", "/api/pending_orders", "/api/risk_status",
                 "/api/risk/portfolio-heat",
                 "/api/intelligence/auto-selection", "/api/intelligence/reliability", "/api/intelligence/meta",
@@ -525,6 +525,11 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     for s in configured_syms
                 }
                 self._send_json(snap)
+            elif path == "/api/alerts":
+                from jarvis.observability.alerting import ALERT_MANAGER
+                limit = int(query.get("limit", [50])[0])
+                alerts = ALERT_MANAGER.get_recent_alerts(limit=limit)
+                self._send_json({"alerts": alerts, "count": len(alerts)})
             elif path == "/api/market-status":
                 sym = query.get("symbol", ["XAUUSD"])[0]
                 status = SessionEngine.get_market_trading_status(sym)

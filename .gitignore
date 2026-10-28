@@ -53,6 +53,13 @@ active_tunnel_url.txt
 .jarvis_secret_key
 *.secret_key
 .jarvis_admin_pass
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.pfx
 system_diagnostics.json
 opportunities.json
 trade_plans.json
