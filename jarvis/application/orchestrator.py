@@ -1504,7 +1504,8 @@ class JarvisOrchestrator:
             lots = auth_res.get("lots", 0.01)
             # Unified lot cap based on account tier (§4)
             if account:
-                lots = min(lots, get_max_lot_cap(account.equity))
+                _min_vol = float((sym_info or {}).get("volume_min", 0.01) or 0.01)
+                lots = min(lots, max(_min_vol, get_max_lot_cap(account.equity)))
 
             # Claim in-process lock & reserve risk capacity BEFORE sending to MT5
             risk_dist = abs(decision.entry_price - decision.stop_loss)
@@ -1889,7 +1890,8 @@ class JarvisOrchestrator:
                     decision.execution_authorized = True
                     lots = auth_res.get("lots", 0.01)
                     if account:
-                        lots = min(lots, get_max_lot_cap(account.equity))
+                        _min_vol = float((sym_info or {}).get("volume_min", 0.01) or 0.01)
+                        lots = min(lots, max(_min_vol, get_max_lot_cap(account.equity)))
 
                     risk_dist = abs(decision.entry_price - decision.stop_loss)
                     tick_v = float(sym_info.get("trade_tick_value", 1.0) or 1.0)
