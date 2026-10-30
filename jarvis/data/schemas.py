@@ -463,6 +463,13 @@ class PositionSnapshot:
     tp2: Optional[float] = None
     tp3: Optional[float] = None
     milestone_status: str = "OPEN"
+    is_manual: bool = False
+    monitoring_mode: str = "AUTO_PILOT"
+    is_be_locked: bool = False
+    mfe: float = 0.0
+    mae: float = 0.0
+    current_r: float = 0.0
+    trade_style: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -484,11 +491,19 @@ class PositionSnapshot:
             "open_time": self.open_time,
             "magic": self.magic,
             "comment": self.comment,
-            "style": self.style
+            "style": self.style,
+            "is_manual": self.is_manual,
+            "monitoring_mode": self.monitoring_mode,
+            "is_be_locked": self.is_be_locked,
+            "mfe": self.mfe,
+            "mae": self.mae,
+            "current_r": self.current_r,
         }
 
     @property
     def style(self) -> str:
+        if self.trade_style:
+            return self.trade_style
         comm = (self.comment or "").upper()
         if "SCALP" in comm or "SCLP" in comm:
             return "SCALP"

@@ -9,7 +9,7 @@ import logging
 import threading
 import atexit
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 
 from jarvis.application.state_manager import GLOBAL_STATE
@@ -172,7 +172,7 @@ class JarvisOrchestrator:
         self.position_monitor = PositionMonitorEngine(
             self.mt5_client, self.data_feed, self.context_engine, self.state_manager, self.event_bus,
             ml_predictor=self.ml_predictor,
-            manual_mode=os.environ.get("JARVIS_MANUAL_MANAGEMENT_MODE", "TRAIL")
+            manual_mode=os.environ.get("JARVIS_MANUAL_MANAGEMENT_MODE", "AUTO_PILOT")
         )
         self._running = False
         self._main_thread: Optional[threading.Thread] = None
@@ -180,29 +180,55 @@ class JarvisOrchestrator:
         self._last_heartbeat: float = time.time()
 
     def _is_news_blackout(self, symbol: str, now: datetime) -> bool:
-        """Institutional Mandate 4: Reject new entries inside major high-impact news windows."""
+        """Institutional Mandate 4: Reject new entries inside major high-impact news windows.
+
+        Only events with an EXACT published time may block an entry. A TBA row
+        has no time at all, and an estimated row is a relative guess from a
+        feed; closing entries for a window that may not exist is a false halt,
+        which is both a lost opportunity and an unpredictable one.
+        """
         try:
             from jarvis.market.news import GLOBAL_NEWS_ENGINE
             from jarvis.data.symbol_registry import resolve as _res
+
             canon = _res(symbol).canonical.upper()
             calendar = GLOBAL_NEWS_ENGINE.get_news_calendar(max_wait=0.2)
             if not calendar:
                 return False
+
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+
             for e in calendar:
                 if str(e.get("impact", "")).upper() != "HIGH":
                     continue
                 if e.get("is_fallback", False) or str(e.get("source", "")) != "live_feed":
                     continue
+                if str(e.get("time_quality") or "") != "exact":
+                    continue
                 pairs = {str(p).upper() for p in (e.get("affected_pairs") or [])}
                 if canon not in pairs:
                     continue
-                event_dt = datetime.fromisoformat(str(e.get("timestamp_iso")))
+                raw = e.get("timestamp_iso")
+                if not raw:
+                    continue
+                try:
+                    event_dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                except (TypeError, ValueError):
+                    continue
+                if event_dt.tzinfo is None:
+                    event_dt = event_dt.replace(tzinfo=timezone.utc)
                 start = event_dt - timedelta(minutes=10)
                 end = event_dt + timedelta(minutes=15)
                 if start <= now <= end:
                     return True
-        except Exception:
-            pass
+        except Exception as exc:
+            # Never fail open silently again. The old body swallowed a
+            # NameError for months, so every gate call returned False while
+            # looking like it had checked the calendar.
+            logger.warning("News blackout check failed for %s (%s: %s); "
+                           "treating this check as no blackout.",
+                           symbol, type(exc).__name__, exc)
         return False
 
     def _get_same_symbol_cooldown(self, style: str = "SWING") -> float:
@@ -302,6 +328,11 @@ class JarvisOrchestrator:
         self.position_monitor.stop()
         self.state_synchronizer.stop()
         self.mt5_client.shutdown()
+        if hasattr(self, "trade_memory") and self.trade_memory:
+            try:
+                self.trade_memory.close()
+            except Exception as e:
+                logger.error(f"Error closing trade_memory: {e}")
         logger.info("HM Algo 2.0 Orchestrator stopped.")
 
     def get_active_symbols(self) -> List[str]:
@@ -469,6 +500,11 @@ class JarvisOrchestrator:
 
     def _on_trade_closed(self, data):
         ticket = data.get("ticket")
+        if ticket and hasattr(self, "order_manager") and self.order_manager:
+            try:
+                self.order_manager.forget_ticket(ticket)
+            except Exception:
+                pass
         # `pnl` and `is_win` are OPTIONAL. A close event that carries no P&L used to
         # fall back to 0.0, which is a *genuine* value — it recorded a real break-even
         # and, via `is_win = 1 if pnl > 0 else 0`, filed the trade as a LOSS. That
@@ -929,6 +965,35 @@ class JarvisOrchestrator:
 
         return active_sym_positions, positions, False
 
+    def _make_hold_decision(self, symbol: str, reason: str, strategy: str = "FILTER") -> Any:
+        """Constructs an institutional HOLD DecisionObject with explicit reasoning recorded in StateManager."""
+        from jarvis.data.schemas import DecisionObject, RegimeOutput, MarketRegime, TradeQualityGateResult
+        return DecisionObject(
+            symbol=symbol,
+            timestamp=datetime.now(timezone.utc),
+            regime=RegimeOutput(primary_regime=MarketRegime.RANGE, volatility_state="COMPRESSION", higher_timeframe_bias="NEUTRAL"),
+            bias="NEUTRAL",
+            probabilities={"BUY": 0.33, "SELL": 0.33, "HOLD": 0.34},
+            strategy=strategy,
+            entry_price=0.0,
+            stop_loss=0.0,
+            take_profit=0.0,
+            risk_reward_ratio=0.0,
+            calculated_risk_percent=0.0,
+            expected_value=0.0,
+            model_confidence=0.0,
+            adversarial_penalty=0.0,
+            invalidation_levels=[],
+            bull_case=[],
+            bear_case=[],
+            risk_factors=[reason],
+            quality_gate=TradeQualityGateResult(passed=False, failing_reasons=[reason]),
+            decision="HOLD",
+            execution_authorized=False,
+            rejection_reasons=[reason],
+            ai_score=0.0,
+        )
+
     def run_cycle_for_symbol(self, symbol: str, trade_style: Optional[str] = None,
                              dry_run: bool = False) -> Dict[str, Any]:
         """Executes a single end-to-end analytical and decision cycle for a target symbol and trade style.
@@ -974,7 +1039,7 @@ class JarvisOrchestrator:
                     # never missed — while the ordinary off-hours chop is
                     # still refused at the score gate, keeping the ledger
                     # finding (off-window gold = bleed) intact.
-                    if not getattr(_prof, "premium_window_exception", False):
+                    if not getattr(_prof, "premium_window_exception", False) and not dry_run:
                         _sym_positions = [
                             p for p in self.state_manager.positions
                             if symbol.upper() in str(p.symbol).upper()
@@ -989,13 +1054,16 @@ class JarvisOrchestrator:
                             _sym_pend = []
                         if not _sym_positions and not _sym_pend:
                             DECISION_EVALUATIONS.inc(style=active_trade_style, outcome="refused")
+                            auth_msg = f"PROFILE_SESSION_WINDOW: {symbol} trades {_w_start:02d}:00-{_w_end:02d}:00 UTC only; session window closed"
+                            hold_dec = self._make_hold_decision(symbol, auth_msg, strategy="SESSION_WINDOW")
+                            self.state_manager.record_decision(symbol, hold_dec)
                             return {
                                 "symbol": symbol,
                                 "trade_style": active_trade_style,
-                                "decision": None,
+                                "decision": hold_dec,
                                 "context": None,
                                 "authorized": False,
-                                "auth_reason": f"PROFILE_SESSION_WINDOW: gold trades {_w_start:02d}:00-{_w_end:02d}:00 UTC only; window closed",
+                                "auth_reason": auth_msg,
                                 "dry_run": bool(dry_run),
                                 "execution": None,
                                 "stale": False,
@@ -1017,21 +1085,21 @@ class JarvisOrchestrator:
         # count, and only an off-window elite setup clears the bar.
         try:
             _daily_cap = int(getattr(SETTINGS.trading, "max_daily_entries_per_symbol", 4) or 4)
-            if _daily_cap > 0 and not _is_premium_profile:
+            if _daily_cap > 0 and not _is_premium_profile and not dry_run:
                 _today_count = self._count_entries_today(symbol)
                 if _today_count >= _daily_cap:
-                    logger.debug(
-                        "DAILY_ENTRY_CAP: %s has %d entries today >= cap %d; analysis bailed early.",
-                        symbol, _today_count, _daily_cap,
-                    )
+                    auth_msg = f"DAILY_ENTRY_CAP_REACHED: {_today_count}/{_daily_cap} entries today"
+                    logger.debug("%s: %s; automated entry paused.", symbol, auth_msg)
                     DECISION_EVALUATIONS.inc(style=active_trade_style, outcome="refused")
+                    hold_dec = self._make_hold_decision(symbol, auth_msg, strategy="DAILY_ENTRY_CAP")
+                    self.state_manager.record_decision(symbol, hold_dec)
                     return {
                         "symbol": symbol,
                         "trade_style": active_trade_style,
-                        "decision": None,
+                        "decision": hold_dec,
                         "context": None,
                         "authorized": False,
-                        "auth_reason": f"DAILY_ENTRY_CAP: {_today_count} entries today >= cap {_daily_cap}",
+                        "auth_reason": auth_msg,
                         "dry_run": bool(dry_run),
                         "execution": None,
                         "stale": False,
@@ -1331,7 +1399,7 @@ class JarvisOrchestrator:
         ]
         all_pending_orders = self.mt5_client.get_pending_orders() if hasattr(self.mt5_client, "get_pending_orders") else []
         active_sym_pending = [
-            o for o in all_pending_orders if (getattr(o, "symbol", "") == symbol or (symbol == "XAUUSD" and "GOLD" in getattr(o, "symbol", "")) or canonical_sym in getattr(o, "symbol", "").upper())
+            o for o in all_pending_orders if (((o.get("symbol", "") if isinstance(o, dict) else getattr(o, "symbol", "")) == symbol) or (symbol == "XAUUSD" and "GOLD" in (o.get("symbol", "") if isinstance(o, dict) else getattr(o, "symbol", ""))) or canonical_sym in (o.get("symbol", "") if isinstance(o, dict) else getattr(o, "symbol", "")).upper())
         ]
 
         # Asian Pre-Market Blackout Rule (00:00 to 06:00 UTC) & Rollover Spread Window (21:00 to 23:00 UTC)
@@ -1742,6 +1810,9 @@ class JarvisOrchestrator:
                     and candidate.setup_grade in ("GRADE A+", "GRADE A", "GRADE B")
                     and candidate.decision_obj
                     and candidate.bias in ("BUY", "SELL")
+                    and getattr(candidate.decision_obj, "bias", "") in ("BUY", "SELL")
+                    and getattr(candidate.decision_obj, "order_type", "") in ("MARKET", "LIMIT")
+                    and d_action not in ("WAIT", "HOLD", "NO_TRADE")
                     and (
                         d_action == "EXECUTE"
                         or (
@@ -1850,7 +1921,7 @@ class JarvisOrchestrator:
                 ]
                 all_pending_orders = self.mt5_client.get_pending_orders() if hasattr(self.mt5_client, "get_pending_orders") else []
                 active_sym_pending = [
-                    o for o in all_pending_orders if (getattr(o, "symbol", "") == sym or (sym == "XAUUSD" and "GOLD" in getattr(o, "symbol", "")) or canonical_sym in getattr(o, "symbol", "").upper())
+                    o for o in all_pending_orders if (((o.get("symbol", "") if isinstance(o, dict) else getattr(o, "symbol", "")) == sym) or (sym == "XAUUSD" and "GOLD" in (o.get("symbol", "") if isinstance(o, dict) else getattr(o, "symbol", ""))) or canonical_sym in (o.get("symbol", "") if isinstance(o, dict) else getattr(o, "symbol", "")).upper())
                 ]
 
                 # Stop-and-Reverse (SAR) Protocol: If opposing position exists on this symbol, check if eligible to flip

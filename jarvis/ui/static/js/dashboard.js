@@ -46,6 +46,7 @@
   // from cache; the panel renders its loading state meanwhile.
   var TIMEOUT = {
     fast: 8000,
+    quick: 8000,
     normal: 15000,
     provider: 30000,
     slow: 60000
@@ -57,7 +58,7 @@
   var state = {
     view: 'trade',
     pane: 'watchlist',
-    symbol: null,
+    symbol: 'XAUUSD',
     timeframe: 'H1',
     symbolsData: [],
     symbolsFilter: 'ALL',
@@ -91,6 +92,8 @@
     chartSymbol: null,    // symbol the drawn series belongs to
     chartTimeframe: null, // timeframe the drawn series belongs to
     chartPainted: false,  // false until the first setData() has run
+    chartCache: {},       // symbol|tf -> {at, candles}; 30s client cache
+    chartRetryTimer: null,// pending auto-retry after a feed failure
     showLevels: true,     // support/resistance + trade overlays on the chart
     chartSource: 'native',// 'native' | 'tradingview'
     tvSymbol: null,       // symbol the TradingView widget was built for
@@ -103,6 +106,9 @@
     newsSynthetic: 0,     // how many of those events are the hardcoded plan
     newsImpact: 'ALL',    // impact filter
     newsCurrency: 'ALL',  // currency filter
+    newsCounts: null,     // payload-level {exact, estimated, tba} for the badges
+    newsLoading: null,    // in-flight /api/news promise (single-flight)
+    newsRetryTimer: null, // pending auto-retry after a cold calendar failure
     newsSelected: null,   // key of the event open in the detail panel
     newsHeroKey: null,    // event the "next release" panel is featuring
     context: 'why',       // which strip is showing beside the ticket
@@ -309,6 +315,27 @@
 
   function apiPost(path, body, timeout) {
     return apiRequest(path, { method: 'POST', body: body || {}, timeout: timeout });
+  }
+
+  /* GET with bounded retries. Only transport failures (status 0) and 5xx are
+     retried: a 4xx is the server saying the request itself is wrong, and
+     repeating it changes nothing. The provider-backed routes can fail once
+     while their cache is waking up and answer on the next attempt, which is
+     the failure this exists for. */
+  function apiGetRetry(path, timeout, attempts, delayMs) {
+    var tries = Math.max(1, attempts || 2);
+    var wait = delayMs === undefined ? 900 : delayMs;
+    function attempt(n) {
+      return apiGet(path, timeout).then(function (res) {
+        var retryable = !res.ok && (res.status === 0 || res.status >= 500);
+        if (retryable && n < tries) {
+          return new Promise(function (resolve) { setTimeout(resolve, wait * n); })
+            .then(function () { return attempt(n + 1); });
+        }
+        return res;
+      });
+    }
+    return attempt(1);
   }
 
   /* ── Action outcomes ──────────────────────────────────────────────────── */
@@ -759,25 +786,32 @@
   /* ── Auto-selection ───────────────────────────────────────────────────── */
   function loadSelection() {
     var host = $('selection-body');
-    apiGet('/api/intelligence/auto-selection?refresh=1', TIMEOUT.slow).then(function (res) {
+    apiGet('/api/intelligence/auto-selection', TIMEOUT.normal).then(function (res) {
       if (!res.ok || !res.data || res.data.status !== 'OK') {
         state.selection = null;
         setText($('selection-count'), '0');
         setText($('selection-tier'), '—');
         var reason = (res.data && (res.data.error || res.data.status)) ||
                      res.error || ('HTTP ' + res.status);
-        if (res.status === 401 || (typeof reason === 'string' && reason.indexOf('Authentication required') !== -1)) {
-          host.innerHTML = '';
-          var wrap = document.createElement('div');
-          wrap.className = 'tt-state tt-state--auth';
-          wrap.innerHTML = '<span class="tt-state__title">Authentication Required</span><span style="font-size:11px;color:var(--hm-text-muted);margin:4px 0 8px;">Sign in to view live AI candidate selections.</span><button type="button" class="tt-btn tt-btn--primary tt-btn--sm" style="font-size:11px;" onclick="window.HM_AUTH && window.HM_AUTH.openLoginModal ? window.HM_AUTH.openLoginModal(\'Please sign in to unlock AI auto-selection\') : null">Sign In ➔</button>';
-          host.appendChild(wrap);
-          return;
+
+        if ((res.status === 401 || res.status === 403) && ['localhost', '127.0.0.1', '::1', ''].includes(window.location.hostname)) {
+          try { localStorage.removeItem('jarvis_auth_token'); sessionStorage.removeItem('jarvis_auth_token'); } catch (e) {}
+          if (!state._selectionAuthRetry) {
+            state._selectionAuthRetry = true;
+            setTimeout(loadSelection, 400);
+            return;
+          }
         }
-        // A 503 here means the engine is not attached — an honest, expected state.
+        // A 503 here means the engine is initializing or not attached. Auto-retry.
         setState(host, res.status === 503 ? 'stale' : 'error',
-          res.status === 503 ? 'Selection engine not attached' : 'Selection unavailable',
+          res.status === 503 ? 'Initializing AI Selection Engine…' : 'Selection unavailable',
           String(reason).slice(0, 160));
+        if (res.status === 503 && !state._selectionRetryTimer) {
+          state._selectionRetryTimer = setTimeout(function () {
+            state._selectionRetryTimer = null;
+            loadSelection();
+          }, 2500);
+        }
         return;
       }
       state.selection = res.data;
@@ -785,219 +819,362 @@
     });
   }
 
+  /* ── Window Global Helpers ───────────────────────────────────────────── */
+  window.loadOpportunityIntoTicket = function (symbol, direction, entry, sl, tp) {
+    if (symbol) selectSymbol(symbol);
+    toggleOrderTicket(true);
+    var symEl = $('ticket-symbol');
+    if (symEl && symbol) symEl.value = symbol;
+    var set = function (id, val) {
+      var el = $(id);
+      if (el && val !== undefined && val !== null && val !== '') el.value = val;
+    };
+    if (entry) set('ticket-price', entry);
+    if (sl) set('ticket-sl', sl);
+    if (tp) set('ticket-tp', tp);
+    var src = $('ticket-source');
+    if (src) src.textContent = 'AI Selection (' + (direction || 'OPPORTUNITY') + ')';
+    var hint = $('ticket-hint');
+    if (hint) {
+      hint.textContent = 'Loaded from Master Trader AI Selection. Review levels before sending.';
+      hint.className = 'tt-hint';
+    }
+    toast('⚡ Loaded ' + symbol + ' (' + (direction || '') + ') into Order Ticket', 'success');
+  };
+
+  function wireSelectionTabs() {
+    var tabsWrap = $('selection-subtabs');
+    if (!tabsWrap || tabsWrap.hasAttribute('data-wired')) return;
+    tabsWrap.setAttribute('data-wired', 'true');
+    tabsWrap.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('.sel-subtab-btn');
+      if (!btn) return;
+      tabsWrap.querySelectorAll('.sel-subtab-btn').forEach(function (b) {
+        b.classList.remove('active');
+      });
+      btn.classList.add('active');
+      state.selectionTab = btn.getAttribute('data-sel-tab') || 'ALL';
+      renderSelection();
+    });
+  }
+
   function renderSelection() {
+    wireSelectionTabs();
     var host = $('selection-body');
     if (!host) return;
+
     var data = state.selection || {};
     var decisions = data.decisions || [];
     var tradeable = decisions.filter(function (d) { return d.is_tradeable; });
     var arbiterBest = data.arbiter_best || null;
     var candidates = data.candidates || [];
-
-    if (tradeable.length) {
-      setText($('selection-count'), String(tradeable.length));
-      var best = tradeable[0];
-      setText($('selection-tier'), best ? (best.confidence_tier || '—') : 'none');
-      var tierEl = $('selection-tier');
-      if (tierEl) {
-        var t = best ? String(best.confidence_tier || '').toLowerCase() : 'none';
-        tierEl.className = 'tt-chip tt-chip--' + (['high', 'medium', 'low'].indexOf(t) >= 0 ? t : 'none');
-      }
-
-      host.removeAttribute('data-state');
-      host.innerHTML = '';
-      tradeable.slice(0, 8).forEach(function (d) {
-        var card = document.createElement('div');
-        card.className = 'tt-pad';
-        card.style.borderBottom = '1px solid var(--hm-border-subtle)';
-        card.style.cursor = 'pointer';
-
-        var dirCls = String(d.direction).toUpperCase() === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
-        var tier = String(d.confidence_tier || '').toLowerCase();
-        var tierCls = ['high', 'medium', 'low'].indexOf(tier) >= 0 ? tier : 'none';
-
-        card.innerHTML =
-          '<div class="tt-row">' +
-            '<span class="tt-symbol">' + esc(d.symbol) + '</span>' +
-            '<span class="tt-dir ' + dirCls + '">' + esc(d.direction) + '</span>' +
-            '<span class="tt-chip tt-chip--' + tierCls + '">' + esc(d.confidence_tier || '—') + '</span>' +
-            '<span class="tt-rail__spacer"></span>' +
-            '<span class="tt-num">' + num(d.consensus_score, 1) + '</span>' +
-          '</div>' +
-          '<div class="tt-row" style="margin-top:4px">' +
-            '<span class="tt-hint">' + esc(d.rationale || '') + '</span>' +
-          '</div>';
-
-        card.addEventListener('click', function () { selectSymbol(d.symbol); });
-        host.appendChild(card);
-      });
-      return;
-    }
-
-    // When unanimous multi-style agreement is not reached, check for Arbiter opportunities
-    var actionableCandidates = candidates.filter(function (c) {
-      return c && (c.is_actionable || (c.utility_score && c.utility_score > 0));
+    var styleChamps = data.style_champions || {};
+    var topActionable = data.top_actionable || candidates.filter(function (c) {
+      return c && (c.is_actionable || (c.utility_score && c.utility_score > 0.20));
     });
 
-    var hasOpportunities = Boolean(arbiterBest || actionableCandidates.length || decisions.length);
+    // Fallback arbiterBest if null but candidates exist
+    if (!arbiterBest && candidates.length) {
+      arbiterBest = candidates[0];
+    }
 
-    if (!hasOpportunities) {
+    var hasData = Boolean(arbiterBest || tradeable.length || decisions.length || candidates.length);
+    if (!hasData) {
       setText($('selection-count'), '0');
-      setText($('selection-tier'), 'none');
+      setText($('selection-tier'), 'NONE');
       var tierElEmpty = $('selection-tier');
       if (tierElEmpty) tierElEmpty.className = 'tt-chip tt-chip--none';
-
-      setState(host, 'empty', 'No consensus setup',
-        'No candidates were produced by the scan.');
+      setState(host, 'empty', 'Scanning Master Trader Universe...', 'No setup opportunities detected in the current scan window.');
       return;
     }
 
-    var activeCount = actionableCandidates.length || (arbiterBest ? 1 : 0) || decisions.length;
-    setText($('selection-count'), String(activeCount));
+    // Update count & tier chips
+    var totalCount = topActionable.length || tradeable.length || (arbiterBest ? 1 : 0);
+    setText($('selection-count'), String(totalCount));
 
     var topGrade = arbiterBest ? (arbiterBest.setup_grade || arbiterBest.confidence_tier || 'GRADE A') : 'NONE';
     setText($('selection-tier'), topGrade);
-    var tierElArb = $('selection-tier');
-    if (tierElArb) {
+    var tierEl = $('selection-tier');
+    if (tierEl) {
       var tg = String(topGrade).toLowerCase();
       var chipCls = 'none';
       if (tg.indexOf('a+') >= 0 || tg.indexOf('high') >= 0) chipCls = 'high';
       else if (tg.indexOf('a') >= 0 || tg.indexOf('medium') >= 0) chipCls = 'medium';
       else if (tg.indexOf('b') >= 0 || tg.indexOf('low') >= 0) chipCls = 'low';
-      tierElArb.className = 'tt-chip tt-chip--' + chipCls;
+      tierEl.className = 'tt-chip tt-chip--' + chipCls;
     }
 
     host.removeAttribute('data-state');
     host.innerHTML = '';
 
-    // 1. Featured Top Arbiter Selection
-    if (arbiterBest) {
-      var arbCard = document.createElement('div');
-      arbCard.className = 'tt-pad';
-      arbCard.style.borderBottom = '1px solid var(--hm-border-subtle)';
-      arbCard.style.cursor = 'pointer';
-      arbCard.style.background = 'rgba(0, 210, 255, 0.04)';
+    var curTab = state.selectionTab || 'ALL';
 
-      var arbDir = String(arbiterBest.bias || arbiterBest.direction || '').toUpperCase();
-      var arbDirCls = arbDir === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
-      var arbGrade = esc(arbiterBest.setup_grade || 'GRADE A');
-      var arbStyle = esc(arbiterBest.trade_style || 'SWING');
-      var arbEv = num(arbiterBest.expected_value, 2);
-      var arbRr = num(arbiterBest.risk_reward_ratio, 1);
-      var arbWin = num(arbiterBest.win_prob, 0);
+    // ── 1. SUPREME ARBITER HERO CARD ──────────────────────────────────────
+    if ((curTab === 'ALL' || curTab === 'TOP') && arbiterBest) {
+      var hero = document.createElement('div');
+      hero.className = 'sel-hero-card';
 
-      var rationaleText = '';
+      var hDir = String(arbiterBest.bias || arbiterBest.direction || '').toUpperCase();
+      var hDirCls = hDir === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
+      var hGrade = esc(arbiterBest.setup_grade || 'GRADE A');
+      var hStyle = esc(arbiterBest.trade_style || 'SWING');
+      var hTier = esc(arbiterBest.confluence_tier || 'HIGH');
+      var hEv = num(arbiterBest.expected_value, 2);
+      var hRr = num(arbiterBest.risk_reward_ratio, 1);
+      var hWin = num(arbiterBest.win_prob, 0);
+      var hConf = num(arbiterBest.confluence_score, 0);
+
+      var entryVal = arbiterBest.entry_price != null ? num(arbiterBest.entry_price, 2) : '—';
+      var slVal = arbiterBest.stop_loss != null ? num(arbiterBest.stop_loss, 2) : '—';
+      var tp1Val = arbiterBest.tp1_price != null ? num(arbiterBest.tp1_price, 2) : (arbiterBest.take_profit != null ? num(arbiterBest.take_profit, 2) : '—');
+      var tp2Val = arbiterBest.tp2_price != null ? num(arbiterBest.tp2_price, 2) : (arbiterBest.take_profit != null ? num(arbiterBest.take_profit, 2) : '—');
+
+      var confTagsHtml = '';
       if (arbiterBest.confluence_factors && arbiterBest.confluence_factors.length) {
-        rationaleText = arbiterBest.confluence_factors[0];
-      } else if (arbiterBest.risk_factors && arbiterBest.risk_factors.length) {
-        rationaleText = arbiterBest.risk_factors[0];
+        confTagsHtml = arbiterBest.confluence_factors.slice(0, 3).map(function (f) {
+          return '<span class="tt-chip tt-chip--none" style="font-size:9.5px;color:var(--hm-text-subtle);">' + esc(f) + '</span>';
+        }).join(' ');
       }
 
-      arbCard.innerHTML =
-        '<div class="tt-row" style="margin-bottom:3px;">' +
-          '<span style="font-size:10px;font-weight:700;color:var(--hm-accent,#00d2ff);letter-spacing:0.04em;">★ TOP ARBITER OPPORTUNITY</span>' +
-          '<span class="tt-rail__spacer"></span>' +
-          '<span class="tt-chip tt-chip--high" style="font-size:10px;">' + arbGrade + '</span>' +
+      hero.innerHTML =
+        '<div class="sel-hero-header">' +
+          '<div class="sel-hero-title">' +
+            '<span>👑 SUPREME ARBITER PICK</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:4px;align-items:center;">' +
+            '<span class="tt-chip tt-chip--high" style="font-size:10px;">' + hGrade + '</span>' +
+            '<span class="tt-chip tt-chip--muted" style="font-size:10px;">' + hTier + '</span>' +
+          '</div>' +
         '</div>' +
-        '<div class="tt-row">' +
-          '<span class="tt-symbol">' + esc(arbiterBest.symbol) + '</span>' +
-          '<span class="tt-dir ' + arbDirCls + '">' + arbDir + '</span>' +
-          '<span class="tt-chip tt-chip--muted" style="font-size:10px;">' + arbStyle + '</span>' +
+        '<div class="sel-hero-symbol-row">' +
+          '<span class="sel-hero-symbol">' + esc(arbiterBest.symbol) + '</span>' +
+          '<span class="tt-dir ' + hDirCls + '" style="font-size:12px;padding:2px 8px;">' + hDir + '</span>' +
+          '<span class="tt-chip tt-chip--muted" style="font-size:10px;">' + hStyle + '</span>' +
           '<span class="tt-rail__spacer"></span>' +
-          '<span class="tt-num" style="color:var(--hm-accent,#00d2ff);font-weight:600;">Util ' + num(arbiterBest.utility_score, 2) + '</span>' +
+          '<span class="tt-num" style="color:var(--hm-accent,#00d2ff);font-weight:700;font-size:12px;">Util ' + num(arbiterBest.utility_score, 2) + '</span>' +
         '</div>' +
-        '<div class="tt-row" style="margin-top:3px;font-size:11px;color:var(--hm-text-subtle);">' +
-          '<span>Entry: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(arbiterBest.entry_price, 2) + '</b></span>' +
-          '<span style="margin:0 4px;opacity:0.4;">|</span>' +
-          '<span>SL: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(arbiterBest.stop_loss, 2) + '</b></span>' +
-          '<span style="margin:0 4px;opacity:0.4;">|</span>' +
-          '<span>TP: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(arbiterBest.take_profit, 2) + '</b></span>' +
-          '<span class="tt-rail__spacer"></span>' +
-          '<span>R:R <b style="color:var(--hm-text);">' + arbRr + ':1</b> | EV <b style="color:var(--hm-text);">+' + arbEv + 'R</b></span>' +
+        '<div class="sel-matrix-grid">' +
+          '<div class="sel-cell"><span class="sel-cell-label">ENTRY</span><span class="sel-cell-val">' + entryVal + '</span></div>' +
+          '<div class="sel-cell"><span class="sel-cell-label">STOP LOSS</span><span class="sel-cell-val" style="color:var(--crimson-stop,#ef4444);">' + slVal + '</span></div>' +
+          '<div class="sel-cell"><span class="sel-cell-label">TP1</span><span class="sel-cell-val" style="color:var(--emerald-edge,#10b981);">' + tp1Val + '</span></div>' +
+          '<div class="sel-cell"><span class="sel-cell-label">TP2</span><span class="sel-cell-val" style="color:var(--emerald-edge,#10b981);">' + tp2Val + '</span></div>' +
+          '<div class="sel-cell"><span class="sel-cell-label">R:R RATIO</span><span class="sel-cell-val">' + hRr + ':1</span></div>' +
+          '<div class="sel-cell"><span class="sel-cell-label">EXP VALUE</span><span class="sel-cell-val" style="color:#00d2ff;">+' + hEv + 'R</span></div>' +
+          '<div class="sel-cell"><span class="sel-cell-label">WIN PROB</span><span class="sel-cell-val">' + hWin + '%</span></div>' +
+          '<div class="sel-cell"><span class="sel-cell-label">CONFLUENCE</span><span class="sel-cell-val">' + hConf + '/100</span></div>' +
         '</div>' +
-        (rationaleText ? (
-          '<div class="tt-row" style="margin-top:4px;">' +
-            '<span class="tt-hint" style="font-size:11px;">' + esc(rationaleText) + '</span>' +
-          '</div>'
-        ) : '');
-
-      arbCard.addEventListener('click', function () { selectSymbol(arbiterBest.symbol); });
-      host.appendChild(arbCard);
-    }
-
-    // 2. Render other actionable candidates or evaluated decisions
-    var renderedItems = 0;
-    var seenKeys = {};
-    if (arbiterBest) {
-      seenKeys[arbiterBest.symbol + '_' + (arbiterBest.trade_style || '')] = true;
-    }
-
-    actionableCandidates.forEach(function (c) {
-      if (renderedItems >= 6) return;
-      var key = c.symbol + '_' + (c.trade_style || '');
-      if (seenKeys[key]) return;
-      seenKeys[key] = true;
-
-      var cCard = document.createElement('div');
-      cCard.className = 'tt-pad';
-      cCard.style.borderBottom = '1px solid var(--hm-border-subtle)';
-      cCard.style.cursor = 'pointer';
-
-      var cDir = String(c.bias || c.direction || '').toUpperCase();
-      var cDirCls = cDir === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
-      var cGrade = c.setup_grade || 'CANDIDATE';
-
-      cCard.innerHTML =
-        '<div class="tt-row">' +
-          '<span class="tt-symbol">' + esc(c.symbol) + '</span>' +
-          '<span class="tt-dir ' + cDirCls + '">' + cDir + '</span>' +
-          '<span class="tt-chip tt-chip--muted" style="font-size:10px;">' + esc(c.trade_style || '') + '</span>' +
-          '<span class="tt-chip tt-chip--none" style="font-size:10px;">' + esc(cGrade) + '</span>' +
-          '<span class="tt-rail__spacer"></span>' +
-          '<span class="tt-num">Util ' + num(c.utility_score, 2) + '</span>' +
-        '</div>' +
-        '<div class="tt-row" style="margin-top:3px;font-size:11px;color:var(--hm-text-subtle);">' +
-          '<span>Entry: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(c.entry_price, 2) + '</b></span>' +
-          '<span style="margin:0 4px;opacity:0.4;">|</span>' +
-          '<span>SL: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(c.stop_loss, 2) + '</b></span>' +
-          '<span style="margin:0 4px;opacity:0.4;">|</span>' +
-          '<span>TP: <b style="color:var(--hm-text);font-variant-numeric:tabular-nums;">' + num(c.take_profit, 2) + '</b></span>' +
-          '<span class="tt-rail__spacer"></span>' +
-          '<span>R:R ' + num(c.risk_reward_ratio, 1) + ':1 | Win ' + num(c.win_prob, 0) + '%</span>' +
+        (confTagsHtml ? ('<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">' + confTagsHtml + '</div>') : '') +
+        '<div class="sel-actions-row">' +
+          '<button type="button" class="sel-btn-ticket" id="btn-hero-load-ticket">' +
+            '<span>⚡ Load in Ticket</span>' +
+          '</button>' +
+          '<button type="button" class="sel-btn-chart" id="btn-hero-view-chart">' +
+            '<span>📈 View Chart</span>' +
+          '</button>' +
         '</div>';
 
-      cCard.addEventListener('click', function () { selectSymbol(c.symbol); });
-      host.appendChild(cCard);
-      renderedItems++;
-    });
-
-    // If no candidate was rendered, show the consensus decisions with their split vote rationale
-    if (!arbiterBest && renderedItems === 0 && decisions.length) {
-      decisions.slice(0, 6).forEach(function (d) {
-        var dCard = document.createElement('div');
-        dCard.className = 'tt-pad';
-        dCard.style.borderBottom = '1px solid var(--hm-border-subtle)';
-        dCard.style.cursor = 'pointer';
-
-        var dDir = String(d.direction).toUpperCase();
-        var dDirCls = dDir === 'BUY' ? 'tt-dir--buy' : (dDir === 'SELL' ? 'tt-dir--sell' : 'tt-dir--flat');
-
-        dCard.innerHTML =
-          '<div class="tt-row">' +
-            '<span class="tt-symbol">' + esc(d.symbol) + '</span>' +
-            '<span class="tt-dir ' + dDirCls + '">' + esc(d.direction || 'PENDING') + '</span>' +
-            '<span class="tt-chip tt-chip--none">' + esc(d.confidence_tier || 'NONE') + '</span>' +
-            '<span class="tt-rail__spacer"></span>' +
-            '<span class="tt-num">' + num(d.consensus_score, 1) + ' / 100</span>' +
-          '</div>' +
-          '<div class="tt-row" style="margin-top:4px">' +
-            '<span class="tt-hint">' + esc(d.rationale || 'Split consensus across styles') + '</span>' +
-          '</div>';
-
-        dCard.addEventListener('click', function () { selectSymbol(d.symbol); });
-        host.appendChild(dCard);
+      hero.querySelector('#btn-hero-load-ticket').addEventListener('click', function (e) {
+        e.stopPropagation();
+        window.loadOpportunityIntoTicket(arbiterBest.symbol, hDir, arbiterBest.entry_price, arbiterBest.stop_loss, arbiterBest.take_profit);
       });
+      hero.querySelector('#btn-hero-view-chart').addEventListener('click', function (e) {
+        e.stopPropagation();
+        selectSymbol(arbiterBest.symbol);
+      });
+      hero.addEventListener('click', function () {
+        selectSymbol(arbiterBest.symbol);
+      });
+      host.appendChild(hero);
     }
+
+    // ── 2. STYLE CHAMPIONS ────────────────────────────────────────────────
+    if (curTab === 'ALL' || curTab === 'STYLES') {
+      var champs = [
+        { label: '⚡ BEST SCALP', key: 'scalp', icon: '⚡', data: styleChamps.scalp },
+        { label: '📈 BEST DAY TRADE', key: 'day_trading', icon: '📈', data: styleChamps.day_trading },
+        { label: '🌊 BEST SWING', key: 'swing', icon: '🌊', data: styleChamps.swing }
+      ];
+
+      // Fallback matching from candidates if styleChamps is not fully populated
+      champs.forEach(function (ch) {
+        if (!ch.data && candidates.length) {
+          if (ch.key === 'scalp') {
+            ch.data = candidates.find(function (c) { return strUpper(c.trade_style) === 'SCALP' && c.utility_score > 0; });
+          } else if (ch.key === 'day_trading') {
+            ch.data = candidates.find(function (c) { return strUpper(c.trade_style).indexOf('DAY') >= 0 && c.utility_score > 0; });
+          } else if (ch.key === 'swing') {
+            ch.data = candidates.find(function (c) { return strUpper(c.trade_style) === 'SWING' && c.utility_score > 0; });
+          }
+        }
+      });
+
+      var activeChamps = champs.filter(function (ch) { return ch.data != null; });
+      if (activeChamps.length || curTab === 'STYLES') {
+        var stHeader = document.createElement('div');
+        stHeader.className = 'sel-section-title';
+        stHeader.innerHTML = '<span>⚡ Style Champions (Time-Horizon Leaders)</span>';
+        host.appendChild(stHeader);
+
+        champs.forEach(function (ch) {
+          var item = ch.data;
+          var chCard = document.createElement('div');
+          chCard.className = 'sel-champion-card';
+
+          if (!item) {
+            chCard.innerHTML =
+              '<div class="tt-row">' +
+                '<span style="font-size:10px;font-weight:700;color:var(--hm-text-subtle);">' + esc(ch.label) + '</span>' +
+                '<span class="tt-rail__spacer"></span>' +
+                '<span class="tt-hint" style="font-size:10px;">Scanning for edge…</span>' +
+              '</div>';
+          } else {
+            var cDir = String(item.bias || item.direction || '').toUpperCase();
+            var cDirCls = cDir === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
+            var cGrade = esc(item.setup_grade || 'GRADE A');
+            var cRr = num(item.risk_reward_ratio, 1);
+            var cEv = num(item.expected_value, 2);
+
+            chCard.innerHTML =
+              '<div class="tt-row" style="margin-bottom:4px;">' +
+                '<span style="font-size:10px;font-weight:700;color:#00d2ff;">' + esc(ch.label) + '</span>' +
+                '<span class="tt-rail__spacer"></span>' +
+                '<span class="tt-chip tt-chip--high" style="font-size:9.5px;">' + cGrade + '</span>' +
+              '</div>' +
+              '<div class="tt-row">' +
+                '<span class="tt-symbol">' + esc(item.symbol) + '</span>' +
+                '<span class="tt-dir ' + cDirCls + '">' + cDir + '</span>' +
+                '<span class="tt-rail__spacer"></span>' +
+                '<span class="tt-num" style="color:#00d2ff;font-size:11px;">R:R ' + cRr + ':1 | +' + cEv + 'R</span>' +
+              '</div>' +
+              '<div class="tt-row" style="margin-top:3px;font-size:11px;color:var(--hm-text-subtle);">' +
+                '<span>Entry: <b style="color:#fff;">' + num(item.entry_price, 2) + '</b></span>' +
+                '<span style="margin:0 4px;opacity:0.4;">|</span>' +
+                '<span>SL: <b style="color:var(--crimson-stop,#ef4444);">' + num(item.stop_loss, 2) + '</b></span>' +
+                '<span style="margin:0 4px;opacity:0.4;">|</span>' +
+                '<span>TP: <b style="color:var(--emerald-edge,#10b981);">' + num(item.take_profit, 2) + '</b></span>' +
+              '</div>';
+
+            chCard.addEventListener('click', function () {
+              selectSymbol(item.symbol);
+            });
+          }
+          host.appendChild(chCard);
+        });
+      }
+    }
+
+    // ── 3. CONSENSUS LEADERS ──────────────────────────────────────────────
+    if (curTab === 'ALL' || curTab === 'CONSENSUS') {
+      var consensusList = tradeable.length ? tradeable : decisions.filter(function (d) { return d.is_tradeable || d.consensus_score >= 40; });
+      if (consensusList.length || curTab === 'CONSENSUS') {
+        var csHeader = document.createElement('div');
+        csHeader.className = 'sel-section-title';
+        csHeader.innerHTML = '<span>🤝 Multi-Style Consensus Leaders</span>';
+        host.appendChild(csHeader);
+
+        if (!consensusList.length) {
+          var emptyCs = document.createElement('div');
+          emptyCs.className = 'tt-pad tt-hint';
+          emptyCs.textContent = 'No cross-style consensus above threshold in current session.';
+          host.appendChild(emptyCs);
+        } else {
+          consensusList.slice(0, 6).forEach(function (d) {
+            var cCard = document.createElement('div');
+            cCard.className = 'sel-consensus-card';
+
+            var dir = String(d.direction || '').toUpperCase();
+            var dirCls = dir === 'BUY' ? 'tt-dir--buy' : (dir === 'SELL' ? 'tt-dir--sell' : 'tt-dir--flat');
+            var tier = String(d.confidence_tier || 'HIGH').toUpperCase();
+            var tierCls = ['HIGH', 'EXTREME', 'UNANIMOUS'].indexOf(tier) >= 0 ? 'high' : 'medium';
+
+            var breakdownHtml = '';
+            if (d.style_votes) {
+              breakdownHtml = Object.keys(d.style_votes).map(function (s) {
+                var v = String(d.style_votes[s]).toUpperCase();
+                var cls = v === 'BUY' ? 'buy' : (v === 'SELL' ? 'sell' : 'hold');
+                return '<span class="sel-vote-pill ' + cls + '">' + esc(s) + ': ' + v + '</span>';
+              }).join(' ');
+            }
+
+            cCard.innerHTML =
+              '<div class="tt-row">' +
+                '<span class="tt-symbol">' + esc(d.symbol) + '</span>' +
+                '<span class="tt-dir ' + dirCls + '">' + dir + '</span>' +
+                '<span class="tt-chip tt-chip--' + tierCls + '">' + esc(tier) + '</span>' +
+                '<span class="tt-rail__spacer"></span>' +
+                '<span class="tt-num" style="font-weight:700;">' + num(d.consensus_score, 0) + ' / 100</span>' +
+              '</div>' +
+              (breakdownHtml ? ('<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">' + breakdownHtml + '</div>') : '') +
+              '<div class="tt-row" style="margin-top:4px;">' +
+                '<span class="tt-hint" style="font-size:10.5px;">' + esc(d.rationale || 'Cross-style consensus reached') + '</span>' +
+              '</div>';
+
+            cCard.addEventListener('click', function () {
+              selectSymbol(d.symbol);
+            });
+            host.appendChild(cCard);
+          });
+        }
+      }
+    }
+
+    // ── 4. OTHER ACTIONABLE OPPORTUNITIES (When in ALL view) ───────────────
+    if (curTab === 'ALL' && topActionable.length) {
+      var seenSyms = {};
+      if (arbiterBest) seenSyms[arbiterBest.symbol] = true;
+
+      var extraCandidates = topActionable.filter(function (c) {
+        if (!c || seenSyms[c.symbol]) return false;
+        seenSyms[c.symbol] = true;
+        return true;
+      }).slice(0, 5);
+
+      if (extraCandidates.length) {
+        var actHeader = document.createElement('div');
+        actHeader.className = 'sel-section-title';
+        actHeader.innerHTML = '<span>⚡ Qualified Actionable Setups</span>';
+        host.appendChild(actHeader);
+
+        extraCandidates.forEach(function (c) {
+          var actCard = document.createElement('div');
+          actCard.className = 'tt-pad';
+          actCard.style.borderBottom = '1px solid var(--hm-border-subtle)';
+          actCard.style.cursor = 'pointer';
+
+          var cDir = String(c.bias || c.direction || '').toUpperCase();
+          var cDirCls = cDir === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell';
+          var cGrade = c.setup_grade || 'GRADE B';
+
+          actCard.innerHTML =
+            '<div class="tt-row">' +
+              '<span class="tt-symbol">' + esc(c.symbol) + '</span>' +
+              '<span class="tt-dir ' + cDirCls + '">' + cDir + '</span>' +
+              '<span class="tt-chip tt-chip--muted" style="font-size:10px;">' + esc(c.trade_style || '') + '</span>' +
+              '<span class="tt-chip tt-chip--none" style="font-size:10px;">' + esc(cGrade) + '</span>' +
+              '<span class="tt-rail__spacer"></span>' +
+              '<span class="tt-num" style="color:#00d2ff;">Util ' + num(c.utility_score, 2) + '</span>' +
+            '</div>' +
+            '<div class="tt-row" style="margin-top:3px;font-size:11px;color:var(--hm-text-subtle);">' +
+              '<span>Entry: <b style="color:#fff;">' + num(c.entry_price, 2) + '</b></span>' +
+              '<span style="margin:0 4px;opacity:0.4;">|</span>' +
+              '<span>SL: <b style="color:var(--crimson-stop,#ef4444);">' + num(c.stop_loss, 2) + '</b></span>' +
+              '<span style="margin:0 4px;opacity:0.4;">|</span>' +
+              '<span>TP: <b style="color:var(--emerald-edge,#10b981);">' + num(c.take_profit, 2) + '</b></span>' +
+              '<span class="tt-rail__spacer"></span>' +
+              '<span>R:R ' + num(c.risk_reward_ratio, 1) + ':1 | Win ' + num(c.win_prob, 0) + '%</span>' +
+            '</div>';
+
+          actCard.addEventListener('click', function () {
+            selectSymbol(c.symbol);
+          });
+          host.appendChild(actCard);
+        });
+      }
+    }
+  }
+
+  function strUpper(val) {
+    return String(val || '').toUpperCase();
   }
 
   /* ── Scanner radar ────────────────────────────────────────────────────── */
@@ -1187,14 +1364,20 @@
         '<span style="display:block; font-size:10px; opacity:0.85;">(' + (r_mult >= 0 ? '+' : '') + num(r_mult, 2) + 'R)</span>' +
       '</span>';
 
-      var styleVal = String(p.style || (p.comment && (p.comment.indexOf('SCLP') !== -1 || p.comment.indexOf('SCALP') !== -1) ? 'SCALP' : ((p.comment && (p.comment.indexOf('SWNG') !== -1 || p.comment.indexOf('SWING') !== -1)) ? 'SWING' : 'DAY_TRADING'))).toUpperCase();
+      var styleVal = String(p.trade_style || p.style || (p.comment && (p.comment.indexOf('SCLP') !== -1 || p.comment.indexOf('SCALP') !== -1) ? 'SCALP' : ((p.comment && (p.comment.indexOf('SWNG') !== -1 || p.comment.indexOf('SWING') !== -1)) ? 'SWING' : 'DAY_TRADING'))).toUpperCase();
       var styleBadgeClass = styleVal === 'SCALP' ? 'badge-style-scalp' : (styleVal === 'SWING' ? 'badge-style-swing' : 'badge-style-day');
       var styleLabel = styleVal === 'DAY_TRADING' ? 'DAY' : styleVal;
+
+      var isManual = Boolean(p.is_manual);
+      var modeVal = String(p.monitoring_mode || 'AUTO_PILOT').toUpperCase();
+      var modeBadgeClass = modeVal === 'AUTO_PILOT' ? 'badge-mode-autopilot' : (modeVal === 'TRAIL' ? 'badge-mode-trail' : (modeVal === 'PROTECT_ONLY' ? 'badge-mode-protect' : 'badge-mode-off'));
+      var modeLabel = isManual ? (modeVal === 'AUTO_PILOT' ? 'AI AUTO' : (modeVal === 'PROTECT_ONLY' ? 'PROTECT' : modeVal)) : 'BOT';
+      var modeTitle = isManual ? ('Manual Position (' + modeVal + ')') : 'Automated Bot Position';
 
       tr.innerHTML =
         '<td><span class="tt-symbol">' + esc(p.symbol) + '</span></td>' +
         '<td><span class="tt-dir ' + dirCls + '">' + esc(side || '—') + '</span></td>' +
-        '<td><span class="badge ' + styleBadgeClass + '">' + esc(styleLabel) + '</span></td>' +
+        '<td><span class="badge ' + styleBadgeClass + '">' + esc(styleLabel) + '</span><span class="badge ' + modeBadgeClass + '" style="margin-left:4px; display:inline-block;" title="' + esc(modeTitle) + '">' + esc(modeLabel) + '</span></td>' +
         '<td class="tt-num">' + num(p.volume, 2) + '</td>' +
         '<td class="tt-num">' + formatPrice(p.open_price, p.symbol) + '</td>' +
         '<td class="tt-num">' + formatPrice(p.current_price, p.symbol) + '</td>' +
@@ -2546,8 +2729,23 @@
     // The query key is `tf`, not `timeframe`. console.js and terminal.js both
     // send `tf`; this call sent `timeframe`, which the handler never read, so
     // the selector silently returned H1 whatever the user picked.
-    apiGet('/api/candles?symbol=' + encodeURIComponent(sym) +
-           '&tf=' + encodeURIComponent(state.timeframe), TIMEOUT.normal)
+    var reqTf = state.timeframe;
+    var cacheKey = sym + '|' + reqTf;
+    var cached = state.chartCache[cacheKey];
+    if (cached && (Date.now() - cached.at) < 30000) {
+      if (overlay) overlay.innerHTML = '';
+      renderChart(sym, cached.candles);
+      return;
+    }
+    if (overlay && !state.chartPainted) {
+      setState(overlay, 'loading', 'Loading chart…',
+        'A cold candle feed can take up to a minute; this panel retries instead of giving up at 15s.');
+    }
+
+    // 60s budget + one retry. The measured cold H1 fetch was 21.7s, so the old
+    // 15s ceiling guaranteed "Chart unavailable" on the first visit.
+    apiGetRetry('/api/candles?symbol=' + encodeURIComponent(sym) +
+                '&tf=' + encodeURIComponent(reqTf), TIMEOUT.slow, 2, 1500)
       .then(function (res) {
         var candles = (res.data && res.data.candles) || [];
         if (!res.ok || !candles.length) {
@@ -2565,7 +2763,14 @@
           if (overlay) {
             setState(overlay, res.ok ? 'empty' : 'error',
               res.ok ? 'No candles for ' + sym : 'Chart unavailable',
-              res.ok ? 'The feed returned an empty series.' : (res.error || ('HTTP ' + res.status)));
+              res.ok ? 'The feed returned an empty series.'
+                     : (res.error || ('HTTP ' + res.status)) + ' — retrying in 5s.');
+          }
+          if (!res.ok && !state.chartRetryTimer) {
+            state.chartRetryTimer = setTimeout(function () {
+              state.chartRetryTimer = null;
+              if (state.symbol === sym && state.timeframe === reqTf) loadChart();
+            }, 5000);
           }
           return;
         }
@@ -2573,6 +2778,7 @@
           if (overlay) setState(overlay, 'error', 'Chart library unavailable', 'lightweight-charts did not load.');
           return;
         }
+        state.chartCache[cacheKey] = { at: Date.now(), candles: candles };
         if (overlay) overlay.innerHTML = '';
         renderChart(sym, candles);
       });
@@ -3303,6 +3509,7 @@
 
   /* Mirrors the backend's window exactly: live from -5min to +15min. */
   function newsPhase(ev, rem) {
+    if (ev && (ev.is_tba === true || String(ev.time_quality || '').toLowerCase() === 'tba')) return 'tba';
     if (rem === null) return 'unknown';
     if (rem < -NEWS_LIVE_AFTER) return 'past';
     if (rem <= NEWS_LIVE_BEFORE) return 'live';
@@ -3313,7 +3520,7 @@
   function phaseLabel(phase) {
     return {
       live: 'LIVE', soon: 'IMMINENT', upcoming: 'SCHEDULED',
-      past: 'RELEASED', unknown: '—'
+      past: 'RELEASED', tba: 'TIME TBA', unknown: '—'
     }[phase] || '—';
   }
 
@@ -3330,6 +3537,7 @@
   }
 
   function countdownLabel(phase, rem) {
+    if (phase === 'tba') return 'TBA';
     if (rem === null) return '—';
     if (phase === 'live') return rem >= 0 ? 'T\u2212' + fmtDuration(rem) : 'T+' + fmtDuration(rem);
     if (phase === 'past') return fmtDuration(rem) + ' ago';
@@ -3348,15 +3556,6 @@
     return String(ev.timestamp_iso || '') + '|' + String(ev.event || '');
   }
 
-  function newsFiltered() {
-    var impact = state.newsImpact, cur = state.newsCurrency;
-    return (state.news || []).filter(function (e) {
-      if (impact !== 'ALL' && String(e.impact || '').toUpperCase() !== impact) return false;
-      if (cur !== 'ALL' && String(e.currency || '').toUpperCase() !== cur) return false;
-      return true;
-    });
-  }
-
   /* The event the "Next release" panel should feature: one inside its live
      window if any, else the soonest still ahead of us. The server orders the
      upcoming block ascending, so the first match is the soonest. Falls back to
@@ -3373,6 +3572,206 @@
     return live || next || list[0];
   }
 
+  /* ═══ Cockpit News Alerts & Audio Synthesizer ═══════════════════════════ */
+  var safeNewsAudioMuted = false;
+  try {
+    safeNewsAudioMuted = (typeof localStorage !== 'undefined' && localStorage.getItem('HM_NEWS_AUDIO_MUTED') === 'true');
+  } catch (e) {}
+  state.newsAudioMuted = safeNewsAudioMuted;
+  state.newsLastAlertedEvent = null;
+  state.newsSubtab = 'calendar';
+  state.newsHorizon = 'ALL';
+  state.newsAsset = 'ALL';
+  state.newsSearch = '';
+  state.headlineCategory = 'ALL';
+  state.headlineSentiment = 'ALL';
+  state.headlineSearch = '';
+  state.newsHeadlines = [];
+  state.newsAtRisk = [];
+  state.newsImminent = null;
+
+  function playNewsAlertTone() {
+    if (state.newsAudioMuted) return;
+    try {
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      var ctx = new AudioCtx();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.setValueAtTime(880.0, ctx.currentTime + 0.15); // A5
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.005, ctx.currentTime + 0.4);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.42);
+    } catch (e) {}
+  }
+
+  function renderCockpitNews() {
+    // 1. Imminent High-Impact Event Warning Banner
+    var alertEl = $('cockpit-news-alert');
+    var imm = state.newsImminent;
+    if (alertEl) {
+      if (imm && imm.event) {
+        alertEl.hidden = false;
+        setText($('cockpit-news-alert-text'), '⚡ ' + imm.event + ' (' + imm.currency + ') ' + (imm.status_text || ''));
+        setText($('cockpit-news-alert-cd'), imm.countdown_str || 'IMMINENT');
+        var riskCount = (state.newsAtRisk || []).length;
+        setText($('cockpit-news-alert-risk'), riskCount > 0 ? (riskCount + ' TRADES AT RISK') : 'INSULATED');
+        
+        // Trigger alert tone once if release is <= 5 min (300 sec)
+        if (imm.diff_seconds !== undefined && imm.diff_seconds <= 300 && imm.diff_seconds > -600) {
+          var evtKey = imm.event + '_' + imm.currency;
+          if (state.newsLastAlertedEvent !== evtKey) {
+            state.newsLastAlertedEvent = evtKey;
+            playNewsAlertTone();
+          }
+        }
+      } else {
+        alertEl.hidden = true;
+      }
+    }
+
+    // 2. Cockpit Live Headline Ticker
+    var tickerEl = $('cockpit-news-ticker');
+    var txtEl = $('cockpit-ticker-text');
+    var sentEl = $('cockpit-ticker-sentiment');
+    var timeEl = $('cockpit-ticker-time');
+    if (tickerEl && state.newsHeadlines && state.newsHeadlines.length) {
+      if (state.tickerIndex === undefined || state.tickerIndex === null) state.tickerIndex = 0;
+      var topH = state.newsHeadlines[state.tickerIndex % state.newsHeadlines.length];
+      if (topH) {
+        if (txtEl) {
+          txtEl.textContent = topH.title;
+          txtEl.title = topH.summary || topH.title;
+        }
+        if (sentEl) {
+          var scoreStr = (topH.sentiment_score !== undefined && topH.sentiment_score !== 0) ?
+                         (' ' + (topH.sentiment_score > 0 ? '+' : '') + topH.sentiment_score) : '';
+          sentEl.textContent = (topH.sentiment || 'NEUTRAL') + scoreStr;
+          sentEl.className = 'cockpit-news-ticker__sentiment sentiment-' + String(topH.sentiment || 'neutral').toLowerCase();
+        }
+        if (timeEl) timeEl.textContent = topH.age_str || topH.source || 'just now';
+      }
+    }
+  }
+
+  function wireCockpitNewsTicker() {
+    var tickerEl = $('cockpit-news-ticker');
+    if (tickerEl && !tickerEl.hasAttribute('data-wired')) {
+      tickerEl.setAttribute('data-wired', 'true');
+      tickerEl.addEventListener('click', function () {
+        setView('news');
+        switchNewsTab('headlines');
+      });
+    }
+
+    var alertBtn = $('btn-cockpit-news-view');
+    if (alertBtn && !alertBtn.hasAttribute('data-wired')) {
+      alertBtn.setAttribute('data-wired', 'true');
+      alertBtn.addEventListener('click', function () {
+        setView('news');
+        switchNewsTab('sentinel');
+      });
+    }
+  }
+
+  /* ═══ News Command Center 3 Subtabs ══════════════════════════════════════ */
+  function switchNewsTab(tabId) {
+    state.newsSubtab = tabId || 'calendar';
+    var nav = $('news-subtabs-nav');
+    if (nav) {
+      nav.querySelectorAll('.news-tab-btn').forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-news-tab') === state.newsSubtab);
+      });
+    }
+    var panels = {
+      calendar: $('news-panel-calendar'),
+      headlines: $('news-panel-headlines'),
+      sentinel: $('news-panel-sentinel')
+    };
+    for (var k in panels) {
+      if (panels[k]) {
+        panels[k].hidden = (k !== state.newsSubtab);
+        panels[k].classList.toggle('active', k === state.newsSubtab);
+      }
+    }
+    if (state.newsSubtab === 'headlines') {
+      renderNewsHeadlines();
+    } else if (state.newsSubtab === 'sentinel') {
+      renderNewsSentinelDesk();
+    } else {
+      renderNews();
+      renderNewsHero();
+      renderNewsDetail();
+    }
+  }
+
+  function wireNewsCommandBar() {
+    var nav = $('news-subtabs-nav');
+    if (nav && !nav.hasAttribute('data-wired')) {
+      nav.setAttribute('data-wired', 'true');
+      nav.addEventListener('click', function (ev) {
+        var btn = ev.target.closest('.news-tab-btn');
+        if (!btn) return;
+        var tab = btn.getAttribute('data-news-tab');
+        switchNewsTab(tab);
+      });
+    }
+
+    var audioBtn = $('btn-news-audio-toggle');
+    if (audioBtn && !audioBtn.hasAttribute('data-wired')) {
+      audioBtn.setAttribute('data-wired', 'true');
+      var updateAudioLabel = function () {
+        var lbl = $('news-audio-label');
+        if (lbl) lbl.textContent = state.newsAudioMuted ? '🔇 Audio: OFF' : '🔊 Audio: ON';
+      };
+      updateAudioLabel();
+      audioBtn.addEventListener('click', function () {
+        state.newsAudioMuted = !state.newsAudioMuted;
+        try { if (typeof localStorage !== 'undefined') localStorage.setItem('HM_NEWS_AUDIO_MUTED', String(state.newsAudioMuted)); } catch (e) {}
+        updateAudioLabel();
+        if (!state.newsAudioMuted) playNewsAlertTone();
+        toast('News audio alerts: ' + (state.newsAudioMuted ? 'Muted' : 'Enabled'));
+      });
+    }
+
+    var refreshBtn = $('news-refresh-btn');
+    if (refreshBtn && !refreshBtn.hasAttribute('data-wired')) {
+      refreshBtn.setAttribute('data-wired', 'true');
+      refreshBtn.addEventListener('click', function () {
+        if (refreshBtn.disabled) return;
+        var label = refreshBtn.textContent;
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = 'Refreshing…';
+        toast('Refreshing economic calendar & headlines…');
+        // The endpoint waits up to 8s for a real fetch, so give it 30s. It
+        // reports `refreshed` only when new data actually landed; saying
+        // "refreshed" off a cache hit was the old bug.
+        apiPost('/api/news/refresh', {}, TIMEOUT.provider).then(function (res) {
+          var data = (res && res.data) || {};
+          if (data.macro_state) handleNewsPayload(data.macro_state);
+          if (res.ok && data.refreshed) {
+            toast('Live macroeconomic feeds refreshed.', 'success');
+          } else if (res.ok && data.status === 'REFRESHING') {
+            toast(data.reason || 'The feed is still refreshing; previous snapshot kept.', 'error');
+            setTimeout(loadNews, 4000);
+          } else {
+            toast('Refresh failed: ' + (data.reason || data.error || res.error || ('HTTP ' + res.status)), 'error');
+            loadNews();
+          }
+        }).finally(function () {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = label;
+        });
+      });
+    }
+  }
+
+  /* ═══ Economic Calendar Filters & Rendering ══════════════════════════════ */
   function renderNewsLiveChip() {
     var chip = $('news-live-chip');
     if (!chip) return;
@@ -3390,69 +3789,93 @@
     }
   }
 
-  /* Provenance, stated rather than implied. `payload.source` is 'live_feed',
-     'mixed' or 'synthetic_calendar'. The engine substitutes a HARDCODED event
-     plan when the feed is rate-limited or unreachable, so a calendar that looks
-     entirely real may be entirely invented -- and it used to say nothing. */
   function renderNewsSourceChip() {
     var chip = $('news-source-chip');
     if (!chip) return;
     var src = state.newsSource;
-    if (!src || src === 'live_feed') { chip.hidden = true; return; }
+    var tba = (state.newsCounts && state.newsCounts.tba) || 0;
+    if ((!src || src === 'live_feed') && !tba) { chip.hidden = true; return; }
     chip.hidden = false;
-    chip.className = 'tt-chip tt-chip--high';
-    chip.textContent = (src === 'mixed')
+    chip.className = 'tt-chip ' + (src && src !== 'live_feed' ? 'tt-chip--high' : 'tt-chip--medium');
+    var label = (src === 'mixed')
       ? 'partly synthetic · ' + (state.newsSynthetic || 0)
-      : 'synthetic calendar · feed unavailable';
+      : (src === 'synthetic_calendar' ? 'synthetic calendar · feed unavailable' : 'live feed');
+    if (tba) label += ' · ' + tba + ' time TBA';
+    chip.textContent = label;
   }
 
-  /* The countdown cell carries its own anchors so the per-second tick can
-     recompute without a lookup into a list that a filter may have changed. */
   function newsCdCell(ev, rem, phase, cls) {
-    return '<td class="' + cls + '" data-cd="1" data-phase="' + esc(phase) + '"' +
-      ' data-iso="' + esc(ev.timestamp_iso || '') + '"' +
-      ' data-diff="' + esc(typeof ev.diff_seconds === 'number' ? ev.diff_seconds : '') + '">' +
-      '<span class="tt-news__cd-val" data-cd-val="1">' + esc(countdownLabel(phase, rem)) + '</span>' +
-      '<span class="tt-news__cd-badge">' + esc(phaseLabel(phase)) + '</span>' +
-      '</td>';
+    var td = document.createElement('td');
+    td.className = 'tt-news__cd' + (cls ? ' ' + cls : '');
+    td.setAttribute('data-cd', '1');
+    td.setAttribute('data-phase', phase);
+    if (phase === 'tba') {
+      td.setAttribute('data-time', '');
+      td.textContent = 'TBA';
+      td.title = 'The feed did not publish a release time. Not eligible for a blackout window.';
+      return td;
+    }
+    var target = ev.time_target || (ev.datetime ? Date.parse(ev.datetime) : (Date.now() + (ev.diff_seconds || 0) * 1000));
+    td.setAttribute('data-time', isNaN(target) ? '' : String(target));
+    if (ev.duration_seconds) td.setAttribute('data-dur', String(ev.duration_seconds));
+    if (String(ev.time_quality || '') === 'estimated') {
+      td.title = 'Estimated time from the feed\'s relative countdown; display only.';
+    }
+    td.textContent = countdownLabel(phase, rem);
+    return td;
   }
 
-  function newsRow(ev) {
-    var rem = newsRemaining(ev);
-    var phase = newsPhase(ev, rem);
-    var key = newsKey(ev);
-    var pairs = Array.isArray(ev.affected_pairs) ? ev.affected_pairs : [];
+  function newsFiltered() {
+    var list = state.news || [];
+    var imp = state.newsImpact || 'ALL';
+    var cur = state.newsCurrency || 'ALL';
+    var horiz = state.newsHorizon || 'ALL';
+    var asset = state.newsAsset || 'ALL';
+    var search = (state.newsSearch || '').trim().toUpperCase();
 
-    var tr = document.createElement('tr');
-    tr.className = 'tt-news__row';
-    tr.setAttribute('data-phase', phase);
-    tr.setAttribute('data-key', key);
-    if (state.newsSelected === key) tr.setAttribute('data-selected', 'true');
-    tr.setAttribute('tabindex', '0');
-    tr.setAttribute('role', 'button');
-    tr.setAttribute('aria-label', 'Event detail: ' + String(ev.event || 'event'));
+    var now = new Date(serverNowMs());
+    var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    var endOfToday = startOfToday + 86400000;
+    var endOfTomorrow = endOfToday + 86400000;
+    var dayOfWeek = now.getDay();
+    var startOfWeek = startOfToday - ((dayOfWeek === 0 ? 6 : dayOfWeek - 1) * 86400000);
+    var endOfWeek = startOfWeek + (7 * 86400000);
 
-    tr.innerHTML =
-      '<td class="tt-news__when">' +
-        '<span class="tt-num">' + esc(ev.time_ist || ev.time || '—') + '</span>' +
-        (ev.time_utc ? '<span class="tt-news__utc">' + esc(ev.time_utc) + '</span>' : '') +
-      '</td>' +
-      newsCdCell(ev, rem, phase, 'tt-news__cd') +
-      '<td>' + impactChip(ev.impact) + '</td>' +
-      '<td class="tt-news__cur">' + esc(ev.currency || '—') + '</td>' +
-      '<td class="tt-news__event">' +
-        '<span class="tt-news__name">' + esc(ev.event || '—') + '</span>' +
-        (pairs.length ? '<span class="tt-news__pairs">' + esc(pairs.join(' · ')) + '</span>' : '') +
-      '</td>' +
-      '<td class="tt-num">' + esc(ev.actual || '—') + '</td>' +
-      '<td class="tt-num">' + esc(ev.forecast || '—') + '</td>' +
-      '<td class="tt-num">' + esc(ev.previous || '—') + '</td>';
+    return list.filter(function (ev) {
+      // 1. Impact filter
+      if (imp !== 'ALL' && String(ev.impact || '').toUpperCase() !== imp) return false;
 
-    tr.addEventListener('click', function () { selectNews(ev); });
-    tr.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectNews(ev); }
+      // 2. Currency filter
+      if (cur !== 'ALL' && String(ev.currency || '').toUpperCase() !== cur) return false;
+
+      // 3. Horizon filter (calendar date boundaries matching full days)
+      if (horiz !== 'ALL') {
+        var evTime = ev.timestamp_iso ? Date.parse(ev.timestamp_iso) : (serverNowMs() + (ev.diff_seconds || 0) * 1000);
+        if (!isNaN(evTime)) {
+          if (horiz === 'TODAY' && (evTime < startOfToday || evTime >= endOfToday)) return false;
+          if (horiz === 'TOMORROW' && (evTime < endOfToday || evTime >= endOfTomorrow)) return false;
+          if (horiz === 'THIS_WEEK' && (evTime < startOfWeek || evTime >= endOfWeek)) return false;
+        }
+      }
+
+      // 4. Asset Class filter
+      if (asset !== 'ALL') {
+        var c = String(ev.currency || '').toUpperCase();
+        var p = (ev.affected_pairs || []).map(function (x) { return String(x).toUpperCase(); });
+        if (asset === 'FOREX' && !['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'NZD', 'CHF', 'CNY'].includes(c)) return false;
+        if (asset === 'COMMODITY' && !p.some(function (x) { return x.includes('XAU') || x.includes('OIL') || x.includes('WTI') || x.includes('BRENT'); }) && c !== 'XAU') return false;
+        if (asset === 'CRYPTO' && !p.some(function (x) { return x.includes('BTC') || x.includes('ETH') || x.includes('SOL'); })) return false;
+        if (asset === 'INDEX' && !p.some(function (x) { return x.includes('500') || x.includes('30') || x.includes('100') || x.includes('40'); })) return false;
+      }
+
+      // 5. Search input
+      if (search) {
+        var text = (String(ev.event || '') + ' ' + String(ev.currency || '') + ' ' + String(ev.category || '')).toUpperCase();
+        if (text.indexOf(search) === -1) return false;
+      }
+
+      return true;
     });
-    return tr;
   }
 
   function renderNews() {
@@ -3464,6 +3887,7 @@
 
     setText($('news-count'), all.length === rows.length
       ? String(rows.length) : rows.length + ' of ' + all.length);
+    setText($('news-cal-count'), String(all.length));
     renderNewsLiveChip();
     renderNewsSourceChip();
 
@@ -3474,7 +3898,7 @@
     }
     if (!rows.length) {
       setState(host, 'empty', 'No events match the filter',
-        'Clear the impact or currency filter to see all ' + all.length + ' events.');
+        'Clear the filters to see all ' + all.length + ' events.');
       return;
     }
 
@@ -3486,10 +3910,10 @@
     var thead = document.createElement('thead');
     thead.innerHTML =
       '<tr>' +
-        '<th scope="col">When</th>' +
-        '<th scope="col">Countdown</th>' +
-        '<th scope="col">Impact</th>' +
-        '<th scope="col">Cur</th>' +
+        '<th scope="col" class="tt-news__th-time">Time (IST)</th>' +
+        '<th scope="col" class="tt-news__th-cd">Countdown</th>' +
+        '<th scope="col" class="tt-news__th-cur">Cur</th>' +
+        '<th scope="col" class="tt-news__th-imp">Imp</th>' +
         '<th scope="col">Event</th>' +
         '<th scope="col" class="tt-num">Actual</th>' +
         '<th scope="col" class="tt-num">Forecast</th>' +
@@ -3498,12 +3922,104 @@
     table.appendChild(thead);
 
     var tbody = document.createElement('tbody');
-    rows.forEach(function (ev) { tbody.appendChild(newsRow(ev)); });
+    rows.forEach(function (ev) {
+      var tr = document.createElement('tr');
+      var rem = newsRemaining(ev);
+      var phase = newsPhase(ev, rem);
+      tr.setAttribute('data-phase', phase);
+      tr.className = 'tt-news__row';
+      tr.style.cursor = 'pointer';
+
+      // Time (IST). TBA is said out loud, never shown as "now"; an estimated
+      // time is prefixed with "~" because the feed only gave a relative
+      // countdown, not a published clock time.
+      var quality = String(ev.time_quality || '').toLowerCase();
+      var tdTime = document.createElement('td');
+      tdTime.className = 'tt-news__time';
+      if (quality === 'tba') {
+        tdTime.textContent = 'TBA';
+        tdTime.title = 'Release time not published by the feed. This event cannot open a blackout window.';
+      } else {
+        tdTime.textContent = ev.time_ist ? ev.time_ist.replace(/^[A-Za-z]+ [A-Za-z]+ \d+, /, '') : (ev.time || '—');
+        if (quality === 'estimated') {
+          tdTime.textContent = '~' + tdTime.textContent;
+          tdTime.title = 'Estimated time from a relative feed countdown. Display only — not used for blackout gates.';
+        }
+      }
+      tr.appendChild(tdTime);
+
+      // Countdown
+      tr.appendChild(newsCdCell(ev, rem, phase));
+
+      // Currency
+      var tdCur = document.createElement('td');
+      tdCur.className = 'tt-news__cur';
+      tdCur.textContent = ev.currency || '—';
+      tr.appendChild(tdCur);
+
+      // Impact
+      var tdImp = document.createElement('td');
+      tdImp.className = 'tt-news__imp';
+      var imp = String(ev.impact || 'low').toLowerCase();
+      var chipCls = (imp === 'high') ? 'high' : (imp === 'medium' ? 'medium' : 'low');
+      tdImp.innerHTML = '<span class="tt-chip tt-chip--' + chipCls + '">' + esc(ev.impact || '—') + '</span>';
+      tr.appendChild(tdImp);
+
+      // Event Title
+      var tdEv = document.createElement('td');
+      tdEv.className = 'tt-news__event';
+      tdEv.innerHTML = '<span class="tt-news__name">' + esc(ev.event || '—') + '</span>';
+      tr.appendChild(tdEv);
+
+      // Actual
+      var tdAct = document.createElement('td');
+      tdAct.className = 'tt-num tt-news__actual';
+      tdAct.textContent = ev.actual || '—';
+      if (ev.actual && ev.forecast && ev.actual !== '—' && ev.forecast !== '—') {
+        var actNum = parseFloat(ev.actual);
+        var fcstNum = parseFloat(ev.forecast);
+        if (!isNaN(actNum) && !isNaN(fcstNum)) {
+          if (actNum > fcstNum) tdAct.style.color = 'var(--emerald-edge, #10b981)';
+          else if (actNum < fcstNum) tdAct.style.color = 'var(--crimson-stop, #ef4444)';
+        }
+      }
+      tr.appendChild(tdAct);
+
+      // Forecast & Previous
+      var tdFc = document.createElement('td');
+      tdFc.className = 'tt-num';
+      tdFc.textContent = ev.forecast || '—';
+      tr.appendChild(tdFc);
+
+      var tdPrev = document.createElement('td');
+      tdPrev.className = 'tt-num';
+      tdPrev.textContent = ev.previous || '—';
+      tr.appendChild(tdPrev);
+
+      if (state.newsSelected && newsKey(state.newsSelected) === newsKey(ev)) {
+        tr.classList.add('tt-news__row--selected');
+      }
+
+      tr.addEventListener('click', function () {
+        state.newsSelected = ev;
+        tbody.querySelectorAll('.tt-news__row').forEach(function (r) { r.classList.remove('tt-news__row--selected'); });
+        tr.classList.add('tt-news__row--selected');
+        renderNewsDetail(true);
+        if (window.innerWidth <= 1024) {
+          var detailEl = document.querySelector('.tt-slot--detail');
+          if (detailEl) {
+            try {
+              detailEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            } catch (e) {}
+          }
+        }
+      });
+
+      tbody.appendChild(tr);
+    });
+
     table.appendChild(tbody);
     host.appendChild(table);
-
-    // The context strip reads the same cached calendar.
-    renderContextNews();
   }
 
   function renderNewsHero() {
@@ -3513,47 +4029,47 @@
     var ev = pickNextEvent();
     if (!ev) {
       state.newsHeroKey = null;
-      setState(host, 'empty', 'No upcoming release',
-        'The calendar feed returned no events.');
+      setState(host, 'empty', 'No upcoming release', 'The calendar holds no future events.');
       return;
     }
 
-    var rem = newsRemaining(ev);
-    var phase = newsPhase(ev, rem);
     state.newsHeroKey = newsKey(ev);
-
     host.removeAttribute('data-state');
     host.innerHTML = '';
+
+    var rem = newsRemaining(ev);
+    var phase = newsPhase(ev, rem);
 
     var wrap = document.createElement('div');
     wrap.className = 'tt-news-hero';
     wrap.setAttribute('data-phase', phase);
 
-    var grid = [
-      ['Forecast', ev.forecast], ['Previous', ev.previous], ['Actual', ev.actual],
-      ['Bias', ev.direction_bias], ['Shock risk', ev.shock_risk]
-    ];
-    var cells = grid.map(function (p) {
-      return '<div class="tt-news-hero__cell">' +
-        '<span class="tt-news-hero__k">' + esc(p[0]) + '</span>' +
-        '<span class="tt-news-hero__v">' + esc(p[1] || '—') + '</span>' +
-      '</div>';
-    }).join('');
+    var imp = String(ev.impact || 'low').toLowerCase();
+    var impCls = (imp === 'high') ? 'high' : (imp === 'medium' ? 'medium' : 'low');
 
     wrap.innerHTML =
       '<div class="tt-news-hero__top">' +
-        impactChip(ev.impact) +
+        '<span class="tt-chip tt-chip--' + impCls + '">' + esc(ev.impact || '—') + '</span>' +
         '<span class="tt-news-hero__cur">' + esc(ev.currency || '—') + '</span>' +
+        '<span class="tt-rail__spacer"></span>' +
         '<span class="tt-hint">' + esc(ev.time_ist || ev.time || '—') + '</span>' +
       '</div>' +
       '<h3 class="tt-news-hero__title">' + esc(ev.event || '—') + '</h3>' +
-      '<div class="tt-news-hero__cd" data-cd="1" data-phase="' + esc(phase) + '"' +
-        ' data-iso="' + esc(ev.timestamp_iso || '') + '"' +
-        ' data-diff="' + esc(typeof ev.diff_seconds === 'number' ? ev.diff_seconds : '') + '">' +
-        '<span class="tt-news-hero__cd-val" data-cd-val="1">' + esc(countdownLabel(phase, rem)) + '</span>' +
+      '<div class="tt-news-hero__cd" data-cd="1" data-phase="' + esc(phase) + '">' +
+        '<span class="tt-news-hero__cd-val tt-num">' + esc(countdownLabel(phase, rem)) + '</span>' +
         '<span class="tt-news-hero__cd-badge">' + esc(phaseLabel(phase)) + '</span>' +
       '</div>' +
-      '<div class="tt-news-hero__grid">' + cells + '</div>';
+      '<div class="tt-news-hero__grid">' +
+        '<div class="tt-news-hero__cell"><span class="tt-news-hero__k">ACTUAL</span><span class="tt-news-hero__v tt-num">' + esc(ev.actual || '—') + '</span></div>' +
+        '<div class="tt-news-hero__cell"><span class="tt-news-hero__k">FORECAST</span><span class="tt-news-hero__v tt-num">' + esc(ev.forecast || '—') + '</span></div>' +
+        '<div class="tt-news-hero__cell"><span class="tt-news-hero__k">PREVIOUS</span><span class="tt-news-hero__v tt-num">' + esc(ev.previous || '—') + '</span></div>' +
+      '</div>';
+
+    wrap.style.cursor = 'pointer';
+    wrap.addEventListener('click', function () {
+      state.newsSelected = ev;
+      renderNewsDetail(true);
+    });
 
     host.appendChild(wrap);
   }
@@ -3562,200 +4078,437 @@
     var host = $('news-detail');
     if (!host) return;
 
-    var ev = explicit || null;
-    if (!ev && state.newsSelected) {
-      ev = (state.news || []).filter(function (e) {
-        return newsKey(e) === state.newsSelected;
-      })[0] || null;
-    }
-
-    var chip = $('news-detail-impact');
+    var ev = state.newsSelected || pickNextEvent();
     if (!ev) {
-      if (chip) { chip.className = 'tt-chip tt-chip--none'; chip.textContent = '—'; }
-      setState(host, 'empty', 'No event selected',
-        'Pick an event from the calendar to read its impact analysis.');
+      setState(host, 'empty', 'No event selected', 'Pick an event from the calendar to inspect.');
       return;
     }
-
-    var k = String(ev.impact || '').toUpperCase();
-    if (chip) {
-      chip.className = 'tt-chip tt-chip--' +
-        (['HIGH', 'MEDIUM', 'LOW'].indexOf(k) >= 0 ? k.toLowerCase() : 'none');
-      chip.textContent = k || '—';
-    }
-
-    var rem = newsRemaining(ev);
-    var phase = newsPhase(ev, rem);
-    var pairs = Array.isArray(ev.affected_pairs) ? ev.affected_pairs : [];
 
     host.removeAttribute('data-state');
     host.innerHTML = '';
 
-    var rows = [
-      // The event's own name, first. A detail panel that shows forecast,
-      // previous and actual without saying which release they belong to is
-      // unreadable the moment the user scrolls the calendar.
-      ['Event', ev.event],
-      ['Status', phaseLabel(phase) + ' · ' + countdownLabel(phase, rem)],
-      ['When (IST)', ev.time_ist || ev.time || '—'],
-      ['When (UTC)', ev.time_utc || '—'],
-      ['Forecast', ev.forecast], ['Previous', ev.previous], ['Actual', ev.actual],
-      ['Deviation', ev.deviation_summary],
-      ['Direction bias', ev.direction_bias],
-      ['Shock risk', ev.shock_risk],
-      ['Category', ev.category],
-      ['Affected', pairs.length ? pairs.join(' · ') : null]
-    ];
+    var chip = $('news-detail-impact');
+    if (chip) {
+      var imp = String(ev.impact || 'low').toLowerCase();
+      chip.className = 'tt-chip tt-chip--' + (imp === 'high' ? 'high' : (imp === 'medium' ? 'medium' : 'low'));
+      chip.textContent = ev.impact || '—';
+    }
 
-    var dl = document.createElement('dl');
-    dl.className = 'tt-detail';
-    rows.forEach(function (pair) {
-      var dt = document.createElement('dt');
-      dt.textContent = pair[0];
-      var dd = document.createElement('dd');
-      setText(dd, pair[1]);
-      dl.appendChild(dt);
-      dl.appendChild(dd);
+    var affectedHtml = '';
+    if (ev.affected_pairs && ev.affected_pairs.length) {
+      affectedHtml = ev.affected_pairs.map(function (p) {
+        return '<span class="tt-chip tt-chip--muted" style="cursor:pointer;" onclick="selectSymbol(\'' + p + '\')">' + esc(p) + '</span>';
+      }).join(' ');
+    }
+
+    // Check matched open positions for this event
+    var matchedPos = (state.newsAtRisk || []).filter(function (pos) {
+      return (ev.affected_pairs || []).includes(pos.symbol) || String(pos.symbol).includes(ev.currency);
     });
-    host.appendChild(dl);
 
-    // Prose blocks. Each is written with textContent, so a headline containing
-    // markup cannot inject into the panel.
-    [
-      ['Impact', ev.impact_analysis],
-      ['What it is', ev.description],
-      ['Execution', ev.execution_warning],
-      ['Window', ev.shock_alert]
-    ].forEach(function (pair) {
-      if (!pair[1]) return;
-      var h = document.createElement('h4');
-      h.className = 'tt-da__heading';
-      h.textContent = pair[0];
-      var p = document.createElement('p');
-      p.className = 'tt-news__prose';
-      p.textContent = String(pair[1]);
-      host.appendChild(h);
-      host.appendChild(p);
+    var atRiskHtml = '';
+    if (matchedPos.length) {
+      atRiskHtml =
+        '<div style="margin-top:10px;padding:8px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:6px;">' +
+          '<span style="font-size:10px;font-weight:800;color:#f87171;letter-spacing:0.04em;">⚠️ EXPOSED OPEN TRADES (' + matchedPos.length + ')</span>' +
+          '<div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;">' +
+            matchedPos.map(function (p) {
+              return '<div style="display:flex;align-items:center;font-size:11px;gap:6px;">' +
+                '<span class="tt-symbol">' + esc(p.symbol) + '</span>' +
+                '<span class="tt-dir ' + (p.direction === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell') + '">' + esc(p.direction) + '</span>' +
+                '<span class="tt-num">' + num(p.current_r, 2) + 'R</span>' +
+                '<span class="tt-rail__spacer"></span>' +
+                '<span class="sentinel-action-badge action-' + (p.sentinel_action === 'AUTO_BANK_PROFIT' ? 'bank' : (p.sentinel_action === 'BE_PROTECTED' ? 'protected' : 'ratchet')) + '">' + esc(p.sentinel_action) + '</span>' +
+              '</div>';
+            }).join('') +
+          '</div>' +
+        '</div>';
+    }
+
+    host.innerHTML =
+      '<div style="display:flex;flex-direction:column;gap:8px;padding:6px 0;">' +
+        '<div style="font-size:1.05rem;font-weight:800;color:#fff;">' + esc(ev.event || '—') + '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--hm-text-subtle);">' +
+          '<span>Currency: <b style="color:#fff;">' + esc(ev.currency || '—') + '</b></span>' +
+          '<span>|</span>' +
+          '<span>Time (IST): <b style="color:#00d2ff;">' + esc(ev.time_ist || ev.time || '—') + '</b></span>' +
+          (String(ev.time_quality || '').toLowerCase() === 'tba'
+            ? '<span class="tt-chip tt-chip--medium" title="No release time published by the feed; cannot open a blackout window.">time TBA</span>'
+            : (String(ev.time_quality || '').toLowerCase() === 'estimated'
+              ? '<span class="tt-chip tt-chip--muted" title="Estimated from a relative feed countdown; display only.">~ estimated</span>'
+              : '')) +
+        '</div>' +
+        '<div style="margin-top:4px;font-size:12px;line-height:1.45;color:#cbd5e1;">' +
+          esc(ev.description || 'High-frequency macroeconomic data release tracked by institutional desks.') +
+        '</div>' +
+        (ev.impact_analysis ? (
+          '<div style="margin-top:4px;padding:8px;background:rgba(0,210,255,0.06);border:1px solid rgba(0,210,255,0.25);border-radius:6px;font-size:11px;color:#94a3b8;">' +
+            '<b style="color:#00d2ff;">Market Impact:</b> ' + esc(ev.impact_analysis) +
+          '</div>'
+        ) : '') +
+        (affectedHtml ? (
+          '<div style="margin-top:6px;">' +
+            '<div style="font-size:10px;font-weight:700;color:#64748b;margin-bottom:4px;text-transform:uppercase;">Affected Instruments:</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + affectedHtml + '</div>' +
+          '</div>'
+        ) : '') +
+        atRiskHtml +
+      '</div>';
+  }
+
+  /* ═══ Breaking Headlines Stream Rendering ═══════════════════════════════ */
+  function renderNewsHeadlines() {
+    var host = $('headlines-stream-body');
+    if (!host) return;
+
+    var list = state.newsHeadlines || [];
+    var cat = state.headlineCategory || 'ALL';
+    var sent = state.headlineSentiment || 'ALL';
+    var search = (state.headlineSearch || '').trim().toUpperCase();
+
+    var filtered = list.filter(function (h) {
+      if (cat !== 'ALL') {
+        var a = (h.affected_assets || []).map(function (x) { return x.toUpperCase(); });
+        if (!a.includes(cat) && h.category !== cat) return false;
+      }
+      if (sent !== 'ALL' && h.sentiment !== sent) return false;
+      if (search) {
+        var str = (String(h.title || '') + ' ' + String(h.source || '') + ' ' + (h.affected_currencies || []).join(' ')).toUpperCase();
+        if (str.indexOf(search) === -1) return false;
+      }
+      return true;
+    });
+
+    setText($('news-head-count'), String(list.length));
+
+    if (!filtered.length) {
+      host.innerHTML = '<div class="tt-pad tt-hint" style="text-align:center;padding:24px;">No breaking news headlines match the selected filter.</div>';
+      return;
+    }
+
+    host.innerHTML = filtered.map(function (h) {
+      var sentCls = 'sentiment-' + String(h.sentiment || 'neutral').toLowerCase();
+      var sentSign = (h.sentiment_score > 0 ? '+' : '');
+      var currPills = (h.affected_currencies || []).map(function (c) {
+        return '<span class="headline-curr-pill">' + esc(c) + '</span>';
+      }).join(' ');
+
+      return (
+        '<div class="headline-card" data-url="' + esc(h.link || '') + '">' +
+          '<div class="headline-card-header">' +
+            '<span class="headline-source-pill">' + esc(h.source || 'WIRE') + '</span>' +
+            (h.urgency === 'BREAKING' ? '<span class="headline-urgency-pill">⚡ BREAKING</span>' : '') +
+            '<span class="cockpit-news-ticker__sentiment ' + sentCls + '">' + esc(h.sentiment) + ' (' + sentSign + h.sentiment_score + ')</span>' +
+            '<span class="tt-rail__spacer"></span>' +
+            '<span class="tt-hint tt-num" style="font-size:11px;">' + esc(h.age_str || '') + '</span>' +
+          '</div>' +
+          '<div class="headline-title">' + esc(h.title) + '</div>' +
+          (h.summary ? ('<div class="headline-summary">' + esc(h.summary) + '</div>') : '') +
+          '<div class="headline-footer">' +
+            currPills +
+            '<span class="tt-rail__spacer"></span>' +
+            (h.link ? '<a href="' + esc(h.link) + '" target="_blank" rel="noopener noreferrer" style="font-size:11px;color:#00d2ff;text-decoration:none;">Read Source ↗</a>' : '') +
+          '</div>' +
+        '</div>'
+      );
+    }).join('');
+
+    host.querySelectorAll('.headline-card').forEach(function (card) {
+      card.addEventListener('click', function (e) {
+        if (e.target.tagName === 'A') return;
+        var url = card.getAttribute('data-url');
+        if (url) {
+          try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (err) {}
+        }
+      });
     });
   }
 
-  function selectNews(ev) {
-    state.newsSelected = newsKey(ev);
-    var root = $('news-body');
-    if (root) {
-      Array.prototype.forEach.call(root.querySelectorAll('tr[data-key]'), function (tr) {
-        if (tr.getAttribute('data-key') === state.newsSelected) tr.setAttribute('data-selected', 'true');
-        else tr.removeAttribute('data-selected');
+  /* ═══ News Sentinel Desk Rendering ══════════════════════════════════════ */
+  function renderNewsSentinelDesk() {
+    var host = $('sentinel-trades-body');
+    if (!host) return;
+
+    var atRisk = state.newsAtRisk || [];
+    var countEl = $('news-at-risk-badge');
+    var sumEl = $('sentinel-risk-summary');
+
+    if (countEl) {
+      countEl.textContent = atRisk.length + ' At-Risk';
+      countEl.hidden = (atRisk.length === 0);
+    }
+    if (sumEl) {
+      sumEl.textContent = atRisk.length + ' Exposed Trades';
+      sumEl.className = 'tt-chip ' + (atRisk.length > 0 ? 'tt-chip--high' : 'tt-chip--muted');
+    }
+
+    if (!atRisk.length) {
+      host.innerHTML = '<div class="tt-pad tt-hint" style="padding:16px;text-align:center;">🛡️ All portfolio positions are currently insulated. No high/medium-impact macro releases within 60 minutes affecting open trades.</div>';
+      return;
+    }
+
+    var rowsHtml = atRisk.map(function (p) {
+      var dirCls = (p.direction === 'BUY' ? 'tt-dir--buy' : 'tt-dir--sell');
+      var actionCls = (p.sentinel_action === 'AUTO_BANK_PROFIT' ? 'bank' : (p.sentinel_action === 'BE_PROTECTED' ? 'protected' : 'ratchet'));
+
+      return (
+        '<tr>' +
+          '<td class="tt-num">#' + esc(p.ticket || '—') + '</td>' +
+          '<td><span class="tt-symbol" style="cursor:pointer;" onclick="selectSymbol(\'' + p.symbol + '\')">' + esc(p.symbol) + '</span></td>' +
+          '<td><span class="tt-dir ' + dirCls + '">' + esc(p.direction) + '</span></td>' +
+          '<td class="tt-num">' + esc(p.volume) + '</td>' +
+          '<td class="tt-num" style="color:' + (p.profit >= 0 ? 'var(--emerald-edge,#10b981)' : 'var(--crimson-stop,#ef4444)') + ';">$' + num(p.profit, 2) + '</td>' +
+          '<td class="tt-num" style="font-weight:700;">' + num(p.current_r, 2) + 'R</td>' +
+          '<td class="tt-num">Peak ' + num(p.peak_r, 2) + 'R</td>' +
+          '<td><b>' + esc(p.catalyst_event) + '</b> <span class="tt-hint">(' + esc(p.catalyst_currency) + ')</span></td>' +
+          '<td class="tt-num" style="color:#f87171;font-weight:700;">' + (p.catalyst_countdown_min <= 0 ? 'LIVE NOW' : ('in ' + p.catalyst_countdown_min + 'm')) + '</td>' +
+          '<td><span class="sentinel-action-badge action-' + actionCls + '">' + esc(p.sentinel_action) + '</span></td>' +
+        '</tr>'
+      );
+    }).join('');
+
+    host.innerHTML =
+      '<table class="tt-table" style="width:100%;">' +
+        '<thead>' +
+          '<tr>' +
+            '<th scope="col" class="tt-num">Ticket</th>' +
+            '<th scope="col">Symbol</th>' +
+            '<th scope="col">Side</th>' +
+            '<th scope="col" class="tt-num">Lots</th>' +
+            '<th scope="col" class="tt-num">P&amp;L ($)</th>' +
+            '<th scope="col" class="tt-num">Float R</th>' +
+            '<th scope="col" class="tt-num">Peak MFE</th>' +
+            '<th scope="col">Impending Event</th>' +
+            '<th scope="col" class="tt-num">Countdown</th>' +
+            '<th scope="col">Sentinel Defense Action</th>' +
+          '</tr>' +
+        '</thead>' +
+        '<tbody>' + rowsHtml + '</tbody>' +
+      '</table>';
+  }
+
+  function wireNewsFilters() {
+    wireNewsCommandBar();
+    wireCockpitNewsTicker();
+
+    // Horizon filter pills
+    var hGroup = $('news-horizon-filters');
+    if (hGroup && !hGroup.hasAttribute('data-wired')) {
+      hGroup.setAttribute('data-wired', 'true');
+      hGroup.addEventListener('click', function (ev) {
+        var pill = ev.target.closest('.sym-filter-pill');
+        if (!pill) return;
+        hGroup.querySelectorAll('.sym-filter-pill').forEach(function (p) { p.classList.remove('active'); });
+        pill.classList.add('active');
+        state.newsHorizon = pill.getAttribute('data-horizon') || 'ALL';
+        renderNews();
       });
     }
-    renderNewsDetail(ev);
-  }
 
-  /* Rebuild the currency filter only when the set actually changed. Rebuilding
-     on every poll would reset the user's selection mid-session. */
-  function populateNewsCurrencies(events) {
-    var sel = $('news-currency');
-    if (!sel) return;
-    var seen = {};
-    events.forEach(function (e) {
-      var c = String(e.currency || '').toUpperCase();
-      if (c) seen[c] = true;
-    });
-    var wanted = ['ALL'].concat(Object.keys(seen).sort());
-    var existing = Array.prototype.map.call(sel.options || [], function (o) { return o.value; });
-    if (existing.join(',') === wanted.join(',')) return;
-
-    sel.innerHTML = '';
-    wanted.forEach(function (c) {
-      var o = document.createElement('option');
-      o.value = c;
-      o.textContent = c === 'ALL' ? 'All currencies' : c;
-      sel.appendChild(o);
-    });
-    sel.value = wanted.indexOf(state.newsCurrency) >= 0 ? state.newsCurrency : 'ALL';
-    state.newsCurrency = sel.value;
-  }
-
-  /* One tick per second. Updates only the countdown cells in place — rebuilding
-     the table here would throw away the user's scroll position and focus every
-     second. */
-  function tickNews() {
-    if (state.view !== 'news') return;
-    var root = $('view-news');
-    if (!root) return;
-
-    Array.prototype.forEach.call(root.querySelectorAll('[data-cd]'), function (cell) {
-      var iso = cell.getAttribute('data-iso') || null;
-      var rawDiff = cell.getAttribute('data-diff');
-      var rem = newsRemaining({
-        timestamp_iso: iso,
-        diff_seconds: rawDiff ? parseFloat(rawDiff) : null
+    // Asset filter pills
+    var aGroup = $('news-asset-filters');
+    if (aGroup && !aGroup.hasAttribute('data-wired')) {
+      aGroup.setAttribute('data-wired', 'true');
+      aGroup.addEventListener('click', function (ev) {
+        var pill = ev.target.closest('.sym-filter-pill');
+        if (!pill) return;
+        aGroup.querySelectorAll('.sym-filter-pill').forEach(function (p) { p.classList.remove('active'); });
+        pill.classList.add('active');
+        state.newsAsset = pill.getAttribute('data-asset') || 'ALL';
+        renderNews();
       });
-      var phase = newsPhase({ timestamp_iso: iso }, rem);
+    }
 
-      var val = cell.querySelector('[data-cd-val]');
-      if (val) val.textContent = countdownLabel(phase, rem);
+    // Search input
+    var searchInput = $('news-search-input');
+    if (searchInput && !searchInput.hasAttribute('data-wired')) {
+      searchInput.setAttribute('data-wired', 'true');
+      searchInput.addEventListener('input', function () {
+        state.newsSearch = searchInput.value;
+        renderNews();
+      });
+    }
+
+    // Impact dropdown
+    var impSel = $('news-impact');
+    if (impSel && !impSel.hasAttribute('data-wired')) {
+      impSel.setAttribute('data-wired', 'true');
+      impSel.addEventListener('change', function () {
+        state.newsImpact = impSel.value;
+        renderNews();
+      });
+    }
+
+    // Currency dropdown
+    var curSel = $('news-currency');
+    if (curSel && !curSel.hasAttribute('data-wired')) {
+      curSel.setAttribute('data-wired', 'true');
+      curSel.addEventListener('change', function () {
+        state.newsCurrency = curSel.value;
+        renderNews();
+      });
+    }
+
+    // Headline category filter pills
+    var hFeedGroup = $('headlines-class-filters');
+    if (hFeedGroup && !hFeedGroup.hasAttribute('data-wired')) {
+      hFeedGroup.setAttribute('data-wired', 'true');
+      hFeedGroup.addEventListener('click', function (ev) {
+        var pill = ev.target.closest('.sym-filter-pill');
+        if (!pill) return;
+        hFeedGroup.querySelectorAll('.sym-filter-pill').forEach(function (p) { p.classList.remove('active'); });
+        pill.classList.add('active');
+        state.headlineCategory = pill.getAttribute('data-hfilter') || 'ALL';
+        renderNewsHeadlines();
+      });
+    }
+
+    // Headline sentiment filter pills
+    var hSentGroup = $('headlines-sentiment-filters');
+    if (hSentGroup && !hSentGroup.hasAttribute('data-wired')) {
+      hSentGroup.setAttribute('data-wired', 'true');
+      hSentGroup.addEventListener('click', function (ev) {
+        var pill = ev.target.closest('.sym-filter-pill');
+        if (!pill) return;
+        hSentGroup.querySelectorAll('.sym-filter-pill').forEach(function (p) { p.classList.remove('active'); });
+        pill.classList.add('active');
+        state.headlineSentiment = pill.getAttribute('data-hsent') || 'ALL';
+        renderNewsHeadlines();
+      });
+    }
+
+    // Headline search input
+    var hSearchInput = $('headlines-search-input');
+    if (hSearchInput && !hSearchInput.hasAttribute('data-wired')) {
+      hSearchInput.setAttribute('data-wired', 'true');
+      hSearchInput.addEventListener('input', function () {
+        state.headlineSearch = hSearchInput.value;
+        renderNewsHeadlines();
+      });
+    }
+  }
+
+  function tickNews() {
+    tickNewsCountdowns();
+  }
+
+  function tickNewsCountdowns() {
+    var cells = document.querySelectorAll('[data-cd="1"]');
+    cells.forEach(function (cell) {
+      var ts = parseFloat(cell.getAttribute('data-time'));
+      if (isNaN(ts)) return;
+      var rem = (ts - (Date.now() - (state.newsSkew || 0))) / 1000.0;
+      var dur = parseFloat(cell.getAttribute('data-dur') || '1200');
+      var phase = 'future';
+      if (rem <= 0 && rem >= -dur) phase = 'live';
+      else if (rem < -dur) phase = 'past';
+      
+      var valEl = cell.querySelector('[data-cd-val="1"]') || cell;
+      valEl.textContent = countdownLabel(phase, rem);
       cell.setAttribute('data-phase', phase);
-
-      var badge = cell.querySelector('.tt-news__cd-badge');
-      if (badge) badge.textContent = phaseLabel(phase);
-
-      // The row and the hero both carry the phase on the element above the
-      // cell, which is what the stylesheet keys its colour off.
       if (cell.parentNode && cell.parentNode.getAttribute) {
         cell.parentNode.setAttribute('data-phase', phase);
       }
     });
 
+    state.tickerTickCount = (state.tickerTickCount || 0) + 1;
+    // Rotate headline every 6 seconds on cockpit ticker
+    if (state.tickerTickCount % 6 === 0) {
+      state.tickerIndex = (state.tickerIndex || 0) + 1;
+    }
     renderNewsLiveChip();
-    renderNewsSourceChip();
-
-    // Promote the next release once the featured one has finished.
-    if (newsKey(pickNextEvent()) !== state.newsHeroKey) renderNewsHero();
+    renderCockpitNews();
   }
 
-  function loadNews() {
-    var host = $('news-body');
-    if (!host) return;
-    if (!state.news.length) setState(host, 'loading', 'Loading calendar…');
-
-    apiGet('/api/news', TIMEOUT.normal).then(function (res) {
-      if (!res.ok) {
-        // Keep the last good calendar on screen; a refresh failure is not a
-        // reason to blank a panel the trader may be reading.
-        if (state.news.length) {
-          toast('Calendar refresh failed: ' + (res.error || ('HTTP ' + res.status)), 'error');
-          return;
-        }
-        setState(host, 'error', 'Calendar unavailable',
-          res.error || ('HTTP ' + res.status));
-        return;
+    function populateNewsCurrencies(events) {
+    var select = $('news-currency');
+    if (!select || select.getAttribute('data-populated')) return;
+    var seen = {};
+    (events || []).forEach(function (e) {
+      if (e && e.currency && !seen[e.currency]) {
+        seen[e.currency] = true;
+        var opt = document.createElement('option');
+        opt.value = e.currency;
+        opt.textContent = e.currency;
+        select.appendChild(opt);
       }
+    });
+    select.setAttribute('data-populated', 'true');
+  }
 
-      var payload = res.data || {};
-      var events = Array.isArray(payload.news) ? payload.news : [];
-      state.news = events;
-      // Provenance. Older servers do not send these, so a missing value must
-      // read as "unknown" and render no chip -- never as "real".
-      state.newsSource = payload.source || null;
-      state.newsSynthetic = typeof payload.synthetic_count === 'number'
-        ? payload.synthetic_count : 0;
-      state.newsAt = Date.now();
+  function handleNewsPayload(payload) {
+    var events = Array.isArray(payload.news) ? payload.news : (Array.isArray(payload.calendar) ? payload.calendar : []);
+    state.news = events;
+    state.newsHeadlines = Array.isArray(payload.headlines) ? payload.headlines : [];
+    state.newsAtRisk = Array.isArray(payload.at_risk_positions) ? payload.at_risk_positions : [];
+    state.newsImminent = payload.imminent_event || null;
+    state.newsSource = payload.source || null;
+    state.newsSynthetic = typeof payload.synthetic_count === 'number' ? payload.synthetic_count : 0;
+    state.newsCounts = (payload.counts && typeof payload.counts === 'object') ? payload.counts : null;
+    state.newsAt = Date.now();
 
-      // Skew between this machine's clock and the server's, taken from the
-      // payload's own generation time.
-      var st = payload.timestamp ? Date.parse(payload.timestamp) : NaN;
-      state.newsSkew = isNaN(st) ? null : Date.now() - st;
+    var st = payload.timestamp ? Date.parse(payload.timestamp) : NaN;
+    state.newsSkew = isNaN(st) ? null : Date.now() - st;
 
-      populateNewsCurrencies(events);
-      setText($('news-updated'), payload.timestamp ? 'as of ' + payload.timestamp : '—');
+    // Tab badges are payload-level facts, not render-side effects. They used to
+    // update only when their own subtab was rendered, so the headlines badge sat
+    // at 0 until the user clicked it.
+    setText($('news-cal-count'), String(events.length));
+    setText($('news-head-count'), String(state.newsHeadlines.length));
+    var riskBadge = $('news-at-risk-badge');
+    if (riskBadge) {
+      riskBadge.textContent = state.newsAtRisk.length + ' At-Risk';
+      riskBadge.hidden = (state.newsAtRisk.length === 0);
+    }
 
+    populateNewsCurrencies(events);
+    setText($('news-updated'), payload.timestamp ? 'as of ' + payload.timestamp.substring(11, 19) + ' UTC' : '—');
+
+    wireNewsFilters();
+    renderCockpitNews();
+    if (state.newsSubtab === 'headlines') {
+      renderNewsHeadlines();
+    } else if (state.newsSubtab === 'sentinel') {
+      renderNewsSentinelDesk();
+    } else {
       renderNews();
       renderNewsHero();
       renderNewsDetail();
-    });
+    }
   }
 
+    function loadNews() {
+    if (state.newsLoading) return state.newsLoading;
+    var host = $('news-body');
+    var cold = !state.news || !state.news.length;
+    if (host && cold) setState(host, 'loading', 'Loading calendar…');
+
+    state.newsLoading = apiGetRetry('/api/news', TIMEOUT.normal, 2, 1200).then(function (res) {
+      state.newsLoading = null;
+      if (!res.ok) {
+        var msg = res.error || ('HTTP ' + res.status);
+        if (state.news && state.news.length) {
+          toast('Calendar refresh failed: ' + msg, 'error');
+          setText($('news-updated'), 'refresh failed — showing previous snapshot');
+          return;
+        }
+        if (host) {
+          setState(host, 'error', 'Calendar unavailable', msg +
+            ' — retrying automatically. Check that the backend is running.');
+        }
+        // Polling is slow; a cold failure deserves one prompt retry.
+        if (!state.newsRetryTimer) {
+          state.newsRetryTimer = setTimeout(function () {
+            state.newsRetryTimer = null;
+            loadNews();
+          }, 4000);
+        }
+        return;
+      }
+      handleNewsPayload(res.data || {});
+    });
+    return state.newsLoading;
+  }
   /* ── Global and Indian markets ───────────────────────────────────────────
      Five panels, five independent requests, three rules:
 
@@ -3857,9 +4610,16 @@
   function loadEquities() {
     var host = $('eq-body');
     if (!host) return;
-    if (!state.equityRows.length) setState(host, 'loading', 'Loading global equities…');
+    if (!state.equityRows.length) {
+      setState(host, 'loading', 'Loading global equities…',
+        'The first scan of the universe can take up to a minute.');
+    }
 
-    apiGet('/api/stocks/screener?sort_by=probability&sort_dir=desc&limit=40', TIMEOUT.provider)
+    // 60s budget: the cold scan is 47 symbols and routinely exceeds 30s. A
+    // retry covers the common case where two panels woke the scanner at once
+    // (now single-flighted server-side) and the first request was aborted.
+    apiGetRetry('/api/stocks/screener?sort_by=probability&sort_dir=desc&limit=40',
+                TIMEOUT.slow, 2, 1500)
       .then(function (res) {
         if (!res.ok || !res.data) {
           if (state.equityRows.length) {
@@ -3867,7 +4627,8 @@
             return;
           }
           setState(host, 'error', 'Screener unavailable',
-            res.error || ('HTTP ' + res.status));
+            (res.error || ('HTTP ' + res.status)) +
+            ' — retrying automatically. The first scan needs the provider to answer.');
           renderProvChip($('eq-prov'), 'unknown');
           return;
         }
@@ -3888,7 +4649,14 @@
       (payload.total_universe ? ' / ' + payload.total_universe : ''));
 
     var fallbacks = Number(payload.fallback_count || 0);
-    renderProvChip($('eq-prov'), fallbacks > 0 ? 'mixed' : 'calibrated_feed');
+    // Report the WEAKEST row source, not a constant. The panel used to claim
+    // "calibrated_feed" even when the engine itself said every row was
+    // generated, which is exactly the provenance mistake the chips exist for.
+    var rowSources = rows.map(function (s) {
+      if (s.data_source) return s.data_source;
+      return String(s.analysis_source || '') === 'fallback' ? 'profile_reference' : 'unknown';
+    });
+    renderProvChip($('eq-prov'), weakestSource(rowSources));
     var prov = $('eq-prov');
     if (prov && fallbacks > 0) {
       prov.textContent = fallbacks + ' placeholder';
@@ -3971,12 +4739,16 @@
   function loadHeatmap() {
     var host = $('eq-heatmap');
     if (!host) return;
-    if (!state.heatmap) setState(host, 'loading', 'Loading sector rotation…');
+    if (!state.heatmap) {
+      setState(host, 'loading', 'Loading sector rotation…',
+        'Waiting for the same universe scan the equities table uses.');
+    }
 
-    apiGet('/api/stocks/heatmap', TIMEOUT.provider).then(function (res) {
+    apiGetRetry('/api/stocks/heatmap', TIMEOUT.slow, 2, 1500).then(function (res) {
       if (!res.ok || !res.data) {
         if (state.heatmap) { toast('Sector rotation refresh failed', 'error'); return; }
-        setState(host, 'error', 'Sector data unavailable', res.error || ('HTTP ' + res.status));
+        setState(host, 'error', 'Sector data unavailable',
+          (res.error || ('HTTP ' + res.status)) + ' — retrying automatically.');
         return;
       }
       state.heatmap = res.data;
@@ -4473,9 +5245,10 @@
 
   function loadReliability() {
     var host = $('reliability-body');
-    apiGet('/api/intelligence/reliability', TIMEOUT.normal).then(function (res) {
+    apiGetRetry('/api/intelligence/reliability', TIMEOUT.normal, 2, 1000).then(function (res) {
       if (!res.ok || !res.data || !res.data.styles) {
-        setState(host, 'error', 'Reliability unavailable', res.error || ('HTTP ' + res.status));
+        setState(host, 'error', 'Reliability unavailable',
+          (res.error || ('HTTP ' + res.status)) + ' — retrying automatically.');
         return;
       }
       state.reliability = res.data.styles || [];
@@ -4512,11 +5285,23 @@
   /* Closed trades come from /api/history, which merges the SQLite journal with
      the broker's own deal history. `state.history` used to be written by
      nothing at all, so this table could only ever render its empty state. */
-  function loadHistory() {
-    var days = ($('hist-filter-days') || {}).value || '60';
+  function loadHistory(isFull) {
+    var full = (isFull === true || state.view === 'analytics' || state.posTab === 'history');
+    var days = full ? (($('hist-filter-days') || {}).value || '60') : '7';
+    var limit = full ? 1000 : 50;
     var body = $('hist-body');
     if (body) body.setAttribute('data-state', 'loading');
-    apiGet('/api/history?limit=1000&days=' + encodeURIComponent(days), TIMEOUT.slow).then(function (res) {
+    apiGetRetry('/api/history?limit=' + limit + '&days=' + encodeURIComponent(days),
+                TIMEOUT.normal, 2, 900).then(function (res) {
+      if (!res.ok || !res.data) {
+        if (!state.history || !state.history.length) {
+          if (body) setState(body, 'error', 'Trade history unavailable',
+            (res.error || ('HTTP ' + res.status)) + ' — retrying automatically.');
+        } else {
+          toast('History refresh failed: ' + (res.error || ('HTTP ' + res.status)), 'error');
+        }
+        return;
+      }
       var rows = Array.isArray(res.data) ? res.data : ((res.data && (res.data.trades || res.data.history)) || []);
       state.history = rows;
       renderHistory();
@@ -5043,8 +5828,12 @@
 
     // Phase B / Phase D: Fetch & Render Real-Time Risk Guard Diagnostics
     if (guardHost) {
-      apiGet('/api/risk_status', TIMEOUT.quick).then(function (res) {
-        if (!res.ok || !res.data) return;
+      apiGetRetry('/api/risk_status', TIMEOUT.quick, 3, 700).then(function (res) {
+        if (!res.ok || !res.data) {
+          setState(guardHost, 'error', 'Risk telemetry unavailable',
+            (res.error || ('HTTP ' + res.status)) + ' — retrying automatically.');
+          return;
+        }
         var r = res.data;
         var cbActive = r.circuit_breaker_active;
         var btnStop = $('btn-emergency-stop');
@@ -5081,6 +5870,7 @@
           meterEl.className.baseVal = 'cockpit-gauge-meter cockpit-gauge-meter--' + meterCls;
         }
 
+        guardHost.removeAttribute('data-state');
         guardHost.innerHTML = [
           ['Daily loss', num(r.daily_loss_pct, 2) + '% / ' + num(r.max_daily_loss_pct, 1) + '% max'],
           ['Total DD', num(r.total_dd_pct, 2) + '% / ' + num(r.max_drawdown_pct, 1) + '% max'],
@@ -5228,9 +6018,12 @@
     var count = $('missed-count');
     if (!body) return;
 
-    apiGet('/api/intelligence/missed-trades', TIMEOUT.normal).then(function (res) {
+    apiGetRetry('/api/intelligence/missed-trades', TIMEOUT.normal, 2, 1000).then(function (res) {
       if (!res.ok || !res.data) {
-        setState(body, 'empty', 'No missed trades', 'All evaluated setups passed filters.');
+        if (count) count.textContent = '—';
+        setState(body, 'error', 'Missed-trade audit unavailable',
+          (res.error || ('HTTP ' + res.status)) +
+          ' — retrying automatically. This is NOT an all-clear.');
         return;
       }
       var items = res.data.missed_trades || [];
@@ -5265,8 +6058,15 @@
     var statusChip = $('calibration-status');
     if (!metrics || !baseRatesBody) return;
 
-    apiGet('/api/intelligence/calibration', TIMEOUT.normal).then(function (res) {
-      if (!res.ok || !res.data) return;
+    apiGetRetry('/api/intelligence/calibration', TIMEOUT.normal, 2, 1000).then(function (res) {
+      if (!res.ok || !res.data) {
+        var msg = (res && (res.error || ('HTTP ' + res.status))) || 'no data';
+        setState(metrics, 'error', 'Calibration unavailable', msg + ' — retrying automatically.');
+        baseRatesBody.innerHTML = '<tr><td colspan="8" class="tt-hint">Calibration data unavailable — ' +
+          esc(msg) + '</td></tr>';
+        if (statusChip) statusChip.textContent = 'UNAVAILABLE';
+        return;
+      }
       var data = res.data;
       if (statusChip && data.calibration_status) {
         statusChip.textContent = data.calibration_status;
@@ -5314,8 +6114,14 @@
     var count = $('profiles-count');
     if (!body) return;
 
-    apiGet('/api/intelligence/symbol-profiles', TIMEOUT.normal).then(function (res) {
-      if (!res.ok || !res.data) return;
+    apiGetRetry('/api/intelligence/symbol-profiles', TIMEOUT.normal, 2, 1000).then(function (res) {
+      if (!res.ok || !res.data) {
+        var msg = (res && (res.error || ('HTTP ' + res.status))) || 'no data';
+        if (count) count.textContent = '—';
+        setState(body, 'error', 'Profiles unavailable',
+          msg + ' — retrying automatically. Check that the backend is running.');
+        return;
+      }
       var profiles = res.data.profiles || {};
       var syms = Object.keys(profiles);
       if (count) count.textContent = String(syms.length);
@@ -5351,9 +6157,7 @@
     return apiGet('/api/symbols/intelligence', TIMEOUT.normal).then(function (res) {
       if (!res.ok || !res.data) {
         if (!state.symbolsData || !state.symbolsData.length) {
-          var errMsg = (res.status === 401)
-            ? '🔒 Authentication Required — Sign in to inspect universe intelligence'
-            : ('⚠️ Unable to load Symbol Intelligence' + (res.error ? ' (' + res.error + ')' : ''));
+          var errMsg = '⚠️ Unable to load Symbol Intelligence' + (res.error ? ' (' + res.error + ')' : '');
           grid.innerHTML = '<div class="symbols-error-state"><span>' + esc(errMsg) + '</span><button type="button" class="tt-btn tt-btn--sm" onclick="window.HM_SYMBOLS_RELOAD ? window.HM_SYMBOLS_RELOAD() : location.reload()">Retry ↻</button></div>';
         }
         return;
@@ -5386,13 +6190,43 @@
     if (primeEl) primeEl.textContent = primeCount + ' Setups';
 
     var sessionEl = $('sym-hud-session');
-    if (sessionEl) sessionEl.textContent = openCount + ' / ' + totalUniverse + ' OPEN';
+    if (sessionEl) {
+      var nowUtc = new Date();
+      var utcHour = nowUtc.getUTCHours() + (nowUtc.getUTCMinutes() / 60);
+      var dayOfWeek = nowUtc.getUTCDay();
+      var sessionTag = 'GLOBAL';
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        sessionTag = 'WEEKEND CRYPTO';
+      } else if (utcHour >= 13.0 && utcHour < 16.5) {
+        sessionTag = 'LONDON & NY';
+      } else if (utcHour >= 8.0 && utcHour < 16.5) {
+        sessionTag = 'LONDON CASH';
+      } else if (utcHour >= 13.0 && utcHour < 21.0) {
+        sessionTag = 'NEW YORK CASH';
+      } else if (utcHour >= 0.0 && utcHour < 9.0) {
+        sessionTag = 'ASIAN PACIFIC';
+      } else {
+        sessionTag = 'OFF-PEAK';
+      }
+      sessionEl.textContent = sessionTag + ' · ' + openCount + ' OPEN';
+    }
 
     var heatEl = $('sym-hud-heat');
     if (heatEl) {
       var posCount = (state.positions || []).length;
-      heatEl.textContent = posCount > 0 ? (posCount + ' TRADES') : 'OPTIMAL';
-      heatEl.style.color = posCount >= 3 ? 'var(--amber-signal, #f59e0b)' : 'var(--emerald-edge, #10b981)';
+      if (posCount === 0) {
+        heatEl.textContent = 'OPTIMAL (0 TRADES)';
+        heatEl.style.color = 'var(--emerald-edge, #10b981)';
+      } else if (posCount <= 2) {
+        heatEl.textContent = 'LOW (' + posCount + ' TRADES)';
+        heatEl.style.color = 'var(--emerald-edge, #10b981)';
+      } else if (posCount <= 4) {
+        heatEl.textContent = 'MODERATE (' + posCount + ' TRADES)';
+        heatEl.style.color = 'var(--amber-signal, #f59e0b)';
+      } else {
+        heatEl.textContent = 'HIGH HEAT (' + posCount + ' TRADES)';
+        heatEl.style.color = 'var(--crimson-stop, #ef4444)';
+      }
     }
 
     // Update counts on filter pills
@@ -5507,8 +6341,15 @@
     });
   }
 
-  function executeBatchSymbols(action, assetClass) {
+  function executeBatchSymbols(action, assetClass, extra) {
     var payload = { action: action, asset_class: assetClass || 'ALL' };
+    if (extra && typeof extra === 'object') {
+      for (var k in extra) {
+        if (Object.prototype.hasOwnProperty.call(extra, k)) {
+          payload[k] = extra[k];
+        }
+      }
+    }
     return apiPost('/api/action/batch_symbols', payload, TIMEOUT.normal).then(function (res) {
       if (!res.ok || !res.data || res.data.status !== 'SUCCESS') {
         var err = (res.status === 401 || (res.data && res.data.status === 'UNAUTHORIZED'))
@@ -5517,7 +6358,8 @@
         toast(err, 'error');
         return;
       }
-      toast('Universe updated (' + (res.data.active_count || 0) + ' active)', 'success');
+      var msg = res.data.summary || ('Universe updated (' + (res.data.active_count || 0) + ' active)');
+      toast(msg, 'success');
       loadSymbolsIntelligence();
     });
   }
@@ -5562,7 +6404,9 @@
     var btnAutoTune = $('btn-batch-autotune');
     if (btnAutoTune) {
       btnAutoTune.addEventListener('click', function () {
-        executeBatchSymbols('AUTO_TUNE', 'ALL');
+        var modeSel = $('select-autotune-mode');
+        var mode = modeSel ? modeSel.value : 'BALANCED';
+        executeBatchSymbols('AUTO_TUNE', state.symbolsFilter || 'ALL', { mode: mode });
       });
     }
 
@@ -5650,8 +6494,18 @@
   }
 
   function loadBacktestMeta() {
-    apiGet('/api/backtest/meta', TIMEOUT.normal).then(function (res) {
-      if (!res.ok || !res.data) return;
+    apiGetRetry('/api/backtest/meta', TIMEOUT.normal, 2, 1000).then(function (res) {
+      if (!res.ok || !res.data) {
+        var msg = (res && (res.error || ('HTTP ' + res.status))) || 'no data';
+        var engChip = $('bt-engine');
+        if (engChip) {
+          engChip.textContent = 'metadata unavailable';
+          engChip.className = 'tt-chip tt-chip--high';
+          engChip.title = msg;
+        }
+        setText($('bt-grid-hint'), 'Backtest metadata unavailable — ' + msg);
+        return;
+      }
       var meta = res.data;
       state.backtestMeta = meta;
 
@@ -5761,10 +6615,16 @@
 
   function pollJob(jobId) {
     if (timers.job) clearTimeout(timers.job);
-    apiGet('/api/backtest/jobs/' + encodeURIComponent(jobId), TIMEOUT.fast).then(function (res) {
+    apiGetRetry('/api/backtest/jobs/' + encodeURIComponent(jobId), TIMEOUT.fast, 3, 700)
+      .then(function (res) {
       var job = (res.data && (res.data.job || res.data)) || null;
       if (!res.ok || !job) {
-        setText($('bt-status'), 'unknown');
+        setText($('bt-status'), 'unreachable');
+        var jlog = $('bt-log');
+        if (jlog) jlog.textContent = 'Progress poll failed: ' +
+          ((res && (res.error || ('HTTP ' + res.status))) || 'no job payload') +
+          ' — retrying in 5s.';
+        timers.job = setTimeout(function () { pollJob(jobId); }, 5000);
         return;
       }
       var status = String(job.status || '').toUpperCase();
@@ -5809,8 +6669,16 @@
   }
 
   function loadJobResult(jobId) {
-    apiGet('/api/backtest/jobs/' + encodeURIComponent(jobId) + '/result', TIMEOUT.slow).then(function (res) {
-      if (!res.ok || !res.data) return;
+    var host = $('bt-results');
+    if (host) setState(host, 'loading', 'Loading job result…');
+    apiGetRetry('/api/backtest/jobs/' + encodeURIComponent(jobId) + '/result',
+                TIMEOUT.slow, 2, 1200)
+      .then(function (res) {
+      if (!res.ok || !res.data) {
+        if (host) setState(host, 'error', 'Job result unavailable',
+          (res.error || ('HTTP ' + res.status)) + ' — retrying automatically.');
+        return;
+      }
       renderBacktestResult(res.data);
     });
   }
@@ -5957,7 +6825,13 @@
 
   function loadJobs() {
     var body = $('bt-history');
-    apiGet('/api/backtest/jobs', TIMEOUT.normal).then(function (res) {
+    if (!body) return;
+    apiGetRetry('/api/backtest/jobs', TIMEOUT.normal, 2, 1000).then(function (res) {
+      if (!res.ok || !res.data) {
+        setState(body, 'error', 'Job history unavailable',
+          (res.error || ('HTTP ' + res.status)) + ' — retrying automatically.');
+        return;
+      }
       var jobs = (res.data && (res.data.jobs || res.data)) || [];
       if (!Array.isArray(jobs)) jobs = [];
       state.jobs = jobs;
@@ -6119,23 +6993,32 @@
 
   /* ── Scheduler ────────────────────────────────────────────────────────── */
   function schedule() {
-    function tick(fn, base) {
+    function tick(fn, base, immediate) {
       return function loop() {
         // Back off 4x while the tab is hidden — a background tab does not need
         // to keep a trading screen at full refresh rate.
         var delay = document.hidden ? base * 4 : base;
-        Promise.resolve().then(fn).then(function () {
-          setTimeout(loop, delay);
-        });
+        if (immediate) {
+          immediate = false;
+          Promise.resolve().then(fn).then(function () {
+            setTimeout(loop, delay);
+          });
+        } else {
+          setTimeout(function () {
+            Promise.resolve().then(fn).then(function () {
+              setTimeout(loop, delay);
+            });
+          }, delay);
+        }
       };
     }
-    tick(loadTelemetry, POLL.telemetry)();
-    tick(function () { if (state.view === 'symbols') loadSymbolsIntelligence(); }, POLL.symbols)();
-    tick(function () { if (state.view === 'trade') loadChart(); }, POLL.chart)();
-    tick(function () { if (state.view === 'analytics') loadReliability(); }, POLL.analytics)();
-    // The calendar is slow-moving; it only needs refetching every couple of
-    // minutes, and the context strip re-renders from whatever is cached.
-    tick(function () { loadNews(); }, POLL.news)();
+    // Items already fetched in boot() wait for their regular interval before second poll
+    tick(loadTelemetry, POLL.telemetry, false)();
+    tick(function () { if (state.view === 'symbols') loadSymbolsIntelligence(); }, POLL.symbols, false)();
+    tick(function () { if (state.view === 'trade') loadChart(); }, POLL.chart, false)();
+    tick(function () { if (state.view === 'analytics') loadReliability(); }, POLL.analytics, false)();
+    // News is not fetched during boot(), so fire it immediately
+    tick(function () { loadNews(); }, POLL.news, true)();
   }
 
   /* ── Boot ─────────────────────────────────────────────────────────────── */
@@ -6358,9 +7241,9 @@
     if (srcTv) srcTv.addEventListener('click', function () { setChartSource('tradingview'); });
 
     // ── News calendar ─────────────────────────────────────────────────────
-    var newsRefresh = $('news-refresh');
-    if (newsRefresh) newsRefresh.addEventListener('click', loadNews);
-
+    // The refresh button (id `news-refresh-btn`) is owned by
+    // wireNewsCommandBar(), which also renders its busy state. A second binding
+    // here used to point at the retired `news-refresh` id and did nothing.
     var newsImpact = $('news-impact');
     if (newsImpact) {
       newsImpact.value = state.newsImpact;
@@ -6740,17 +7623,23 @@
     tickClock();
     setInterval(tickClock, 1000);
 
-    // Countdowns are recomputed locally every second, so this timer never
-    // touches the network.
-    setInterval(tickNews, 1000);
+    // Countdowns and ticker rotation are recomputed locally every second,
+    // so this timer never touches the network.
+    setInterval(tickNewsCountdowns, 1000);
 
+    // Parallel Boot: kick off all core data streams concurrently at T=0
     loadTelemetry().then(function () {
-      loadSelection();
+      var sym = state.symbol || 'XAUUSD';
+      selectSymbol(sym);
       loadChart();
     });
+    loadSelection();
+    loadChart();
     // Closed-trade history feeds the chart's exit markers, so it is loaded for
     // the trade view too, not only when the analytics tab is opened.
     loadHistory();
+    // Warm headlines and macro events immediately on boot so breaking wire ticker populates instantly
+    loadNews();
 
     // The positions panel is tabbed (OPEN / HISTORY / PENDING). Select OPEN on
     // boot so the thead, the active pill and the OPEN-only controls are in a

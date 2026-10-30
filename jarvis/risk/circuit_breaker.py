@@ -13,23 +13,26 @@ from jarvis.data.schema_version import migrate
 
 logger = logging.getLogger("JARVIS_CircuitBreaker")
 
-# D3: 1 = `circuit_state` as it exists today.
-SCHEMA_VERSION = 1
+import json
+
+# Schema version with serialized pause maps
+SCHEMA_VERSION = 2
 
 
 def _migration_1(conn: sqlite3.Connection) -> None:
-    """Version 1 *is* the shape created by the CREATE TABLE above.
-
-    A file written before versioning existed already has that shape, so there is
-    nothing to add — but it is recorded as a named step rather than left to
-    `ensure_version`, which stamped whatever number the code declared. A
-    hand-bumped SCHEMA_VERSION with no matching step now stops the migration and
-    says so, instead of labelling a file with a version whose shape nobody made.
-    """
     return None
 
+def _migration_2(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute("ALTER TABLE circuit_state ADD COLUMN symbol_paused TEXT DEFAULT '{}'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE circuit_state ADD COLUMN regime_paused TEXT DEFAULT '{}'")
+    except Exception:
+        pass
 
-MIGRATIONS = {1: _migration_1}
+MIGRATIONS = {1: _migration_1, 2: _migration_2}
 
 
 class CircuitBreaker:
@@ -115,7 +118,9 @@ class CircuitBreaker:
                         consecutive_losses INTEGER,
                         is_tripped INTEGER,
                         tripped_timestamp REAL,
-                        trip_reason TEXT
+                        trip_reason TEXT,
+                        symbol_paused TEXT DEFAULT '{}',
+                        regime_paused TEXT DEFAULT '{}'
                     )
                 ''')
                 # D3: record the shape of this file.
@@ -136,6 +141,15 @@ class CircuitBreaker:
                     self.is_tripped = bool(is_tripped_int)
                 else:
                     conn.execute('INSERT INTO circuit_state (id, consecutive_losses, is_tripped, tripped_timestamp, trip_reason) VALUES (1, 0, 0, 0.0, "")')
+                try:
+                    c2 = conn.execute('SELECT symbol_paused, regime_paused FROM circuit_state WHERE id = 1')
+                    r2 = c2.fetchone()
+                    if r2 and r2[0]:
+                        self.symbol_paused_until = json.loads(r2[0])
+                    if r2 and r2[1]:
+                        self.regime_paused_until = json.loads(r2[1])
+                except Exception:
+                    pass
         finally:
             conn.close()
 
@@ -147,9 +161,17 @@ class CircuitBreaker:
             with conn:
                 conn.execute('''
                     UPDATE circuit_state
-                    SET consecutive_losses = ?, is_tripped = ?, tripped_timestamp = ?, trip_reason = ?
+                    SET consecutive_losses = ?, is_tripped = ?, tripped_timestamp = ?, trip_reason = ?,
+                        symbol_paused = ?, regime_paused = ?
                     WHERE id = 1
-                ''', (self.consecutive_losses, int(self.is_tripped), self.tripped_timestamp, self.trip_reason))
+                ''', (
+                    self.consecutive_losses,
+                    int(self.is_tripped),
+                    self.tripped_timestamp,
+                    self.trip_reason,
+                    json.dumps(self.symbol_paused_until),
+                    json.dumps(self.regime_paused_until)
+                ))
         finally:
             conn.close()
 

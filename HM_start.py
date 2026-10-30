@@ -22,7 +22,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from jarvis.application.orchestrator import JarvisOrchestrator
-from jarvis.api.server import run_web_server
+from jarvis.api.server import run_web_server, start_server
 # Admin credentials are resolved from environment at runtime (see jarvis.api.remote_auth)
 
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -113,11 +113,14 @@ def _serveo_worker(port: int = 8501, custom_subdomain: str = "hm2026"):
             break
 
     try:
-        if sys.platform == "win32":
-            subprocess.run(["taskkill", "/F", "/IM", "ssh.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            subprocess.run(["pkill", "-f", "serveo.net"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1.0)
+        old_proc = _TUNNEL_STATE.get("serveo_proc")
+        if old_proc and hasattr(old_proc, "poll") and old_proc.poll() is None:
+            try:
+                old_proc.terminate()
+                old_proc.wait(timeout=2.0)
+            except Exception:
+                old_proc.kill()
+        time.sleep(0.5)
     except Exception:
         pass
 
@@ -232,7 +235,21 @@ def _cloudflare_worker(port: int = 8501):
                     _TUNNEL_STATE["url"] = url
                     _save_active_tunnel_url(url, "cloudflare")
                     logger.info(f"Cloudflare Edge Tunnel Active (PRIMARY): {url}")
-                    print(f"\n[HM_START] MOBILE LINK (CLOUDFLARE, PRIMARY): {url}\n", flush=True)
+                    admin_u = os.environ.get("JARVIS_ADMIN_USER", "admin")
+                    admin_p = os.environ.get("JARVIS_ADMIN_PASS", "")
+                    if not admin_p:
+                        try:
+                            _p_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis", ".jarvis_admin_pass")
+                            if os.path.exists(_p_file):
+                                with open(_p_file, "r", encoding="utf-8") as _pf:
+                                    admin_p = _pf.read().strip()
+                        except Exception:
+                            admin_p = ""
+                    print(f"\n[HM_START] MOBILE LINK (CLOUDFLARE, PRIMARY): {url}", flush=True)
+                    if admin_p:
+                        print(f"[HM_START] REMOTE ACCESS LOGIN: Username: {admin_u} | Password: {admin_p}\n", flush=True)
+                    else:
+                        print(f"[HM_START] REMOTE ACCESS LOGIN: Username: {admin_u}\n", flush=True)
                     break
             while proc.poll() is None:
                 line = proc.stdout.readline()
@@ -337,6 +354,20 @@ def hm_start(mode: str = "live", port: int = 8501, host: str = "127.0.0.1", trad
 
     # 3. Start Remote Access Web Terminal & REST API Server with auto-recovery
     logger.info(f"Starting Remote Access Web Terminal at http://{host}:{port}...")
+
+    # Dual-port listening: activate secondary port (e.g. 8502 when 8501 is primary)
+    # so browser tabs on either port share the exact same live orchestrator & sub-50ms engine.
+    secondary_port = 8502 if port == 8501 else 8501
+    sec_server = None
+    try:
+        sec_server = start_server(host=host, port=secondary_port, mt5_client=orchestrator.mt5_client,
+                                  orchestrator=orchestrator)
+        sec_thread = threading.Thread(target=sec_server.serve_forever, daemon=True, name=f"hm_web_{secondary_port}")
+        sec_thread.start()
+        logger.info(f"Dual-port terminal active at http://{host}:{secondary_port} (sharing live orchestrator).")
+    except Exception as exc:
+        logger.debug(f"Secondary port {secondary_port} not bound: {exc}")
+
     while True:
         try:
             run_web_server(port=port, host=host, mt5_client=orchestrator.mt5_client,
@@ -344,6 +375,11 @@ def hm_start(mode: str = "live", port: int = 8501, host: str = "127.0.0.1", trad
         except KeyboardInterrupt:
             logger.info("Shutting down HM Algo 2.0 trading platform...")
             orchestrator.stop()
+            if sec_server:
+                try:
+                    sec_server.shutdown()
+                except Exception:
+                    pass
             for proc_key in ("serveo_proc", "cloudflare_proc"):
                 proc = _TUNNEL_STATE.get(proc_key)
                 if proc:
@@ -358,17 +394,28 @@ def hm_start(mode: str = "live", port: int = 8501, host: str = "127.0.0.1", trad
             time.sleep(3)
 
 def main():
-    # Execution mode resolution with broker account auto-detection
+    # Execution mode resolution with broker account auto-detection and port selection
     mode = "live"
-    if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
-        raw = sys.argv[1].lower()
-        if raw in {"paper", "test", "sim", "backtest"}:
-            mode = "paper"
-        elif raw in {"demo", "broker_demo"}:
-            mode = "demo"
-        else:
-            mode = "live"
-    else:
+    port = int(os.environ.get("JARVIS_PORT", os.environ.get("PORT", 8501)))
+
+    for arg in sys.argv[1:]:
+        if arg.isdigit():
+            port = int(arg)
+        elif arg.startswith("--port="):
+            try:
+                port = int(arg.split("=")[1])
+            except ValueError:
+                pass
+        elif not arg.startswith("-"):
+            raw = arg.lower()
+            if raw in {"paper", "test", "sim", "backtest"}:
+                mode = "paper"
+            elif raw in {"demo", "broker_demo"}:
+                mode = "demo"
+            else:
+                mode = "live"
+
+    if mode == "live" and len(sys.argv) <= 1:
         # Auto-detect connected MT5 terminal trade_mode to prevent safety lockout
         try:
             import MetaTrader5 as mt5
@@ -385,7 +432,8 @@ def main():
         except Exception as ex:
             logger.debug(f"Account auto-detect exception: {ex}")
             mode = "live"
-    hm_start(mode=mode)
+
+    hm_start(port=port, mode=mode)
 
 if __name__ == "__main__":
     main()

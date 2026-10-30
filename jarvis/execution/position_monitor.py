@@ -60,7 +60,7 @@ SPREAD_BLOWOUT_MULT        = 2.0
 DISCRETIONARY_GRACE_PERIOD_SEC = 180.0
 
 # Manual trade isolation mode (Spec v2.1 Refinement 4)
-MANUAL_MANAGEMENT_MODE         = "PROTECT_ONLY"
+MANUAL_MANAGEMENT_MODE         = "AUTO_PILOT"
 
 # ── Institutional position protocols (2026-10-21 research round) ─────────────
 # 1. EVENT-WINDOW DE-RISK: a desk never carries open P&L through a scheduled
@@ -133,6 +133,8 @@ class PositionMonitorEngine:
         self._partially_closed_tickets: Set[int] = set()
         # Per-ticket live MFE high-water mark tracking (E2)
         self._peak_favorable_price: Dict[int, float] = {}
+        # Per-ticket manual trade mode registry: {ticket: "AUTO_PILOT"|"TRAIL"|"PROTECT_ONLY"|"OFF"}
+        self._manual_trade_modes: Dict[int, str] = {}
         # Autonomous dynamic trailing tracking
         self._initial_risk_dist: Dict[int, float] = {}
         self._highest_favorable_price: Dict[int, float] = {}
@@ -285,6 +287,7 @@ class PositionMonitorEngine:
         self._be_locked = {t for t in self._be_locked if t in active_tickets}
         self._lowest_adverse_price = {t: v for t, v in self._lowest_adverse_price.items() if t in active_tickets}
         self._position_milestones = {t: v for t, v in self._position_milestones.items() if t in active_tickets}
+        self._manual_trade_modes = {t: m for t, m in self._manual_trade_modes.items() if t in active_tickets}
 
         # D19 — a closed ticket's excursions are the ONLY record of its path, so
         # they are retired into a bounded map instead of dropped here. Dropping
@@ -306,13 +309,41 @@ class PositionMonitorEngine:
             except Exception as e:
                 logger.error(f"Error managing position #{pos.ticket}: {e}", exc_info=True)
 
+    def set_manual_mode(self, ticket: Optional[int] = None, mode: str = "AUTO_PILOT") -> str:
+        clean_mode = str(mode or "AUTO_PILOT").upper().strip()
+        if clean_mode not in ("AUTO_PILOT", "TRAIL", "PROTECT_ONLY", "OFF"):
+            clean_mode = "AUTO_PILOT"
+        if ticket is not None:
+            self._manual_trade_modes[ticket] = clean_mode
+            if self.state_manager:
+                self.state_manager.enrich_position_telemetry(ticket, {"monitoring_mode": clean_mode})
+            logger.info(f"🎯 Manual Trade #{ticket} mode set to {clean_mode}")
+        else:
+            self.manual_mode = clean_mode
+            logger.info(f"🎯 Global manual trade monitoring mode set to {clean_mode}")
+        return clean_mode
+
+    def get_manual_mode(self, ticket: Optional[int] = None) -> str:
+        if ticket:
+            if ticket in self._manual_trade_modes:
+                return self._manual_trade_modes[ticket]
+            if hasattr(self, "state_manager") and self.state_manager:
+                cache = getattr(self.state_manager, "_position_telemetry_cache", {}) or {}
+                cached_mode = cache.get(ticket, {}).get("monitoring_mode")
+                if cached_mode:
+                    self._manual_trade_modes[ticket] = str(cached_mode).upper().strip()
+                    return self._manual_trade_modes[ticket]
+        return getattr(self, "manual_mode", "AUTO_PILOT")
+
     def _execute_exit(self, pos: PositionSnapshot, reason: str) -> bool:
         if self._is_manual_trade(pos):
-            eff_mode = getattr(self, "manual_mode", MANUAL_MANAGEMENT_MODE)
-            if reason == "PROXIMITY_TP_HARVEST" and eff_mode in ("TRAIL", "FULL"):
-                pass  # Institutional profit banking near TP is allowed
-            elif eff_mode != "FULL":
-                logger.debug(f"🛡️ Discretionary exit '{reason}' suppressed for manual trade #{pos.ticket}")
+            eff_mode = self.get_manual_mode(pos.ticket)
+            if eff_mode in ("AUTO_PILOT", "FULL"):
+                pass  # Full AI lifecycle management permits institutional exits
+            elif eff_mode == "TRAIL" and reason in ("PROXIMITY_TP_HARVEST", "NEWS_EVENT_BANK", "WEEKEND_BANK"):
+                pass  # Institutional profit banking near TP or risk windows is allowed
+            else:
+                logger.debug(f"🛡️ Discretionary exit '{reason}' suppressed for manual trade #{pos.ticket} (mode={eff_mode})")
                 return False
 
         # Proximity TP harvest is an institutional target fulfillment; the
@@ -371,7 +402,9 @@ class PositionMonitorEngine:
         for pos in positions:
             try:
                 if self._is_manual_trade(pos):
-                    continue
+                    eff_m = self.get_manual_mode(pos.ticket)
+                    if eff_m not in ("AUTO_PILOT", "FULL", "TRAIL"):
+                        continue
                 symbol = pos.symbol
                 digits = 5
                 pip_size = 0.0001
@@ -556,7 +589,7 @@ class PositionMonitorEngine:
     def _apply_margin_ladder(self, positions, margin_level):
         try:
             if margin_level > 0 and margin_level < MARGIN_LEVEL_FLATTEN:
-                algo = [p for p in positions if not self._is_manual_trade(p)]
+                algo = [p for p in positions if (not self._is_manual_trade(p)) or (self.get_manual_mode(p.ticket) in ('AUTO_PILOT', 'FULL'))]
                 worst = min(algo, key=lambda p: p.profit) if algo else None
                 if worst is not None and worst.profit < 0:
                     logger.warning(
@@ -701,8 +734,8 @@ class PositionMonitorEngine:
     # ─── Single-Position Logic ──────────────────────────────────────────────────
 
 
-    def _extract_position_trade_style(self, pos: PositionSnapshot) -> str:
-        """Extract trade style (SCALP, DAY_TRADING, SWING) from position comment or state."""
+    def _extract_position_trade_style(self, pos: PositionSnapshot, atr: float = 0.0) -> str:
+        """Extract trade style (SCALP, DAY_TRADING, SWING) from position comment, state, or stop geometry."""
         comment = str(getattr(pos, "comment", "") or "").upper()
         if "SCLP" in comment or "SCALP" in comment:
             return "SCALP"
@@ -710,6 +743,29 @@ class PositionMonitorEngine:
             return "SWING"
         if "DAY" in comment or "INTRADAY" in comment:
             return "DAY_TRADING"
+
+        if atr <= 1e-6:
+            try:
+                cached = self._ctx_cache.get(pos.symbol)
+                if cached and cached[0] and getattr(cached[0], "volatility", None):
+                    atr = float(cached[0].volatility.atr or 0.0)
+                elif self.context_engine:
+                    ctx_obj = self.context_engine.get_context(pos.symbol)
+                    if ctx_obj and getattr(ctx_obj, "volatility", None):
+                        atr = float(ctx_obj.volatility.atr or 0.0)
+            except Exception:
+                atr = 0.0
+
+        # Dynamic ATR stop distance classification if manual trade
+        if self._is_manual_trade(pos) and pos.sl > 0 and pos.open_price > 0 and atr > 1e-6:
+            sl_dist = abs(pos.open_price - pos.sl)
+            atr_ratio = sl_dist / atr
+            if atr_ratio < 0.85:
+                return "SCALP"
+            elif atr_ratio <= 2.20:
+                return "DAY_TRADING"
+            else:
+                return "SWING"
 
         # Fallback to decision object if available
         decision_obj = self.state_manager.latest_decisions.get(pos.symbol) if (self.state_manager and hasattr(self.state_manager, "latest_decisions")) else None
@@ -722,7 +778,7 @@ class PositionMonitorEngine:
             if "SWING" in d_style or "SWNG" in d_style:
                 return "SWING"
 
-        return "SWING"
+        return "DAY_TRADING" if self._is_manual_trade(pos) else "SWING"
 
     def _manage_single_position(
         self,
@@ -768,62 +824,61 @@ class PositionMonitorEngine:
         actions = []
 
         # ── Manual Trade Isolation & Trailing (Master Trader AI Engine) ──────
-        effective_manual_mode = getattr(self, "manual_mode", MANUAL_MANAGEMENT_MODE)
+        effective_manual_mode = self.get_manual_mode(pos.ticket) if is_manual else "ALGO"
+        pos.is_manual = is_manual
+        pos.monitoring_mode = effective_manual_mode
         if is_manual:
-            if effective_manual_mode == "PROTECT_ONLY" and pos.sl > 0:
-                # In PROTECT_ONLY mode, do not modify manual trades that already have an SL
-                return
-            missing_sl = (pos.sl == 0 or pos.sl < 0.0001)
-            missing_tp = (pos.tp == 0 or pos.tp < 0.0001)
-            dangerously_wide_sl = False
+            if effective_manual_mode == "OFF":
+                # Pure manual override: telemetry computed, but no auto-modifications
+                pass
+            else:
+                missing_sl = (pos.sl == 0 or pos.sl < 0.0001)
+                missing_tp = (pos.tp == 0 or pos.tp < 0.0001)
+                dangerously_wide_sl = False
 
-            if not missing_sl:
-                sl_dist = abs(pos.open_price - pos.sl)
-                dangerously_wide_sl = (sl_dist > (atr * DANGEROUS_SL_ATR_MULT))
+                if not missing_sl:
+                    sl_dist = abs(pos.open_price - pos.sl)
+                    dangerously_wide_sl = (sl_dist > (atr * DANGEROUS_SL_ATR_MULT))
 
-            if missing_sl or missing_tp or dangerously_wide_sl:
-                ai_sl, ai_tp, ai_reason = self._calculate_master_trader_sl_tp(
-                    pos=pos, ctx=ctx, c_price=c_price, atr=atr,
-                    equity=equity, spec=spec, digits=digits, pip_size=pip_size
-                )
-                manual_modified = False
-                target_sl = pos.sl
-                target_tp = pos.tp
+                if missing_sl or missing_tp or dangerously_wide_sl:
+                    ai_sl, ai_tp, ai_reason = self._calculate_master_trader_sl_tp(
+                        pos=pos, ctx=ctx, c_price=c_price, atr=atr,
+                        equity=equity, spec=spec, digits=digits, pip_size=pip_size
+                    )
+                    manual_modified = False
+                    target_sl = pos.sl
+                    target_tp = pos.tp
 
-                if missing_sl or dangerously_wide_sl:
-                    target_sl = ai_sl
-                    new_sl = ai_sl
-                    actions.append(f"AI_MANUAL_SL@{new_sl:.{digits}f}")
-                    manual_modified = True
+                    if missing_sl or dangerously_wide_sl:
+                        target_sl = ai_sl
+                        new_sl = ai_sl
+                        actions.append(f"AI_MANUAL_SL@{new_sl:.{digits}f}")
+                        manual_modified = True
 
-                if missing_tp:
-                    target_tp = ai_tp
-                    new_tp = ai_tp
-                    actions.append(f"AI_MANUAL_TP@{new_tp:.{digits}f}")
-                    manual_modified = True
+                    if missing_tp:
+                        target_tp = ai_tp
+                        new_tp = ai_tp
+                        actions.append(f"AI_MANUAL_TP@{new_tp:.{digits}f}")
+                        manual_modified = True
 
-                # Dispatch immediate protection if SL/TP changed
-                if manual_modified and (target_sl != pos.sl or target_tp != pos.tp):
-                    now_ts = time.time()
-                    last_mod = self._last_modify_time.get(pos.ticket, 0.0)
-                    if (now_ts - last_mod) >= 2.0 or missing_sl or missing_tp:
-                        logger.info(
-                            f"🎯 MASTER TRADER AI: Auto-placed SL/TP on Manual Trade #{pos.ticket} "
-                            f"({pos.symbol} {pos.type}) -> SL: {pos.sl:.{digits}f}→{target_sl:.{digits}f} | "
-                            f"TP: {pos.tp:.{digits}f}→{target_tp:.{digits}f} | Reason: {ai_reason}"
-                        )
-                        res = self.mt5_client.modify_position(ticket=pos.ticket, sl=target_sl, tp=target_tp)
-                        if res and res.get("status") in ("MODIFIED", "SUCCESS", True):
-                            pos.sl = target_sl
-                            pos.tp = target_tp
-                            self._last_action[pos.ticket] = f"{target_sl:.{digits}f}_{target_tp:.{digits}f}"
-                            self._last_modify_time[pos.ticket] = now_ts
-                            self._ensure_valid_initial_sl_dist(pos, target_sl, atr, pip_size)
-                            self._initial_tp[pos.ticket] = target_tp
-
-            if effective_manual_mode == "PROTECT_ONLY":
-                # In PROTECT_ONLY mode, do not trail or apply discretionary algorithmic exits
-                return
+                    # Dispatch immediate protection if SL/TP changed
+                    if manual_modified and (target_sl != pos.sl or target_tp != pos.tp):
+                        now_ts = time.time()
+                        last_mod = self._last_modify_time.get(pos.ticket, 0.0)
+                        if (now_ts - last_mod) >= 2.0 or missing_sl or missing_tp:
+                            logger.info(
+                                f"🎯 MASTER TRADER AI: Auto-placed SL/TP on Manual Trade #{pos.ticket} "
+                                f"({pos.symbol} {pos.type}) -> SL: {pos.sl:.{digits}f}→{target_sl:.{digits}f} | "
+                                f"TP: {pos.tp:.{digits}f}→{target_tp:.{digits}f} | Reason: {ai_reason}"
+                            )
+                            res = self.mt5_client.modify_position(ticket=pos.ticket, sl=target_sl, tp=target_tp)
+                            if res and res.get("status") in ("MODIFIED", "SUCCESS", True):
+                                pos.sl = target_sl
+                                pos.tp = target_tp
+                                self._last_action[pos.ticket] = f"{target_sl:.{digits}f}_{target_tp:.{digits}f}"
+                                self._last_modify_time[pos.ticket] = now_ts
+                                self._ensure_valid_initial_sl_dist(pos, target_sl, atr, pip_size)
+                                self._initial_tp[pos.ticket] = target_tp
 
         if spread > (typical_spread * SPREAD_BLOWOUT_MULT):
             logger.warning(f"⚠️ Spread blowout {spread:.1f} pips on #{pos.ticket} — skipping modification.")
@@ -845,9 +900,9 @@ class PositionMonitorEngine:
 
         else:
             # ── 0. Partial Profit-Taking (§B-2 / §B-3, Suppressed in Grace Period) ──
-            if not in_grace_period and (not is_manual or effective_manual_mode == "FULL") and pos.ticket not in self._partially_closed_tickets and pos.volume >= 0.02:
+            if not in_grace_period and (not is_manual or effective_manual_mode in ("AUTO_PILOT", "FULL")) and pos.ticket not in self._partially_closed_tickets and pos.volume >= 0.02:
                 decision_obj = self.state_manager.latest_decisions.get(symbol)
-                pos_style = self._extract_position_trade_style(pos)
+                pos_style = self._extract_position_trade_style(pos, atr=atr)
                 reg_name = (regime.primary_regime.value if hasattr(regime, "primary_regime") else str(regime)) if regime else None
                 _p = self._exit_policy.get(pos.ticket) or ExitPolicy.for_symbol(symbol, spec, trade_style=pos_style, regime=reg_name)
                 first_target = self._coerce_positive_float(
@@ -955,7 +1010,7 @@ class PositionMonitorEngine:
                 _d_unit = (_pip_val / max(_p_sz, 1e-9)) if _p_sz > 0 else 100_000.0
                 self._initial_risk_usd[pos.ticket] = risk_dist * _d_unit * pos.volume
 
-            pos_style = self._extract_position_trade_style(pos)
+            pos_style = self._extract_position_trade_style(pos, atr=atr)
             reg_name = (regime.primary_regime.value if hasattr(regime, "primary_regime") else str(regime)) if regime else None
             if pos.ticket not in self._exit_policy:
                 self._exit_policy[pos.ticket] = ExitPolicy.for_symbol(symbol, spec, trade_style=pos_style, regime=reg_name)
@@ -1084,6 +1139,42 @@ class PositionMonitorEngine:
 
             # Compute current R-multiple for early defense and milestone evaluation
             current_r = ((c_price - pos.open_price) if pos.type == "BUY" else (pos.open_price - c_price)) / max(risk_dist, 1e-6)
+
+            # ── 6. 3-Tier Milestone Progression Tracking ────────────────────
+            if pos.ticket in self._position_milestones:
+                tp3_thresh = getattr(policy, "tp3_r", 3.0)
+                tp2_thresh = getattr(policy, "tp2_r", 2.0)
+                if current_r >= tp3_thresh:
+                    self._position_milestones[pos.ticket]["status"] = "TP3_RUNNER_TRAILING"
+                elif current_r >= tp2_thresh:
+                    self._position_milestones[pos.ticket]["status"] = "TP2_HIT_PROFIT_LOCKED"
+                elif current_r >= policy.fast_cash_r or pos.ticket in self._be_locked or pos.ticket in self._partially_closed_tickets:
+                    self._position_milestones[pos.ticket]["status"] = "TP1_HIT_BE_LOCKED"
+                else:
+                    self._position_milestones[pos.ticket]["status"] = "OPEN"
+
+                pos.tp1 = self._position_milestones[pos.ticket]["tp1"]
+                pos.tp2 = self._position_milestones[pos.ticket]["tp2"]
+                pos.tp3 = self._position_milestones[pos.ticket]["tp3"]
+                pos.milestone_status = self._position_milestones[pos.ticket]["status"]
+
+            # Push live algorithmic telemetry to StateManager so API & UI always display active status
+            if self.state_manager:
+                mfe_val = round(max(0.0, favorable_dist), digits)
+                mae_val = round(max(0.0, self._peak_mae.get(pos.ticket, 0.0)), digits)
+                self.state_manager.enrich_position_telemetry(pos.ticket, {
+                    "tp1": pos.tp1,
+                    "tp2": pos.tp2,
+                    "tp3": pos.tp3,
+                    "milestone_status": pos.milestone_status,
+                    "is_be_locked": pos.ticket in self._be_locked,
+                    "mfe": mfe_val,
+                    "mae": mae_val,
+                    "current_r": round(current_r, 2),
+                    "trade_style": pos_style,
+                    "monitoring_mode": effective_manual_mode,
+                    "is_manual": is_manual,
+                })
 
             # ── 3.2 Near-TP Proximity Harvesting & Lock (Institutional TP Protection) ────
             # When price achieves >= 94% of the planned target move OR comes within proximity buffer
@@ -1291,23 +1382,6 @@ class PositionMonitorEngine:
                             actions.append(f"ML_DETERIORATION_BE@{new_sl:.4f}(p={ml_prob:.2f})")
                     # (Underwater SL halving removed: trades must be allowed structural breathing room)
 
-            # ── 6. 3-Tier Milestone Progression Tracking ────────────────────
-            if pos.ticket in self._position_milestones:
-                tp3_thresh = getattr(policy, "tp3_r", 3.0)
-                tp2_thresh = getattr(policy, "tp2_r", 2.0)
-                if current_r >= tp3_thresh:
-                    self._position_milestones[pos.ticket]["status"] = "TP3_RUNNER_TRAILING"
-                elif current_r >= tp2_thresh:
-                    self._position_milestones[pos.ticket]["status"] = "TP2_HIT_PROFIT_LOCKED"
-                elif current_r >= policy.fast_cash_r or pos.ticket in self._be_locked or pos.ticket in self._partially_closed_tickets:
-                    self._position_milestones[pos.ticket]["status"] = "TP1_HIT_BE_LOCKED"
-                else:
-                    self._position_milestones[pos.ticket]["status"] = "OPEN"
-
-                pos.tp1 = self._position_milestones[pos.ticket]["tp1"]
-                pos.tp2 = self._position_milestones[pos.ticket]["tp2"]
-                pos.tp3 = self._position_milestones[pos.ticket]["tp3"]
-                pos.milestone_status = self._position_milestones[pos.ticket]["status"]
 
             # ── 7. Horizon-Adaptive Stagnation & Time-Decay Auto-Exit ────────
             open_dur_sec = self._get_position_duration_sec(pos)
@@ -1454,7 +1528,10 @@ class PositionMonitorEngine:
         tp_pip_diff = abs(new_tp - pos.tp) / (pip_size if pip_size > 0 else 1.0) if new_tp > 0 and pos.tp > 0 else 0.0
         tp_changed = tp_pip_diff >= 2.0 or (pos.tp == 0 and new_tp > 0)
 
-        if sl_changed or tp_changed:
+        if is_manual and effective_manual_mode in ("PROTECT_ONLY", "OFF"):
+            # Telemetry is fully computed, but trailing modification to broker is suppressed by policy
+            pass
+        elif sl_changed or tp_changed:
             new_sl = round(new_sl, digits)
             new_tp = round(new_tp, digits)
             action_key = f"{new_sl:.{digits}f}_{new_tp:.{digits}f}"
@@ -1515,7 +1592,7 @@ class PositionMonitorEngine:
         except Exception:
             spec = None
 
-        pos_style = self._extract_position_trade_style(pos)
+        pos_style = self._extract_position_trade_style(pos, atr=atr)
         policy = ExitPolicy.for_symbol(pos.symbol, spec, trade_style=pos_style)
         digits = policy.digits
 
@@ -1725,7 +1802,12 @@ class PositionMonitorEngine:
             target_tp = (max(cand_tp) + (atr * 0.2)) if cand_tp else min_tp
 
         # 4. Broker Stops Level & Quantization
-        sym_info = self.mt5_client.get_symbol_info(pos.symbol)
+        if hasattr(self.mt5_client, "get_symbol_trading_spec"):
+            sym_info = self.mt5_client.get_symbol_trading_spec(pos.symbol)
+        elif hasattr(self.mt5_client, "get_symbol_info"):
+            sym_info = self.mt5_client.get_symbol_info(pos.symbol)
+        else:
+            sym_info = {}
         if not isinstance(sym_info, dict):
             sym_info = {}
         try:

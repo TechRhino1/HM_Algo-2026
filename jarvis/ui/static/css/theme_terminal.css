@@ -1127,9 +1127,6 @@
   .tt-slot--hist     { grid-area: hist; }
   .tt-slot--risk     { grid-area: risk; }
   .tt-slot--regime   { grid-area: regime; }
-  .tt-slot--cal      { grid-area: cal; }
-  .tt-slot--next     { grid-area: next; }
-  .tt-slot--detail   { grid-area: detail; }
   .tt-slot--da       { grid-area: da; }
   .tt-slot--gate     { grid-area: gate; }
   .tt-slot--obj      { grid-area: obj; }
@@ -1164,14 +1161,15 @@
       "regime regime";
   }
 
-  /* News: the calendar is the reading surface and spans the full height; the
-     right column is the summary above and the analysis below. */
+  /* News: full-height flex column hosting the command bar and active subpanel */
   #view-news.tt-view[data-active="true"] {
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
-    grid-template-rows: auto minmax(0, 1fr);
-    grid-template-areas:
-      "cal next"
-      "cal detail";
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   /* Analyst: the adversarial case IS the argument, so it takes the height. */
@@ -1586,6 +1584,7 @@
 .tt-news__row[data-phase="live"] { box-shadow: inset 3px 0 0 var(--hm-warn); }
 .tt-news__row[data-phase="soon"] { box-shadow: inset 3px 0 0 var(--hm-accent); }
 .tt-news__row[data-phase="past"] { opacity: 0.62; }
+.tt-news__row[data-phase="tba"] { opacity: 0.78; }
 
 .tt-news__when { white-space: nowrap; }
 .tt-news__when > span { display: block; }
@@ -1603,6 +1602,7 @@
 .tt-news__cd[data-phase="live"] .tt-news__cd-val { color: var(--hm-warn); font-weight: var(--hm-weight-semibold); }
 .tt-news__cd[data-phase="soon"] .tt-news__cd-val { color: var(--hm-accent); }
 .tt-news__cd[data-phase="past"] .tt-news__cd-val { color: var(--hm-text-dim); }
+.tt-news__cd[data-phase="tba"] .tt-news__cd-val { color: var(--hm-text-dim); font-style: italic; }
 
 .tt-news__cur {
   font-family: var(--tt-num-font);

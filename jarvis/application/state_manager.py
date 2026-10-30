@@ -89,6 +89,7 @@ class StateManager:
         
         self.account: Optional[AccountSnapshot] = None
         self.positions: List[PositionSnapshot] = []
+        self._position_telemetry_cache: Dict[int, Dict[str, Any]] = {}
         self.market_contexts: Dict[str, MarketContext] = {}
         self.latest_decisions: Dict[str, DecisionObject] = {}
         self.radar_opportunities: List[Dict[str, Any]] = []
@@ -142,16 +143,76 @@ class StateManager:
             self.account = account
             self._bump_version()
 
+    def _enrich_positions_locked(self, positions: List[PositionSnapshot]) -> List[PositionSnapshot]:
+        """Preserves algorithmic telemetry (milestones, BE lock, MFE, style) across broker refreshes."""
+        if not hasattr(self, "_position_telemetry_cache"):
+            self._position_telemetry_cache = {}
+        prev_by_ticket = {p.ticket: p for p in self.positions}
+        for pos in positions:
+            t = pos.ticket
+            # 1. Merge from explicit telemetry cache if registered
+            telemetry = self._position_telemetry_cache.get(t)
+            if telemetry:
+                for k, v in telemetry.items():
+                    if hasattr(pos, k) and v is not None:
+                        setattr(pos, k, v)
+            # 2. Or preserve from previous snapshot if not yet in cache
+            elif t in prev_by_ticket:
+                old = prev_by_ticket[t]
+                if getattr(pos, "tp1", None) is None and getattr(old, "tp1", None) is not None:
+                    pos.tp1 = old.tp1
+                if getattr(pos, "tp2", None) is None and getattr(old, "tp2", None) is not None:
+                    pos.tp2 = old.tp2
+                if getattr(pos, "tp3", None) is None and getattr(old, "tp3", None) is not None:
+                    pos.tp3 = old.tp3
+                if getattr(pos, "milestone_status", "OPEN") == "OPEN" and getattr(old, "milestone_status", "OPEN") != "OPEN":
+                    pos.milestone_status = old.milestone_status
+                if not getattr(pos, "is_be_locked", False) and getattr(old, "is_be_locked", False):
+                    pos.is_be_locked = old.is_be_locked
+                if getattr(pos, "mfe", 0.0) == 0.0 and getattr(old, "mfe", 0.0) > 0.0:
+                    pos.mfe = old.mfe
+                if getattr(pos, "mae", 0.0) == 0.0 and getattr(old, "mae", 0.0) > 0.0:
+                    pos.mae = old.mae
+                if getattr(pos, "current_r", 0.0) == 0.0 and getattr(old, "current_r", 0.0) != 0.0:
+                    pos.current_r = old.current_r
+                if getattr(pos, "trade_style", None) is None and getattr(old, "trade_style", None) is not None:
+                    pos.trade_style = old.trade_style
+                if getattr(pos, "monitoring_mode", None) is None and getattr(old, "monitoring_mode", None) is not None:
+                    pos.monitoring_mode = old.monitoring_mode
+                if not getattr(pos, "is_manual", False) and getattr(old, "is_manual", False):
+                    pos.is_manual = old.is_manual
+
+        # Prune telemetry cache for closed tickets
+        active_tickets = {p.ticket for p in positions}
+        self._position_telemetry_cache = {t: v for t, v in self._position_telemetry_cache.items() if t in active_tickets}
+        return positions
+
+    def enrich_position_telemetry(self, ticket: int, telemetry: Dict[str, Any]):
+        """Registers live algorithmic telemetry for a ticket and updates current position snapshot."""
+        with self._rw_lock:
+            if not hasattr(self, "_position_telemetry_cache"):
+                self._position_telemetry_cache = {}
+            if ticket not in self._position_telemetry_cache:
+                self._position_telemetry_cache[ticket] = {}
+            self._position_telemetry_cache[ticket].update(telemetry)
+            for pos in self.positions:
+                if pos.ticket == ticket:
+                    for k, v in telemetry.items():
+                        if hasattr(pos, k) and v is not None:
+                            setattr(pos, k, v)
+                    break
+            self._bump_version()
+
     def update_positions(self, positions: List[PositionSnapshot]):
         with self._rw_lock:
-            self.positions = positions
+            self.positions = self._enrich_positions_locked(positions)
             self._bump_version()
 
     def sync_broker_state(self, account: Optional[AccountSnapshot], positions: List[PositionSnapshot]):
         with self._rw_lock:
             if account:
                 self.account = account
-            self.positions = positions
+            self.positions = self._enrich_positions_locked(positions)
             self._bump_version()
 
     def update_market_context(self, symbol: str, context: MarketContext):

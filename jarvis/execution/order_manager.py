@@ -265,6 +265,5 @@ class OrderManager:
         """Drop per-ticket state once a position closes (prevents unbounded growth)."""
         with self._state_lock:
             self._initial_sl.pop(ticket, None)
-            self._initial_volume.pop(ticket, None)
             self._exit_policy.pop(ticket, None)
             self._be_locked.discard(ticket)

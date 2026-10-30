@@ -144,8 +144,10 @@ class TradeGuard:
         actual_tp_dist = abs(decision.take_profit - decision.entry_price)
         actual_rr = (actual_tp_dist / actual_risk_dist) if actual_risk_dist > 1e-6 else 0.0
 
-        min_rr_threshold = 1.75
-        if actual_rr < min_rr_threshold:
+        trade_style = str(getattr(decision, "trade_style", "") or "").upper()
+        default_min = 1.30 if "SCALP" in trade_style else 1.50
+        min_rr_threshold = float(getattr(decision, "min_allowed_rr", None) or default_min)
+        if actual_rr < (min_rr_threshold - 0.05):
             reasons.append(
                 f"Sub-minimum Risk:Reward ratio {actual_rr:.2f}:1 "
                 f"(risk={actual_risk_dist:.2f}, reward={actual_tp_dist:.2f}, minimum {min_rr_threshold:.2f} required)."

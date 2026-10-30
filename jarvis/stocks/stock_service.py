@@ -5,6 +5,7 @@ breakout probability ranking, and REST API dispatching.
 """
 import time
 import logging
+import threading
 import concurrent.futures
 from typing import Dict, Any, List
 from datetime import datetime, timezone
@@ -23,11 +24,46 @@ class StockService:
 
     def __init__(self):
         self._scan_cache: Dict[str, Dict[str, Any]] = {}
-        self._scan_cache_ttl = 15.0
+        self._scan_cache_ttl = 60.0
         self._last_full_scan_time = 0.0
         self._cached_screener_results: List[Dict[str, Any]] = []
 
+        #: Single-flight gate. `/api/stocks/screener` and `/api/stocks/heatmap`
+        #: both need the same 47-symbol scan; a cold page opened both at once
+        #: and ran two full scans, each long enough for the first request to
+        #: hit the browser's 30s ceiling. One scan at a time, one cache.
+        self._scan_lock = threading.Lock()
+
     def get_screener_results(
+        self,
+        market: str = "all",
+        sector: str = "all",
+        timeframe: str = "1D",
+        min_probability: int = 0,
+        breakout_type: str = "all",
+        sort_by: str = "probability",
+        sort_dir: str = "desc",
+        limit: int = 100
+    ) -> Dict[str, Any]:
+        """Serialise scans through one lock so concurrent routes share a pass.
+
+        The critical section covers the cache check as well: the second caller
+        waits for the first scan, then finds a fresh cache instead of starting
+        a duplicate scan of its own.
+        """
+        with self._scan_lock:
+            return self._get_screener_results_locked(
+                market=market,
+                sector=sector,
+                timeframe=timeframe,
+                min_probability=min_probability,
+                breakout_type=breakout_type,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+                limit=limit,
+            )
+
+    def _get_screener_results_locked(
         self,
         market: str = "all",
         sector: str = "all",

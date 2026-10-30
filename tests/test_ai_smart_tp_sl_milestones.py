@@ -192,6 +192,8 @@ def test_decision_object_serialization():
 def test_position_monitor_milestone_progression():
     """Verify PositionMonitorEngine initializes milestones and progresses them from OPEN to TP3."""
     mock_mt5 = MagicMock()
+    mock_mt5.modify_position.return_value = {'status': 'MODIFIED'}
+    mock_mt5.close_position.return_value = {'status': 'CLOSED'}
     mock_feed = MagicMock()
     mock_ctx_eng = MagicMock()
     state_mgr = StateManager()
@@ -239,23 +241,23 @@ def test_position_monitor_milestone_progression():
     assert pos.tp3 == m["tp3"]
     assert pos.milestone_status == "OPEN"
 
-    # Step 2: Price hits TP1 (+1.5R institutional / 2415.00) -> should mark TP1_HIT_BE_LOCKED
-    pos.current_price = 2416.0
-    ctx.current_price = 2416.0
+    # Step 2: Price hits TP1 -> should mark TP1_HIT_BE_LOCKED
+    pos.current_price = m["tp1"] + 1.0
+    ctx.current_price = pos.current_price
     pm._ctx_cache["XAUUSD"] = (ctx, time.monotonic())
     pm._manage_single_position(pos, equity=10000.0, balance=10000.0)
     assert pos.milestone_status == "TP1_HIT_BE_LOCKED"
 
-    # Step 3: Price hits TP2 (+2.1R / 2421.00) -> should mark TP2_HIT_PROFIT_LOCKED
-    pos.current_price = 2421.0
-    ctx.current_price = 2421.0
+    # Step 3: Price hits TP2 -> should mark TP2_HIT_PROFIT_LOCKED
+    pos.current_price = m["tp2"] + 1.0
+    ctx.current_price = pos.current_price
     pm._ctx_cache["XAUUSD"] = (ctx, time.monotonic())
     pm._manage_single_position(pos, equity=10000.0, balance=10000.0)
     assert pos.milestone_status == "TP2_HIT_PROFIT_LOCKED"
 
-    # Step 4: Price exceeds TP3 runner threshold (+3.2R / 2432.00) -> should mark TP3_RUNNER_TRAILING
-    pos.current_price = 2432.0
-    ctx.current_price = 2432.0
+    # Step 4: Price exceeds TP3 runner threshold -> should mark TP3_RUNNER_TRAILING
+    pos.current_price = m["tp3"] + 1.0
+    ctx.current_price = pos.current_price
     pm._ctx_cache["XAUUSD"] = (ctx, time.monotonic())
     pm._manage_single_position(pos, equity=10000.0, balance=10000.0)
     assert pos.milestone_status == "TP3_RUNNER_TRAILING"

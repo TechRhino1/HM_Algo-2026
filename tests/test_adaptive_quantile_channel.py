@@ -61,8 +61,17 @@ def test_recency_weighted_micro_regression():
     assert ctx_up.micro_slope_angle > 0.0, f"Expected positive angle, got {ctx_up.micro_slope_angle}"
     assert ctx_up.is_statistically_trending is True
 
-    # Chop/flat dataframe
-    df_flat = _generate_synthetic_candles(n=30, trend=0.0, noise=0.5)
+    # Chop/flat dataframe (stationary oscillation with zero drift)
+    np.random.seed(42)
+    closes = 100.0 + np.sin(np.linspace(0, 4 * np.pi, 30)) * 0.2 + np.random.normal(0, 0.05, 30)
+    df_flat = pd.DataFrame({
+        "open": closes - 0.02,
+        "high": closes + 0.05,
+        "low": closes - 0.05,
+        "close": closes,
+        "volume": [500] * 30,
+        "time": list(range(30))
+    })
     ctx_flat = momentum_engine.analyze_momentum(df_flat)
     assert ctx_flat.micro_r2 < 0.60 or abs(ctx_flat.micro_slope_angle) < 20.0
 

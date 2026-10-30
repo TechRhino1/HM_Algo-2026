@@ -59,7 +59,7 @@ class TestAIDecisionEngine(unittest.TestCase):
         """
         ctx = MarketContext(
             symbol="XAUUSD",
-            timestamp=datetime(2026, 1, 5, 10, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 1, 5, 3, 0, tzinfo=timezone.utc),
             current_price=2400.0,
             bid=2399.8,
             ask=2400.2,
@@ -86,7 +86,14 @@ class TestAIDecisionEngine(unittest.TestCase):
             threats_detected=[]
         )
 
-        res = self.engine.evaluate(ctx, regime, analyst_reports, devil_report, account_balance=10000.0)
+        from jarvis.intelligence.symbol_profile_config import get_symbol_profile_config
+        cfg = get_symbol_profile_config("XAUUSD")
+        orig_res = cfg.session_restriction
+        cfg.session_restriction = True
+        try:
+            res = self.engine.evaluate(ctx, regime, analyst_reports, devil_report, account_balance=10000.0)
+        finally:
+            cfg.session_restriction = orig_res
         self.assertEqual(res.decision, "NO_TRADE")
         reasons = list(getattr(res.quality_gate, "failing_reasons", []) or [])
         self.assertIn("Gold Session Window", reasons)

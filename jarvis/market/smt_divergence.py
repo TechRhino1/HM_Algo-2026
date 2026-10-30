@@ -294,11 +294,25 @@ class IndicesSMTEngine:
                 "description": desc
             }
             self._cache[cache_key] = (now_t, res)
-            return res
+            return self._adjust_for_symbol(symbol, res)
         except Exception as e:
             res = {"smt_active": False, "smt_type": "NONE", "score_bonus": 0.0, "leader": "NONE", "description": str(e)}
             self._cache[cache_key] = (now_t, res)
-            return res
+            return self._adjust_for_symbol(symbol, res)
+
+    @staticmethod
+    def _adjust_for_symbol(symbol: str, res: Dict[str, Any]) -> Dict[str, Any]:
+        out = dict(res)
+        # For USD-base quote inverse pairs (USDJPY, USDCHF, USDCAD), dollar weakness is bearish
+        if any(k in (symbol or "").upper() for k in ("USDJPY", "USDCHF", "USDCAD")):
+            if out.get("smt_active"):
+                raw = out.get("smt_type")
+                if raw == "BULLISH_SMT":
+                    out["smt_type"] = "BEARISH_SMT"
+                elif raw == "BEARISH_SMT":
+                    out["smt_type"] = "BULLISH_SMT"
+                out["description"] = f"[Inverse USD Pair] {out.get('description', '')}"
+        return out
 
 
 class ForexSMTEngine:
@@ -321,7 +335,7 @@ class ForexSMTEngine:
         if cache_key in self._cache:
             c_time, c_val = self._cache[cache_key]
             if (now_t - c_time) < self.cache_ttl:
-                return dict(c_val)
+                return self._adjust_for_symbol(symbol, c_val)
 
         try:
             import MetaTrader5 as mt5

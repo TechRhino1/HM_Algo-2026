@@ -44,6 +44,7 @@ class CandidateOpportunity:
     context: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        d = self.decision_obj
         return {
             "symbol": self.symbol,
             "trade_style": self.trade_style,
@@ -53,11 +54,15 @@ class CandidateOpportunity:
             "entry_price": self.entry_price,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,
+            "tp1_price": getattr(d, "tp1_price", getattr(d, "first_target_price", None)) if d else None,
+            "tp2_price": getattr(d, "tp2_price", self.take_profit) if d else self.take_profit,
+            "tp3_price": getattr(d, "tp3_price", None) if d else None,
             "risk_reward_ratio": self.risk_reward_ratio,
             "expected_value": self.expected_value,
             "win_prob": self.win_prob,
             "ml_prob": self.ml_prob,
             "confluence_score": self.confluence_score,
+            "confluence_tier": getattr(d, "master_confluence_tier", "MODERATE") if d else "MODERATE",
             "confluence_factors": self.confluence_factors,
             "adversarial_penalty": self.adversarial_penalty,
             "risk_factors": self.risk_factors,
@@ -588,12 +593,16 @@ class UniversalOpportunityArbiter:
         # is taken first; risk controls (concurrent-exposure, reserved
         # quota) still cap anything that would over-allocation-wise fire.
         def _priority_bucket(c: CandidateOpportunity) -> int:
-            if (getattr(c, "is_actionable", False)
-                    and getattr(c, "setup_grade", "") in ("GRADE A+", "GRADE A")
-                    and ("XAU" in str(getattr(c, "symbol", "")).upper()
-                         or "GOLD" in str(getattr(c, "symbol", "")).upper())):
-                return 0
-            return 1
+            sym_upper = str(getattr(c, "symbol", "")).upper()
+            is_act = getattr(c, "is_actionable", False)
+            grade = getattr(c, "setup_grade", "")
+            if is_act and grade in ("GRADE A+", "GRADE A"):
+                if "XAU" in sym_upper or "GOLD" in sym_upper:
+                    return 0
+                if "BTC" in sym_upper or "ETH" in sym_upper:
+                    return 1
+                return 2
+            return 3
 
         ranked = sorted(
             candidates,

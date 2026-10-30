@@ -10,15 +10,15 @@
 <!-- Bootstrap 5: Responsive framework scaffolding and grid -->
 <link rel="stylesheet" href="/static/css/bootstrap.min.css">
 <!-- Base token set. The theme below consumes these and defines no duplicates. -->
-<link rel="stylesheet" href="/static/css/hm_ui.css">
-<link rel="stylesheet" href="/static/css/theme_terminal.css?v=20261019_v6">
-<link rel="stylesheet" href="/static/css/auth.css">
+<link rel="stylesheet" href="/static/css/hm_ui.css?v=20261030_v2">
+<link rel="stylesheet" href="/static/css/theme_terminal.css?v=20261030_v2">
+<link rel="stylesheet" href="/static/css/auth.css?v=20261030_v2">
 <!-- iOS design language for phones (≤599px) and tablets (600-1024px). -->
-<link rel="stylesheet" href="/static/css/ios_mobile.css?v=20261019_v5">
+<link rel="stylesheet" href="/static/css/ios_mobile.css?v=20261030_v2">
 <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
-<link rel="stylesheet" href="/static/css/theme_bugatti.css">
+<link rel="stylesheet" href="/static/css/theme_bugatti.css?v=20261030_v2">
 <!-- Mobile v3 "Aurora" iOS design system (small screens only; loaded last) -->
-<link rel="stylesheet" href="/static/css/hm_ios_v3.css?v=20261019_v5">
+<link rel="stylesheet" href="/static/css/hm_ios_v3.css?v=20261030_v2">
 
 <!--
   DYNAMIC-DATA CONTRACT
@@ -324,6 +324,7 @@
   <section class="tt-view" id="view-trade" data-view-panel="trade"
            data-active="true" role="tabpanel" aria-label="Trade">
 
+
     <!-- ═══ Cockpit Order Ticket Drawer Backdrop & Panel (Left-Hand Side) ═══ -->
     <div class="tt-order-drawer-backdrop" id="ticket-backdrop" hidden></div>
     <aside class="tt-order-drawer-left" id="subpanel-ticket" aria-label="Order Execution Deck" hidden>
@@ -465,10 +466,16 @@
       </div>
 
       <div class="tt-side-pane" id="side-pane-selection" role="tabpanel" aria-label="AI selection" hidden>
-        <div class="tt-side-pane__bar">
-          <span class="tt-hint">Cross-style consensus picks</span>
+        <div class="tt-side-pane__bar" style="flex-wrap: wrap; gap: 6px;">
+          <span class="tt-hint" id="selection-subtitle">Institutional Multi-Style Intelligence</span>
           <span class="tt-panel__spacer"></span>
           <span class="tt-chip tt-chip--none" id="selection-tier">—</span>
+        </div>
+        <div class="selection-subtabs" id="selection-subtabs" style="display:flex; gap:4px; padding: 6px 10px; background: rgba(0,0,0,0.18); border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08));">
+          <button type="button" class="tt-btn tt-btn--xs sel-subtab-btn active" data-sel-tab="ALL">🌟 All Intel</button>
+          <button type="button" class="tt-btn tt-btn--xs sel-subtab-btn" data-sel-tab="TOP">👑 Supreme Pick</button>
+          <button type="button" class="tt-btn tt-btn--xs sel-subtab-btn" data-sel-tab="STYLES">⚡ Style Champions</button>
+          <button type="button" class="tt-btn tt-btn--xs sel-subtab-btn" data-sel-tab="CONSENSUS">🤝 Consensus</button>
         </div>
         <div class="tt-panel__body" id="selection-body" data-state="loading"></div>
       </div>
@@ -538,6 +545,28 @@
          entry / stop / target as price lines plus a floating detail card.
          Every figure is written by dashboard.js — no value lives in this file. -->
     <div class="tt-panel tt-panel--chart">
+    <!-- ── Cockpit Imminent High-Impact Event Warning Banner ──────────────── -->
+    <div class="cockpit-news-alert" id="cockpit-news-alert" hidden>
+      <div class="cockpit-news-alert__inner">
+        <span class="cockpit-news-alert__pulse" aria-hidden="true">⚡</span>
+        <span class="cockpit-news-alert__title" id="cockpit-news-alert-text">HIGH-IMPACT MACRO EVENT IMMINENT</span>
+        <span class="cockpit-news-alert__cd tt-num" id="cockpit-news-alert-cd">—</span>
+        <span class="tt-panel__spacer"></span>
+        <span class="cockpit-news-alert__risk" id="cockpit-news-alert-risk">0 Trades At Risk</span>
+        <button type="button" class="tt-btn tt-btn--xs tt-btn--primary" id="btn-cockpit-news-view">Inspect News Desk ➔</button>
+      </div>
+    </div>
+
+    <!-- ── Cockpit Live Breaking News Ticker ─────────────────────────────── -->
+    <div class="cockpit-news-ticker" id="cockpit-news-ticker" title="Live Financial News Wire (Click to view breaking stream)">
+      <div class="cockpit-news-ticker__badge">
+        <span class="cockpit-news-ticker__pulse"></span>
+        <span>BREAKING WIRE</span>
+      </div>
+      <div class="cockpit-news-ticker__content" id="cockpit-ticker-text">Synchronizing global macroeconomic news stream…</div>
+      <span class="cockpit-news-ticker__sentiment" id="cockpit-ticker-sentiment">NEUTRAL</span>
+      <span class="cockpit-news-ticker__time tt-num" id="cockpit-ticker-time">—</span>
+    </div>
       <div class="tt-panel__head tt-panel__head--chart">
         <h2 class="tt-panel__title" id="chart-title">Chart</h2>
         <span class="tt-num tt-num--lg tt-chart__price" id="chart-live-price"
@@ -685,62 +714,194 @@
   <!-- Macro calendar. Every row is an event from /api/news with its own
        timestamp; the countdown is recomputed client-side each second from
        that timestamp, so it keeps ticking between polls. -->
-  <section class="tt-view" id="view-news" data-view-panel="news"
-           data-active="false" role="tabpanel" aria-label="News" hidden>
+    <section class="tt-view" id="view-news" data-view-panel="news"
+           data-active="false" role="tabpanel" aria-label="News &amp; Macro Intelligence" hidden>
 
-    <div class="tt-panel tt-slot tt-slot--cal">
-      <div class="tt-panel__head">
-        <h2 class="tt-panel__title">Economic calendar</h2>
-        <span class="tt-panel__count" id="news-count">0</span>
-        <span class="tt-panel__spacer"></span>
-        <span class="tt-chip tt-chip--none" id="news-live-chip">—</span>
-        <!-- Provenance. The engine falls back to a HARDCODED event plan when the
-             feed is rate-limited or unreachable, and it used to look identical to
-             real releases. The API now says which it is, so say it here. Reuses
-             tt-chip--high rather than adding a style, to keep the sheet untouched. -->
-        <span class="tt-chip tt-chip--high" id="news-source-chip" hidden>—</span>
-        <label class="tt-sr-only" for="news-impact">Filter by impact</label>
-        <select class="tt-select tt-select--compact" id="news-impact">
-          <option value="ALL">All impact</option>
-          <option value="HIGH">High</option>
-          <option value="MEDIUM">Medium</option>
-          <option value="LOW">Low</option>
-        </select>
-        <label class="tt-sr-only" for="news-currency">Filter by currency</label>
-        <select class="tt-select tt-select--compact" id="news-currency">
-          <option value="ALL">All currencies</option>
-        </select>
-        <button class="tt-btn tt-btn--sm" id="news-refresh" type="button">Refresh</button>
+    <!-- News Command Center Navigation & Global Controls -->
+    <div class="news-command-bar">
+      <div class="news-tabs-nav" id="news-subtabs-nav">
+        <button type="button" class="news-tab-btn active" data-news-tab="calendar">
+          <span>📅 Economic Calendar</span>
+          <span class="news-tab-count" id="news-cal-count">0</span>
+        </button>
+        <button type="button" class="news-tab-btn" data-news-tab="headlines">
+          <span>📰 Breaking Headlines Wire</span>
+          <span class="news-tab-pulse"></span>
+          <span class="news-tab-count" id="news-head-count">0</span>
+        </button>
+        <button type="button" class="news-tab-btn" data-news-tab="sentinel">
+          <span>🛡️ News Sentinel Desk</span>
+          <span class="news-risk-badge" id="news-at-risk-badge" hidden>0 At-Risk</span>
+        </button>
       </div>
-      <div class="tt-panel__body" id="news-body" data-state="loading"></div>
-    </div>
-
-    <div class="tt-panel tt-slot tt-slot--next">
-      <div class="tt-panel__head">
-        <h2 class="tt-panel__title">Next release</h2>
-        <span class="tt-panel__spacer"></span>
-        <span class="tt-hint" id="news-updated">—</span>
-      </div>
-      <div class="tt-panel__body">
-        <div id="news-hero" data-state="loading"></div>
+      <span class="tt-panel__spacer"></span>
+      <div class="news-controls-right">
+        <button type="button" class="tt-btn tt-btn--xs" id="btn-news-audio-toggle" title="Toggle audio alert chime for imminent high-impact releases">
+          <span id="news-audio-label">🔊 Audio: ON</span>
+        </button>
+        <button type="button" class="tt-btn tt-btn--xs tt-btn--primary" id="news-refresh-btn" title="Force refresh live economic calendar and breaking wire">
+          <span>🔄 Refresh Feeds</span>
+        </button>
       </div>
     </div>
 
-    <div class="tt-panel tt-slot tt-slot--detail">
-      <div class="tt-panel__head">
-        <h2 class="tt-panel__title">Event detail</h2>
-        <span class="tt-panel__spacer"></span>
-        <span class="tt-chip tt-chip--none" id="news-detail-impact">—</span>
+    <!-- ═══ SUBPANEL 1: Economic Calendar ═════════════════════════════════ -->
+    <div class="news-subpanel active" id="news-panel-calendar">
+      <!-- Calendar Filters Toolbar -->
+      <div class="news-toolbar">
+        <div class="news-filter-group" id="news-horizon-filters">
+          <span class="news-filter-lbl">Horizon:</span>
+          <button type="button" class="sym-filter-pill active" data-horizon="ALL">All Events</button>
+          <button type="button" class="sym-filter-pill" data-horizon="TODAY">Today</button>
+          <button type="button" class="sym-filter-pill" data-horizon="TOMORROW">Tomorrow</button>
+          <button type="button" class="sym-filter-pill" data-horizon="THIS_WEEK">This Week</button>
+        </div>
+
+        <div class="news-filter-group" id="news-asset-filters">
+          <span class="news-filter-lbl">Asset:</span>
+          <button type="button" class="sym-filter-pill active" data-asset="ALL">All</button>
+          <button type="button" class="sym-filter-pill" data-asset="FOREX">Forex</button>
+          <button type="button" class="sym-filter-pill" data-asset="COMMODITY">Gold &amp; Oil</button>
+          <button type="button" class="sym-filter-pill" data-asset="CRYPTO">Crypto</button>
+          <button type="button" class="sym-filter-pill" data-asset="INDEX">Indices</button>
+        </div>
+
+        <div class="news-actions-group">
+          <div class="symbols-search-wrap">
+            <input type="text" id="news-search-input" class="symbols-search-input" placeholder="Search event (e.g. CPI, Powell, NFP)..." autocomplete="off" />
+          </div>
+          <select class="tt-select tt-select--compact" id="news-impact" title="Filter by Impact">
+            <option value="ALL">All Impact</option>
+            <option value="HIGH">High (Red)</option>
+            <option value="MEDIUM">Medium (Orange)</option>
+            <option value="LOW">Low (Yellow)</option>
+          </select>
+          <select class="tt-select tt-select--compact" id="news-currency" title="Filter by Currency">
+            <option value="ALL">All Currencies</option>
+          </select>
+          <span class="tt-chip tt-chip--none" id="news-live-chip">—</span>
+          <span class="tt-chip tt-chip--high" id="news-source-chip" hidden>—</span>
+        </div>
       </div>
-      <div class="tt-panel__body">
-        <div id="news-detail" data-state="empty">
-          <div class="tt-state">
-            <span class="tt-state__title">No event selected</span>
-            <span>Pick an event from the calendar to read its impact analysis.</span>
+
+      <!-- Calendar 3-Slot Grid (Calendar Table, Next Hero, Event Detail) -->
+      <div class="news-calendar-grid">
+        <div class="tt-panel tt-slot tt-slot--cal">
+          <div class="tt-panel__head">
+            <h2 class="tt-panel__title">Economic Calendar Schedule</h2>
+            <span class="tt-panel__count" id="news-count">0</span>
+            <span class="tt-panel__spacer"></span>
+          </div>
+          <div class="tt-panel__body" id="news-body" data-state="loading"></div>
+        </div>
+
+        <div class="news-calendar-side">
+          <div class="tt-panel tt-slot tt-slot--next">
+            <div class="tt-panel__head">
+              <h2 class="tt-panel__title">Next Release</h2>
+              <span class="tt-panel__spacer"></span>
+              <span class="tt-hint" id="news-updated">—</span>
+            </div>
+            <div class="tt-panel__body">
+              <div id="news-hero" data-state="loading"></div>
+            </div>
+          </div>
+
+          <div class="tt-panel tt-slot tt-slot--detail">
+            <div class="tt-panel__head">
+              <h2 class="tt-panel__title">Event Detail &amp; Impact Analysis</h2>
+              <span class="tt-panel__spacer"></span>
+              <span class="tt-chip tt-chip--none" id="news-detail-impact">—</span>
+            </div>
+            <div class="tt-panel__body">
+              <div id="news-detail" data-state="empty">
+                <div class="tt-state">
+                  <span class="tt-state__title">No event selected</span>
+                  <span>Pick an event from the calendar to read its impact analysis and matched portfolio trades.</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- ═══ SUBPANEL 2: Live Breaking Headlines Wire ═════════════════════ -->
+    <div class="news-subpanel" id="news-panel-headlines" hidden>
+      <div class="news-toolbar">
+        <div class="news-filter-group" id="headlines-class-filters">
+          <span class="news-filter-lbl">Feed:</span>
+          <button type="button" class="sym-filter-pill active" data-hfilter="ALL">All Sources</button>
+          <button type="button" class="sym-filter-pill" data-hfilter="FOREX">Forex / Macro</button>
+          <button type="button" class="sym-filter-pill" data-hfilter="COMMODITY">Metals &amp; Energy</button>
+          <button type="button" class="sym-filter-pill" data-hfilter="CRYPTO">Crypto Assets</button>
+        </div>
+        <div class="news-filter-group" id="headlines-sentiment-filters">
+          <span class="news-filter-lbl">Sentiment:</span>
+          <button type="button" class="sym-filter-pill active" data-hsent="ALL">All Sentiments</button>
+          <button type="button" class="sym-filter-pill" data-hsent="BULLISH" style="color:var(--emerald-edge,#10b981);">Bullish</button>
+          <button type="button" class="sym-filter-pill" data-hsent="BEARISH" style="color:var(--crimson-stop,#ef4444);">Bearish</button>
+        </div>
+        <div class="news-actions-group">
+          <div class="symbols-search-wrap">
+            <input type="text" id="headlines-search-input" class="symbols-search-input" placeholder="Search breaking headlines (e.g. tariffs, rate cut, OPEC)..." autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <div class="headlines-stream-container" id="headlines-stream-body">
+        <div class="headlines-loading-state">
+          <div class="tt-spinner"></div>
+          <span>Synchronizing real-time financial headlines wire…</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ SUBPANEL 3: News Sentinel & At-Risk Desk ═════════════════════ -->
+    <div class="news-subpanel" id="news-panel-sentinel" hidden>
+      <div class="sentinel-desk-hero">
+        <div class="sentinel-hero-left">
+          <div class="sentinel-hero-badge">
+            <span class="cockpit-news-ticker__pulse"></span>
+            <span>NEWS SENTINEL ACTIVE</span>
+          </div>
+          <h2 class="sentinel-hero-title">Institutional Pre-Release Risk Defense Protocol</h2>
+          <p class="sentinel-hero-desc">
+            Protects open portfolio positions from high-impact macroeconomic event shocks (NFP, CPI, FOMC, Central Bank decisions). Automatically harvests runners reaching banking threshold and ratchets protection floors to prevent spread-widening blowouts.
+          </p>
+        </div>
+        <div class="sentinel-hero-metrics">
+          <div class="sentinel-metric-cell">
+            <span class="sentinel-m-k">PRE-EVENT BUFFER</span>
+            <span class="sentinel-m-v tt-num">10 min</span>
+          </div>
+          <div class="sentinel-metric-cell">
+            <span class="sentinel-m-k">POST-EVENT SHOCK</span>
+            <span class="sentinel-m-v tt-num">15 min</span>
+          </div>
+          <div class="sentinel-metric-cell">
+            <span class="sentinel-m-k">BANKING THRESHOLD</span>
+            <span class="sentinel-m-v tt-num" style="color:var(--emerald-edge,#10b981);">Peak &ge; 0.60R</span>
+          </div>
+          <div class="sentinel-metric-cell">
+            <span class="sentinel-m-k">PROTECTION FLOOR</span>
+            <span class="sentinel-m-v tt-num" style="color:var(--amber-signal,#f59e0b);">-0.25R</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sentinel-trades-section">
+        <div class="sentinel-trades-head">
+          <h3 class="sentinel-trades-title">Positions Exposed to Upcoming Macro Events (&le; 60m)</h3>
+          <span class="tt-panel__spacer"></span>
+          <span class="tt-chip tt-chip--muted" id="sentinel-risk-summary">0 Exposed Trades</span>
+        </div>
+        <div class="sentinel-trades-table-wrap" id="sentinel-trades-body">
+          <div class="tt-pad tt-hint">No active positions currently exposed to upcoming high/medium-impact macro releases.</div>
+        </div>
+      </div>
+    </div>
+
   </section>
 
   <!-- ── Analyst ────────────────────────────────────────────────────── -->
@@ -1403,7 +1564,13 @@
           <button type="button" class="tt-btn tt-btn--sm sym-batch-btn" id="btn-batch-disable" title="Disable All Symbols">
             <span>⏸️ Disable All</span>
           </button>
-          <button type="button" class="tt-btn tt-btn--sm tt-btn--primary sym-batch-btn" id="btn-batch-autotune" title="Auto-tune active universe based on AI Confluence & Setup Grades">
+          <select id="select-autotune-mode" class="sym-autotune-select" title="Auto-Tune Profile">
+            <option value="BALANCED" selected>🎯 Balanced Edge (Default)</option>
+            <option value="CONSERVATIVE">🛡️ Conservative (Grade A+/A)</option>
+            <option value="AGGRESSIVE">⚡ Aggressive (Full Discovery)</option>
+            <option value="SESSION_ADAPTIVE">🌐 Session-Adaptive</option>
+          </select>
+          <button type="button" class="tt-btn tt-btn--sm tt-btn--primary sym-batch-btn" id="btn-batch-autotune" title="Auto-tune active universe based on institutional confluence & market conditions">
             <span>🎯 Auto-Tune AI</span>
           </button>
         </div>
@@ -1569,10 +1736,10 @@
 
 <script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
 <script src="/static/js/vendor/lightweight-charts.standalone.production.js"></script>
-<script src="/static/js/hm_ui.js"></script>
-<script src="/static/js/auth.js"></script>
-<script src="/static/js/dashboard.js?v=20261019_v5"></script>
-<script src="/static/js/hm_mobile_nav.js?v=20261019_v3"></script>
-<script src="/static/js/hm_mobile_ux.js?v=20261019_v3"></script>
+<script src="/static/js/hm_ui.js?v=20261030_v2"></script>
+<script src="/static/js/auth.js?v=20261030_v2"></script>
+<script src="/static/js/dashboard.js?v=20261030_v2"></script>
+<script src="/static/js/hm_mobile_nav.js?v=20261030_v2"></script>
+<script src="/static/js/hm_mobile_ux.js?v=20261030_v2"></script>
 </body>
 </html>

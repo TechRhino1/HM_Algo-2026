@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Dict, FrozenSet, Tuple
 
-
 @dataclass(frozen=True)
 class GateSpec:
     name: str
@@ -32,7 +31,6 @@ class GateSpec:
     penalty: float = 0.0
     category: str = "quality"
     description: str = ""
-
 
 # The order is the evaluation/report order.  Keep names stable: they are
 # persisted in logs, the DB and the backtest signal scan.
@@ -57,16 +55,18 @@ GATE_SPECS: Tuple[GateSpec, ...] = (
     GateSpec("Metals Pullback OTE Proximity", "hard", category="structure"),
     GateSpec("Master Confluence Minimum", "hard", category="confluence"),
     GateSpec("Commodity Macro Alignment", "hard", category="macro"),
+    GateSpec("Macro MTF Alignment", "hard", category="macro"),
+    GateSpec("Trend Not Exhausted", "hard", category="trend"),
+    GateSpec("Premium/Discount Alignment", "hard", category="structure"),
     # ── Edge-quality gates (eligible for evidence-based softening) ──────────
     GateSpec("Regime Trend Consistency", "soft", 0.04, "regime"),
     GateSpec("AI Multi-Score Gate", "soft", 0.04, "score"),
     GateSpec("Devil Adversarial Guard", "soft", 0.04, "adversarial"),
     GateSpec("Calibrated Win Prob >= 50%", "soft", 0.04, "probability"),
-    GateSpec("Premium/Discount Alignment", "soft", 0.03, "structure"),
+
     GateSpec("Order Flow Momentum", "soft", 0.03, "orderflow"),
     GateSpec("Order Flow Alignment", "soft", 0.03, "orderflow"),
-    GateSpec("Macro MTF Alignment", "soft", 0.05, "macro"),
-    GateSpec("Trend Not Exhausted", "soft", 0.03, "trend"),
+
     GateSpec("No Order Flow Absorption Trap", "soft", 0.04, "orderflow"),
     GateSpec("Forex Prime Session", "soft", 0.02, "session"),
     GateSpec("Crypto Macro Trend Filter", "soft", 0.04, "macro"),
@@ -97,8 +97,9 @@ _ALIASES: Tuple[Tuple[str, str], ...] = (
     ("Metals BUY requires deep DISCOUNT", "Metals Premium/Discount Discipline"),
     ("Metals SELL requires deep PREMIUM", "Metals Premium/Discount Discipline"),
     ("Pullback entry too far from OTE", "Metals Pullback OTE Proximity"),
+    ("Calibrated Win Prob", "Calibrated Win Prob >= 50%"),
+    ("AI Score", "AI Multi-Score Gate"),
 )
-
 
 @lru_cache(maxsize=512)
 def canonical_gate(reason: str) -> str:
@@ -121,26 +122,20 @@ def canonical_gate(reason: str) -> str:
         return base
     return text
 
-
 def is_known_gate(reason: str) -> bool:
     return canonical_gate(reason) in _BY_NAME
-
 
 def is_hard_gate(reason: str) -> bool:
     return canonical_gate(reason) in HARD_GATES
 
-
 def penalty_for(reason: str) -> float:
     return SOFT_GATE_PENALTIES.get(canonical_gate(reason), 0.03)
-
 
 def hard_failures(reasons) -> list:
     return [r for r in reasons if is_hard_gate(r)]
 
-
 def soft_failures(reasons) -> list:
     return [r for r in reasons if not is_hard_gate(r)]
-
 
 def split_failures(reasons):
     """Classify failure reasons in one canonicalisation pass.

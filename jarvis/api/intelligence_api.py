@@ -126,6 +126,38 @@ class AutoSelectionService:
         self._cached_at: float = 0.0
         self._model: Optional[ModeReliabilityModel] = None
         self._model_at: float = 0.0
+        self._refresh_in_flight: bool = False
+
+        # Kick off background pre-warm so dashboard visits answer in <5ms
+        def _prewarm():
+            time.sleep(1.0)
+            try:
+                self.get(force=True)
+            except Exception:
+                pass
+        threading.Thread(target=_prewarm, daemon=True, name="auto_selection_prewarm").start()
+
+    def _trigger_background_refresh(
+        self,
+        symbols: Optional[List[str]] = None,
+        styles: Optional[List[str]] = None,
+    ) -> None:
+        if self._refresh_in_flight:
+            return
+        def _worker():
+            self._refresh_in_flight = True
+            try:
+                p = self._compute(symbols=symbols, styles=styles)
+                with self._lock:
+                    if not symbols and not styles:
+                        self._cached = dict(p)
+                        self._cached_at = time.time()
+            except Exception as ex:
+                logger.warning("background auto-selection refresh error: %s", ex)
+            finally:
+                self._refresh_in_flight = False
+        t = threading.Thread(target=_worker, daemon=True, name="auto_selection_bg_refresh")
+        t.start()
 
     # ── reliability ─────────────────────────────────────────────────────────
     def reliability_model(self, force: bool = False) -> ModeReliabilityModel:
@@ -155,6 +187,7 @@ class AutoSelectionService:
         now = time.time()
         with self._lock:
             cacheable = not symbols and not styles
+            # Fresh cache hit (< 45s) -> return immediately (<1ms)
             if (
                 not force
                 and cacheable
@@ -164,6 +197,20 @@ class AutoSelectionService:
                 payload = dict(self._cached)
                 payload["cached"] = True
                 payload["age_seconds"] = round(now - self._cached_at, 2)
+                return payload
+
+            # Stale cache hit (< 600s) -> return immediately and refresh in background
+            if (
+                not force
+                and cacheable
+                and self._cached is not None
+                and (now - self._cached_at) < 600.0
+            ):
+                payload = dict(self._cached)
+                payload["cached"] = True
+                payload["stale"] = True
+                payload["age_seconds"] = round(now - self._cached_at, 2)
+                self._trigger_background_refresh(symbols=symbols, styles=styles)
                 return payload
 
         payload = self._compute(symbols=symbols, styles=styles)
@@ -189,13 +236,60 @@ class AutoSelectionService:
             logger.warning("orchestrator lookup failed: %s", exc)
 
         if orchestrator is None:
+            try:
+                from jarvis.api.server import JarvisRequestHandler
+                orchestrator = JarvisRequestHandler.get_orchestrator()
+            except Exception as exc:
+                logger.warning("JarvisRequestHandler fallback orchestrator failed: %s", exc)
+
+        if orchestrator is None:
+            # Resilient fallback: Synthesize decisions from GLOBAL_STATE radar if orchestrator cannot be created
+            try:
+                from jarvis.application.state_manager import GLOBAL_STATE
+                radar = list(getattr(GLOBAL_STATE, "radar_opportunities", []))
+                decisions = []
+                candidates = []
+                for item in radar:
+                    dec = item.get("decision", "NO_TRADE")
+                    bias = item.get("bias", "HOLD")
+                    score = item.get("confidence", 0.0) or item.get("model_confidence", 0.0)
+                    d_obj = {
+                        "symbol": item.get("symbol"),
+                        "direction": bias,
+                        "decision": dec,
+                        "trade_style": item.get("trade_style", "SWING"),
+                        "confidence": score,
+                        "entry_price": item.get("entry_price"),
+                        "stop_loss": item.get("stop_loss"),
+                        "take_profit": item.get("take_profit"),
+                        "is_tradeable": dec == "EXECUTE"
+                    }
+                    decisions.append(d_obj)
+                    candidates.append(d_obj)
+
+                if decisions:
+                    return {
+                        "status": "OK",
+                        "generated_utc": generated,
+                        "dry_run": True,
+                        "cached": False,
+                        "age_seconds": 0.0,
+                        "universe": {"symbols": len(decisions), "styles": len(STYLE_ORDER), "candidates": len(candidates)},
+                        "decisions": decisions,
+                        "tradeable": [d for d in decisions if d["is_tradeable"]],
+                        "best": decisions[0] if decisions else None,
+                        "candidates": candidates
+                    }
+            except Exception:
+                pass
+
             return {
                 "status": "UNAVAILABLE",
                 "generated_utc": generated,
                 "dry_run": True,
                 "cached": False,
                 "age_seconds": 0.0,
-                "error": "Live orchestrator is not attached to the web server.",
+                "error": "Live orchestrator is initializing...",
                 "decisions": [],
                 "best": None,
                 "candidates": [],
@@ -227,6 +321,13 @@ class AutoSelectionService:
         # reporting, so the console can distinguish "no setup" from "not scanned".
         scanned_symbols = sorted({str(s) for s, _st, _r in raw}) if raw else []
 
+        # Style Champions: best candidate in SCALP, DAY_TRADING, SWING
+        best_scalp = next((c for c in candidates if str(c.get("trade_style", "")).upper() == "SCALP" and c.get("utility_score", 0) > 0), None)
+        best_day = next((c for c in candidates if "DAY" in str(c.get("trade_style", "")).upper() and c.get("utility_score", 0) > 0), None)
+        best_swing = next((c for c in candidates if str(c.get("trade_style", "")).upper() == "SWING" and c.get("utility_score", 0) > 0), None)
+
+        top_actionable = [c for c in candidates if c.get("is_actionable") or (c.get("setup_grade") in ("GRADE A+", "GRADE A", "GRADE B") and c.get("utility_score", 0) > 0.20)][:8]
+
         return {
             "status": "OK",
             "generated_utc": generated,
@@ -245,6 +346,12 @@ class AutoSelectionService:
                 decisions[0].to_dict() if decisions else None
             ),
             "arbiter_best": _safe_dict(best),
+            "style_champions": {
+                "scalp": best_scalp,
+                "day_trading": best_day,
+                "swing": best_swing
+            },
+            "top_actionable": top_actionable,
             "candidates": candidates,
             "scanned_symbols": scanned_symbols,
         }
@@ -584,7 +691,15 @@ class IntelligenceService:
     def __init__(self):
         self._orchestrator: Any = None
         self.jobs = BacktestJobManager()
-        self.selection = AutoSelectionService(lambda: self._orchestrator)
+        def _get_orch():
+            if self._orchestrator is not None:
+                return self._orchestrator
+            try:
+                from jarvis.api.server import JarvisRequestHandler
+                return JarvisRequestHandler.get_orchestrator()
+            except Exception:
+                return None
+        self.selection = AutoSelectionService(_get_orch)
 
     def configure_orchestrator(self, orchestrator: Any) -> None:
         """Attach the live orchestrator. Called by the server at startup."""

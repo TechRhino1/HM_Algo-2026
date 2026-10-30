@@ -4,11 +4,14 @@ Provides secure password verification with salted hashing, HMAC-SHA256 session t
 token validation, server-side token revocation (logout), role-based access control, and user profile management.
 """
 import os
+import re
 import time
 import hmac
 import hashlib
 import secrets
 import logging
+import sqlite3
+from jarvis.config.paths import resolve_db_path, ensure_data_dir
 try:
     import bcrypt
     _HAVE_BCRYPT = True
@@ -17,6 +20,15 @@ except Exception:  # pragma: no cover
 from typing import Dict, Any, Optional, Tuple, List, ClassVar
 
 logger = logging.getLogger("JARVIS_RemoteAuth")
+
+def _get_user_db():
+    """Returns a WAL-mode SQLite connection to the persistent user database."""
+    ensure_data_dir()
+    db_path = resolve_db_path("jarvis_users.db")
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
 
 # Persistent Secret key for HMAC token signing (auto-generated & stored on disk or loaded from env)
 def _get_or_create_secret_key() -> str:
@@ -180,8 +192,8 @@ class RemoteAuthEngine:
 
     @classmethod
     def _init_default_users(cls):
-        """Initializes default institutional users with salted SHA-256 password hashes."""
-        def _make_user_record(username: str, password_raw: str, role: str, full_name: str) -> Dict[str, Any]:
+        """Initializes default institutional users with salted hashes and synchronizes with persistent SQLite storage."""
+        def _make_user_record(username: str, password_raw: str, role: str, full_name: str, status: str = "ACTIVE") -> Dict[str, Any]:
             salt = secrets.token_hex(16)
             pwd_hash = cls._hash_password(password_raw)
             return {
@@ -190,14 +202,17 @@ class RemoteAuthEngine:
                 "full_name": full_name,
                 "salt": salt,
                 "password_hash": pwd_hash,
-                "created_at": time.time()
+                "status": status,
+                "created_at": time.time(),
+                "approved_by": "SYSTEM",
+                "approved_at": time.time()
             }
 
         # 1. Primary Admin Account - dynamically sync with current resolved password
         current_admin_pass = _resolve_admin_password()
         admin_user = ADMIN_USERNAME.strip().lower()
         if admin_user not in cls._users or not cls._verify_password(current_admin_pass, cls._users[admin_user].get("password_hash", "")):
-            cls._users[admin_user] = _make_user_record(admin_user, current_admin_pass, "ADMIN", "System Administrator")
+            cls._users[admin_user] = _make_user_record(admin_user, current_admin_pass, "ADMIN", "System Administrator", "ACTIVE")
 
         # Additional accounts are opt-in. Never create predictable credentials.
         for username, password, role, full_name in (
@@ -205,7 +220,58 @@ class RemoteAuthEngine:
             (os.environ.get("JARVIS_DEMO_USER", "demo"), os.environ.get("JARVIS_DEMO_PASS"), "VIEWER", "Demo Guest Account"),
         ):
             if password and len(password.strip()) >= 12 and username.strip().lower() not in cls._users:
-                cls._users[username.strip().lower()] = _make_user_record(username, password.strip(), role, full_name)
+                cls._users[username.strip().lower()] = _make_user_record(username, password.strip(), role, full_name, "ACTIVE")
+
+        # 2. Synchronize persistent SQLite user database
+        try:
+            conn = _get_user_db()
+            try:
+                with conn:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS users (
+                            username TEXT PRIMARY KEY,
+                            password_hash TEXT NOT NULL,
+                            full_name TEXT NOT NULL,
+                            role TEXT NOT NULL DEFAULT 'TRADER',
+                            status TEXT NOT NULL DEFAULT 'ACTIVE',
+                            created_at REAL NOT NULL,
+                            approved_by TEXT,
+                            approved_at REAL
+                        );
+                    """)
+                    # Ensure admin exists in DB
+                    admin_rec = cls._users.get(admin_user)
+                    if admin_rec:
+                        row = conn.execute("SELECT password_hash FROM users WHERE username = ?", (admin_user,)).fetchone()
+                        if not row:
+                            conn.execute("""
+                                INSERT INTO users (username, password_hash, full_name, role, status, created_at, approved_by, approved_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (admin_user, admin_rec["password_hash"], admin_rec["full_name"], "ADMIN", "ACTIVE", admin_rec["created_at"], "SYSTEM", time.time()))
+                        elif not cls._verify_password(current_admin_pass, row["password_hash"]):
+                            conn.execute("UPDATE users SET password_hash = ?, status = 'ACTIVE' WHERE username = ?", (admin_rec["password_hash"], admin_user))
+
+                    # Load registered users from DB into in-memory store
+                    for r in conn.execute("SELECT * FROM users").fetchall():
+                        u_name = str(r["username"]).lower()
+                        if u_name not in cls._users:
+                            cls._users[u_name] = {
+                                "username": u_name,
+                                "role": r["role"],
+                                "full_name": r["full_name"],
+                                "password_hash": r["password_hash"],
+                                "status": r["status"] if "status" in r.keys() else "ACTIVE",
+                                "created_at": float(r["created_at"] or 0.0),
+                                "approved_by": r["approved_by"] if "approved_by" in r.keys() else None,
+                                "approved_at": float(r["approved_at"] or 0.0) if ("approved_at" in r.keys() and r["approved_at"]) else None,
+                            }
+                        else:
+                            if "status" not in cls._users[u_name]:
+                                cls._users[u_name]["status"] = r["status"] if "status" in r.keys() else "ACTIVE"
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"Could not initialize or sync persistent user DB: {e}")
 
     @classmethod
     def _hash_password(cls, password: str, salt: str = None) -> str:
@@ -248,7 +314,7 @@ class RemoteAuthEngine:
     @classmethod
     def verify_credentials(cls, username: str, password_raw: str, client_ip: str = "") -> Tuple[Optional[Dict[str, Any]], str]:
         """
-        Strictly verifies provided username and password with rate limiting.
+        Strictly verifies provided username and password with rate limiting and account approval checks.
         Supports configured password, standard administrative aliases, and role-based accounts.
         Valid credentials automatically clear temporary rate-limit lockouts.
         Returns (user_dict, error_msg).
@@ -262,18 +328,43 @@ class RemoteAuthEngine:
 
         user_data = cls._users.get(user_key)
         if not user_data:
+            # Check DB if not present in memory
+            try:
+                conn = _get_user_db()
+                try:
+                    r = conn.execute("SELECT * FROM users WHERE username = ?", (user_key,)).fetchone()
+                    if r:
+                        user_data = {
+                            "username": user_key,
+                            "role": r["role"],
+                            "full_name": r["full_name"],
+                            "password_hash": r["password_hash"],
+                            "status": r["status"] if "status" in r.keys() else "ACTIVE",
+                            "created_at": float(r["created_at"] or 0.0),
+                            "approved_by": r["approved_by"] if "approved_by" in r.keys() else None,
+                            "approved_at": float(r["approved_at"] or 0.0) if ("approved_at" in r.keys() and r["approved_at"]) else None,
+                        }
+                        cls._users[user_key] = user_data
+                finally:
+                    conn.close()
+            except Exception:
+                pass
+
+        if not user_data:
             cls.record_failed_attempt(client_ip or "")
             cls.record_failed_attempt(user_key)
             return None, "Invalid username or password"
 
+        # Check approval status
+        status = user_data.get("status", "ACTIVE")
+        if status == "PENDING_APPROVAL":
+            return None, "Account registration is pending administrator approval."
+        if status == "REJECTED":
+            return None, "Account registration has been declined."
+        if status != "ACTIVE":
+            return None, "Account is inactive."
+
         # Verify password validity first so authentic users with correct password can always log in.
-        # There is deliberately NO fallback password here. This module used to accept three
-        # hardcoded strings ("hm2026", "hm2026admin", "admin1234") for the admin account; they
-        # were committed to a public repository, worked regardless of the configured password,
-        # and — because this branch returns before the lockout bookkeeping — were immune to
-        # brute-force lockout. Anyone who had read the source had admin on the remote terminal.
-        # The configured password is in `jarvis/.jarvis_admin_pass` (gitignored), overridable
-        # with JARVIS_ADMIN_PASS.
         is_valid = cls._verify_password(pwd, user_data.get("password_hash", ""))
 
         if is_valid:
@@ -282,7 +373,8 @@ class RemoteAuthEngine:
             return {
                 "username": user_key,
                 "role": user_data["role"],
-                "full_name": user_data["full_name"]
+                "full_name": user_data.get("full_name", user_key.title()),
+                "status": status
             }, ""
 
         # Enforce rate limiting only on failed password attempts
@@ -389,7 +481,7 @@ class RemoteAuthEngine:
                     if (now - ts) < cls._token_ttl:
                         cls._tokens[token] = now + cls._token_ttl
                         user_data = cls._users.get(username.lower())
-                        if not user_data:
+                        if not user_data or user_data.get("status", "ACTIVE") != "ACTIVE":
                             return None
                         return {
                             "valid": True,
@@ -454,7 +546,205 @@ class RemoteAuthEngine:
         # `_init_default_users()` re-sync. Fixing that needs `.jarvis_admin_pass`
         # handling and is deliberately out of scope for this task.
         cls._users[user_key]["password_hash"] = pwd_hash
+        try:
+            conn = _get_user_db()
+            try:
+                with conn:
+                    conn.execute("UPDATE users SET password_hash = ? WHERE username = ?", (pwd_hash, user_key))
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"Could not persist changed password for {user_key}: {e}")
         return True, "Password updated successfully"
+
+    @classmethod
+    def register_user(cls, username: str, password_raw: str, full_name: str = "", client_ip: str = "") -> Tuple[bool, str]:
+        """
+        Registers a new user account with PENDING_APPROVAL status.
+        Requires administrator review before the account can log in.
+        """
+        cls._init_default_users()
+        uname = (username or "").strip().lower()
+        pwd = (password_raw or "").strip()
+        name = (full_name or "").strip() or uname.title()
+
+        if not uname or len(uname) < 3 or len(uname) > 30:
+            return False, "Username must be between 3 and 30 characters"
+
+        if not re.match(r"^[a-zA-Z0-9_.-]+$", uname):
+            return False, "Username may only contain letters, numbers, underscores, and hyphens"
+
+        reserved = {"admin", "administrator", "system", "root", "guest", "anonymous", "null", "undefined"}
+        if uname in reserved:
+            return False, f"Username '{uname}' is reserved"
+
+        if len(pwd) < 8:
+            return False, "Password must be at least 8 characters long"
+        if len(pwd) > 72:
+            return False, "Password must not exceed 72 characters"
+
+        if client_ip:
+            allowed, remaining = cls.check_rate_limit(client_ip + "_reg", client_ip)
+            if not allowed:
+                return False, f"Too many registration requests. Please wait {remaining}s."
+
+        if uname in cls._users:
+            return False, "Username is already registered"
+
+        conn = _get_user_db()
+        try:
+            with conn:
+                existing = conn.execute("SELECT username FROM users WHERE username = ?", (uname,)).fetchone()
+                if existing:
+                    return False, "Username is already registered"
+                pwd_hash = cls._hash_password(pwd)
+                now = time.time()
+                conn.execute("""
+                    INSERT INTO users (username, password_hash, full_name, role, status, created_at, approved_by, approved_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (uname, pwd_hash, name, "TRADER", "PENDING_APPROVAL", now, None, None))
+                cls._users[uname] = {
+                    "username": uname,
+                    "role": "TRADER",
+                    "full_name": name,
+                    "password_hash": pwd_hash,
+                    "status": "PENDING_APPROVAL",
+                    "created_at": now,
+                    "approved_by": None,
+                    "approved_at": None
+                }
+        finally:
+            conn.close()
+
+        logger.info(f"New user registration submitted for '{uname}' ({name}) - status: PENDING_APPROVAL")
+        return True, "Registration submitted successfully! Your account is pending administrator approval."
+
+    @classmethod
+    def get_all_users(cls) -> List[Dict[str, Any]]:
+        """
+        Returns list of all users and their approval statuses.
+        Never exposes password hashes or salts.
+        """
+        cls._init_default_users()
+        users_list = []
+        conn = _get_user_db()
+        try:
+            rows = conn.execute("SELECT username, full_name, role, status, created_at, approved_by, approved_at FROM users ORDER BY created_at DESC").fetchall()
+            for r in rows:
+                users_list.append({
+                    "username": r["username"],
+                    "full_name": r["full_name"],
+                    "role": r["role"],
+                    "status": r["status"],
+                    "created_at": float(r["created_at"] or 0.0),
+                    "approved_by": r["approved_by"],
+                    "approved_at": float(r["approved_at"] or 0.0) if r["approved_at"] else None
+                })
+        finally:
+            conn.close()
+        return users_list
+
+    @classmethod
+    def approve_user(cls, username: str, role: str = "TRADER", approved_by: str = "admin") -> Tuple[bool, str]:
+        """
+        Approves a pending user registration, setting status to ACTIVE and assigning role.
+        """
+        cls._init_default_users()
+        uname = (username or "").strip().lower()
+        role_clean = (role or "TRADER").strip().upper()
+        if role_clean not in ("ADMIN", "TRADER", "VIEWER"):
+            return False, f"Invalid role '{role_clean}'. Must be ADMIN, TRADER, or VIEWER."
+
+        conn = _get_user_db()
+        try:
+            with conn:
+                row = conn.execute("SELECT * FROM users WHERE username = ?", (uname,)).fetchone()
+                if not row:
+                    return False, f"User '{uname}' does not exist"
+                now = time.time()
+                conn.execute("""
+                    UPDATE users SET status = 'ACTIVE', role = ?, approved_by = ?, approved_at = ?
+                    WHERE username = ?
+                """, (role_clean, approved_by, now, uname))
+                if uname in cls._users:
+                    cls._users[uname]["status"] = "ACTIVE"
+                    cls._users[uname]["role"] = role_clean
+                    cls._users[uname]["approved_by"] = approved_by
+                    cls._users[uname]["approved_at"] = now
+        finally:
+            conn.close()
+
+        logger.info(f"User '{uname}' approved as {role_clean} by {approved_by}")
+        return True, f"User '{uname}' successfully approved as {role_clean}"
+
+    @classmethod
+    def reject_user(cls, username: str, rejected_by: str = "admin") -> Tuple[bool, str]:
+        """
+        Rejects a user registration, setting status to REJECTED.
+        """
+        cls._init_default_users()
+        uname = (username or "").strip().lower()
+        if uname == ADMIN_USERNAME.strip().lower():
+            return False, "Cannot reject primary administrator account"
+
+        conn = _get_user_db()
+        try:
+            with conn:
+                row = conn.execute("SELECT * FROM users WHERE username = ?", (uname,)).fetchone()
+                if not row:
+                    return False, f"User '{uname}' does not exist"
+                now = time.time()
+                conn.execute("""
+                    UPDATE users SET status = 'REJECTED', approved_by = ?, approved_at = ?
+                    WHERE username = ?
+                """, (rejected_by, now, uname))
+                if uname in cls._users:
+                    cls._users[uname]["status"] = "REJECTED"
+                    cls._users[uname]["approved_by"] = rejected_by
+                    cls._users[uname]["approved_at"] = now
+        finally:
+            conn.close()
+
+        cls.revoke_user_sessions(uname)
+        logger.info(f"User '{uname}' rejected by {rejected_by}")
+        return True, f"User '{uname}' registration has been rejected"
+
+    @classmethod
+    def delete_user(cls, username: str) -> Tuple[bool, str]:
+        """
+        Deletes a user account from the system entirely.
+        """
+        cls._init_default_users()
+        uname = (username or "").strip().lower()
+        if uname == ADMIN_USERNAME.strip().lower():
+            return False, "Cannot delete primary administrator account"
+
+        conn = _get_user_db()
+        try:
+            with conn:
+                row = conn.execute("SELECT * FROM users WHERE username = ?", (uname,)).fetchone()
+                if not row:
+                    return False, f"User '{uname}' does not exist"
+                conn.execute("DELETE FROM users WHERE username = ?", (uname,))
+                cls._users.pop(uname, None)
+        finally:
+            conn.close()
+
+        cls.revoke_user_sessions(uname)
+        logger.info(f"User '{uname}' deleted from system")
+        return True, f"User '{uname}' deleted successfully"
+
+    @classmethod
+    def revoke_user_sessions(cls, username: str):
+        """Revokes all active session tokens associated with a given username."""
+        uname = (username or "").strip().lower()
+        for token in list(cls._tokens):
+            try:
+                parts = token.split(":")
+                if len(parts) >= 1 and parts[0].lower() == uname:
+                    cls.revoke_token(token)
+            except Exception:
+                pass
 
 
 # Auto-initialize default users on module load

@@ -1,4 +1,5 @@
 import logging
+import math
 from typing import Dict, Any
 
 logger = logging.getLogger("JARVIS_PositionSizer")
@@ -6,6 +7,21 @@ logger = logging.getLogger("JARVIS_PositionSizer")
 class PositionSizer:
     """Calculates risk-controlled lot sizes adjusted for symbol contract specifications and account balance."""
     
+    @staticmethod
+    def get_max_lot_cap(account_balance: float) -> float:
+        """Returns safe maximum lot size cap based on account equity to protect against errant large lot entries."""
+        if account_balance <= 0:
+            return 0.01
+        if account_balance < 1000.0:
+            return 0.10
+        if account_balance < 5000.0:
+            return 0.50
+        if account_balance < 25000.0:
+            return 2.50
+        if account_balance < 100000.0:
+            return 10.0
+        return max(0.01, round(account_balance / 10000.0, 2))
+
     @staticmethod
     def calculate_lot_size(
         account_balance: float,
@@ -158,9 +174,10 @@ class PositionSizer:
         dollar_risk_per_unit = get_dollar_risk_per_price_unit(sym_key, symbol_info)
         dollar_risk_per_lot = risk_distance * dollar_risk_per_unit
 
-        min_vol = symbol_info.get("volume_min", 0.01) if symbol_info else 0.01
-        max_vol = symbol_info.get("volume_max", 100.0) if symbol_info else 100.0
-        vol_step = symbol_info.get("volume_step", 0.01) if symbol_info else 0.01
+        min_vol = float(symbol_info.get("volume_min") or 0.01) if symbol_info else 0.01
+        max_vol = float(symbol_info.get("volume_max") or 100.0) if symbol_info else 100.0
+        vol_step = float(symbol_info.get("volume_step") or 0.01) if symbol_info else 0.01
+        vol_step = max(1e-4, vol_step)
 
         if dollar_risk_per_lot <= 0:
             return 0.0
@@ -212,7 +229,9 @@ class PositionSizer:
         if final_lots <= 0.0:
             return 0.0
 
-        # Volume step rounding (e.g. step = 0.01)
-        final_lots = max(min_vol, round(final_lots / vol_step) * vol_step)
-        return round(final_lots, 2)
+        # Volume step rounding (e.g. step = 0.01 for FX, 1.0 for indices, 0.001 for crypto)
+        steps = round((final_lots - min_vol) / vol_step)
+        final_lots = min(max_vol, max(min_vol, min_vol + steps * vol_step))
+        digits = max(0, min(4, int(round(-math.log10(vol_step))))) if vol_step < 1.0 else 0
+        return round(final_lots, digits)
 

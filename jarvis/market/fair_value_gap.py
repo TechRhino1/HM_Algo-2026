@@ -158,32 +158,48 @@ class FairValueGapEngine:
         unmitigated_bullish_fvgs = [f for f in bullish_fvgs if not f['mitigated']]
         unmitigated_bearish_fvgs = [f for f in bearish_fvgs if not f['mitigated']]
         
-        if unmitigated_bullish_fvgs:
-            result['active_bullish_fvg'] = unmitigated_bullish_fvgs[-1]
-            if result['active_bullish_fvg']['bottom'] <= current_price <= result['active_bullish_fvg']['top']:
+        for f in reversed(unmitigated_bullish_fvgs):
+            if f['bottom'] <= current_price <= f['top']:
+                result['active_bullish_fvg'] = f
                 result['price_in_fvg'] = True
                 result['price_in_bullish_fvg'] = True
+                break
+        else:
+            if unmitigated_bullish_fvgs:
+                result['active_bullish_fvg'] = unmitigated_bullish_fvgs[-1]
                 
-        if unmitigated_bearish_fvgs:
-            result['active_bearish_fvg'] = unmitigated_bearish_fvgs[-1]
-            if result['active_bearish_fvg']['bottom'] <= current_price <= result['active_bearish_fvg']['top']:
+        for f in reversed(unmitigated_bearish_fvgs):
+            if f['bottom'] <= current_price <= f['top']:
+                result['active_bearish_fvg'] = f
                 result['price_in_fvg'] = True
                 result['price_in_bearish_fvg'] = True
+                break
+        else:
+            if unmitigated_bearish_fvgs:
+                result['active_bearish_fvg'] = unmitigated_bearish_fvgs[-1]
 
         unmitigated_bullish_obs = [ob for ob in bullish_obs if not ob['mitigated']]
         unmitigated_bearish_obs = [ob for ob in bearish_obs if not ob['mitigated']]
         
-        if unmitigated_bullish_obs:
-            result['active_bullish_ob'] = unmitigated_bullish_obs[-1]
-            if result['active_bullish_ob']['bottom'] <= current_price <= result['active_bullish_ob']['top']:
+        for ob in reversed(unmitigated_bullish_obs):
+            if ob['bottom'] <= current_price <= ob['top']:
+                result['active_bullish_ob'] = ob
                 result['price_in_ob'] = True
                 result['price_in_bullish_ob'] = True
+                break
+        else:
+            if unmitigated_bullish_obs:
+                result['active_bullish_ob'] = unmitigated_bullish_obs[-1]
                 
-        if unmitigated_bearish_obs:
-            result['active_bearish_ob'] = unmitigated_bearish_obs[-1]
-            if result['active_bearish_ob']['bottom'] <= current_price <= result['active_bearish_ob']['top']:
+        for ob in reversed(unmitigated_bearish_obs):
+            if ob['bottom'] <= current_price <= ob['top']:
+                result['active_bearish_ob'] = ob
                 result['price_in_ob'] = True
                 result['price_in_bearish_ob'] = True
+                break
+        else:
+            if unmitigated_bearish_obs:
+                result['active_bearish_ob'] = unmitigated_bearish_obs[-1]
 
         # 3. Confluence Detection (Active FVG overlaps with Active OB of SAME direction)
         active_fvgs = []

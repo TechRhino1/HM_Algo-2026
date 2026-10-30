@@ -52,6 +52,27 @@ def _hermetic_drawdown_guard(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_news_disk_cache(tmp_path):
+    """Give every test its own news calendar cache.
+
+    `LiveNewsEngine` writes `data/news_calendar_cache.json` after a successful
+    fetch. A test that fetched real feeds (the unified-state contract test)
+    left that file behind, and later calendar tests inherited it as a fresh
+    cache -- so they never called their mocked fetch and failed for reasons
+    unrelated to the code under test. The live operator's calendar is also not
+    a test fixture.
+    """
+    from jarvis.market.news import LiveNewsEngine
+
+    original = LiveNewsEngine.DISK_CACHE_PATH
+    LiveNewsEngine.DISK_CACHE_PATH = str(tmp_path / "news_calendar_cache.json")
+    try:
+        yield
+    finally:
+        LiveNewsEngine.DISK_CACHE_PATH = original
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_trade_journal(monkeypatch):
     """Keep tests out of the real trade journal.
 

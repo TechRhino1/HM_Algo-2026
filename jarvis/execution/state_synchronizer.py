@@ -97,31 +97,38 @@ class MT5StateSynchronizer:
 
             # Detect newly closed positions
             closed_tickets = self._last_position_tickets - current_tickets
-            for t in closed_tickets:
-                logger.info(f"State Reconciliation: Position #{t} closed on broker terminal.")
-                self.event_bus.publish_sync("POSITION_CLOSED", {"ticket": t})
-                self._last_position_volumes.pop(t, None)
-                
-                # Fetch deal history for ML feedback loop (§17)
+            for t in list(closed_tickets):
                 try:
-                    import MetaTrader5 as mt5
-                    with self.mt5_client._shared_lock:
-                        deals = mt5.history_deals_get(position=t) if self.mt5_client.mode != "paper" else None
-                    if deals:
-                        total_pnl = sum(d.profit + d.swap + d.commission for d in deals)
-                        is_win = 1 if total_pnl > 0 else 0
-                        symbol = deals[0].symbol if deals else "UNKNOWN"
-                        exit_price = float(deals[-1].price) if len(deals) > 1 else float(deals[0].price)
-                        self.event_bus.publish_sync('trade_closed', {
-                            'ticket': t,
-                            'symbol': symbol,
-                            'pnl': total_pnl,
-                            'is_win': is_win,
-                            'exit_price': exit_price,
-                            'equity': account.equity
-                        })
-                except Exception as e:
-                    logger.error(f"Failed to fetch deal history for closed position #{t}: {e}")
+                    logger.info(f"State Reconciliation: Position #{t} closed on broker terminal.")
+                    self.event_bus.publish_sync("POSITION_CLOSED", {"ticket": t})
+                    self._last_position_volumes.pop(t, None)
+                    
+                    # Fetch deal history for ML feedback loop (§17)
+                    try:
+                        deals = None
+                        if self.mt5_client.mode != "paper":
+                            import MetaTrader5 as mt5
+                            with self.mt5_client._shared_lock:
+                                deals = mt5.history_deals_get(position=t)
+                        if deals:
+                            total_pnl = sum(d.profit + d.swap + d.commission for d in deals)
+                            is_win = 1 if total_pnl > 0 else 0
+                            symbol = deals[0].symbol if deals else "UNKNOWN"
+                            exit_price = float(deals[-1].price) if len(deals) > 1 else float(deals[0].price)
+                            self.event_bus.publish_sync('trade_closed', {
+                                'ticket': t,
+                                'symbol': symbol,
+                                'pnl': total_pnl,
+                                'is_win': is_win,
+                                'exit_price': exit_price,
+                                'equity': account.equity
+                            })
+                    except Exception as e:
+                        logger.error(f"Failed to fetch deal history for closed position #{t}: {e}")
+                except Exception as ex:
+                    logger.error(f"Error handling closed ticket #{t}: {ex}")
+                finally:
+                    self._last_position_tickets.discard(t)
 
             # Detect newly opened positions
             opened_tickets = current_tickets - self._last_position_tickets

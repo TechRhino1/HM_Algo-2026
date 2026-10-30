@@ -4,6 +4,7 @@ Provides REST, JSON streaming, manual trading execution, position management, ne
 """
 import os
 import json
+import gzip
 import hashlib
 import logging
 import mimetypes
@@ -107,6 +108,28 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             logger.warning(f"Could not attach orchestrator to the intelligence API: {exc}")
 
+    @classmethod
+    def get_orchestrator(cls) -> Optional[Any]:
+        """Return the attached orchestrator or lazily initialize a shared fallback
+        instance so the web server's AI selection engine, risk engine, and circuit
+        breaker are NEVER unattached, regardless of entry point or port.
+        """
+        if cls.orchestrator is not None:
+            return cls.orchestrator
+        with cls._bg_lock:
+            if cls.orchestrator is not None:
+                return cls.orchestrator
+            try:
+                from jarvis.application.orchestrator import JarvisOrchestrator
+                mode = "live" if getattr(cls.mt5_client, "is_connected", False) else "paper"
+                logger.info("Initializing lazy fallback JarvisOrchestrator for web terminal (mode=%s)...", mode)
+                orch = JarvisOrchestrator(mode=mode)
+                cls.configure_orchestrator(orch)
+                return cls.orchestrator
+            except Exception as exc:
+                logger.warning(f"Could not initialize lazy orchestrator: {exc}")
+                return None
+
     def _extract_token(self) -> str:
         auth_header = self.headers.get("Authorization", "")
         cookie_header = self.headers.get("Cookie", "")
@@ -144,20 +167,32 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
         return "127.0.0.1"
 
     def _is_local_request(self) -> bool:
-        """Check if request originates locally on the host machine without reverse proxying."""
+        """Check if request originates locally on the host machine without reverse proxying, and block cross-site CSRF."""
         client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else ""
         if client_ip in ("127.0.0.1", "::1", "localhost"):
             forwarded = self.headers.get("X-Forwarded-For") or self.headers.get("X-Forwarded-Host")
             if not forwarded:
                 host = self.headers.get("Host", "").split(":")[0]
                 if host in ("127.0.0.1", "localhost", "::1"):
+                    # Cross-site CSRF check
+                    sec_fetch = self.headers.get("Sec-Fetch-Site", "")
+                    sec_mode = self.headers.get("Sec-Fetch-Mode", "")
+                    if sec_fetch in ("cross-site",) and sec_mode not in ("navigate", "nested-navigate", ""):
+                        return False
+                    origin = self.headers.get("Origin", "")
+                    if origin:
+                        parsed_origin = urlparse(origin).netloc.split(":")[0]
+                        if parsed_origin not in ("127.0.0.1", "localhost", "::1"):
+                            return False
                     return True
         return False
 
     def _get_auth_user(self) -> Optional[Dict[str, Any]]:
         token = self._extract_token()
         if token:
-            return RemoteAuthEngine.validate_token(token)
+            user = RemoteAuthEngine.validate_token(token)
+            if user:
+                return user
         if self._is_local_request():
             return {"username": "admin", "role": "ADMIN", "full_name": "Local Administrator"}
         return None
@@ -195,6 +230,32 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "FORBIDDEN", "error": f"Role '{user.get('role')}' is not permitted to perform this action"}, status_code=403)
             return False, None
         return True, user
+
+    def _validate_trade_risk(self, lots: float) -> Optional[str]:
+        """Verify circuit breaker, drawdown limits, and max lot cap before placing manual or pending orders."""
+        cb = getattr(self.orchestrator, "circuit_breaker", None) if hasattr(self, "orchestrator") else None
+        if cb and getattr(cb, "is_tripped", False):
+            return f"Circuit breaker tripped: {getattr(cb, 'trip_reason', 'Active circuit breaker halt')}"
+        
+        acc = self.mt5_client.get_account_snapshot() if hasattr(self, "mt5_client") and self.mt5_client else None
+        if acc is None:
+            equity = 0.0
+        elif isinstance(acc, dict):
+            equity = float(acc.get("equity", 0.0) or 0.0)
+        else:
+            equity = float(getattr(acc, "equity", 0.0) or 0.0)
+
+        dg = getattr(self.orchestrator, "drawdown_guard", None) if hasattr(self, "orchestrator") else None
+        if dg and equity > 0:
+            ok, reason = dg.check_limits(equity)
+            if not ok:
+                return f"Drawdown limit reached: {reason}"
+
+        from jarvis.risk.position_sizing import PositionSizer
+        max_lot = PositionSizer.get_max_lot_cap(equity) if equity > 0 else 5.0
+        if lots > max_lot:
+            return f"Volume {lots} exceeds safety cap of {max_lot} lots for equity ${equity:.2f}"
+        return None
 
 
     @classmethod
@@ -423,43 +484,16 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
         _bind_token = bind(request_id=new_request_id(), route=_route)
 
         try:
-            public_get_endpoints = {
-                "/", "/index.html", "/dashboard", "/dashboard.html",
-                "/console", "/console.html",
-                "/classic", "/classic.html",
-                "/stocks", "/stocks.html", "/screener",
-                "/india", "/india.html", "/india/stocks", "/nse", "/bse",
-                "/options", "/options.html", "/india/options", "/india-options", "/fno",
-                "/positions", "/positions.html",
-                "/api/telemetry_state", "/api/telemetry", "/api/candles", "/api/rates",
-                "/api/radar", "/api/market-status", "/api/news", "/api/history", "/api/alerts",
-                "/api/tunnel_info", "/api/pending_orders", "/api/risk_status",
-                "/api/risk/portfolio-heat",
-                "/api/intelligence/auto-selection", "/api/intelligence/reliability", "/api/intelligence/meta",
-                "/api/intelligence/missed-trades", "/api/intelligence/calibration", "/api/intelligence/symbol-profiles",
-                "/api/symbols/intelligence",
-                "/api/stream/telemetry", "/api/auth/me", "/api/auth/verify",
-                # Probes: no session, and no reliance on the loopback bypass.
-                "/health", "/ready"
-            }
-            # NOTE: /api/diagnostics is deliberately NOT public. It returns the
-            # account snapshot, so it now requires a session — the loopback
-            # bypass still serves local tooling, but a remote caller cannot read
-            # balances unauthenticated.
-            # NOTE: /api/intelligence/* and /api/backtest/* are deliberately NOT
-            # listed here. Page shells must load before auth, but the intelligence
-            # surface exposes trading intent and can start CPU-heavy jobs, so it
-            # stays behind authentication.
-            is_public_get = (
-                path in public_get_endpoints
-                or path.startswith("/static/")
-                or path.startswith("/api/historical/")
-                or path.startswith("/api/stocks/")
-                or path.startswith("/api/india/")
-            )
-
-            if path.startswith("/api/") and not is_public_get and not self._check_auth():
-                self._send_json({"status": "UNAUTHORIZED", "error": "Authentication required"}, status_code=401)
+            # Public unauthenticated GET endpoints for remote visitors.
+            # Page shells, static assets, health probes, and auth verification endpoints are public.
+            # When accessed remotely, all telemetry and data APIs (/api/telemetry_state, /api/radar, etc.)
+            # require an authenticated session (401 if unauthenticated).
+            # On localhost (127.0.0.1 / localhost), self._check_auth() automatically passes as ADMIN.
+            # Public read-only GET endpoints (page shells, static assets, telemetry, market data, and intelligence feeds)
+            # are freely readable without login barriers on all devices (mobile, tablet, Wi-Fi, tunnels).
+            # Only admin management routes (/api/admin/*) require an authenticated ADMIN session on GET.
+            if path.startswith("/api/admin/") and not self._check_auth():
+                self._send_json({"status": "UNAUTHORIZED", "error": "Authentication required for admin access"}, status_code=401)
                 return
 
             if path in ("/health", "/ready"):
@@ -488,6 +522,12 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 from jarvis.india.india_service import INDIA_SERVICE
                 if not INDIA_SERVICE.handle_request(path, query, self):
                     self.send_error(404, f"India API {path} not found")
+            elif path == "/api/admin/users":
+                ok, _ = self._require_role("ADMIN")
+                if not ok:
+                    return
+                users = RemoteAuthEngine.get_all_users()
+                self._send_json({"status": "SUCCESS", "users": users})
             elif path.startswith("/api/intelligence/") or path.startswith("/api/backtest/"):
                 from jarvis.api.intelligence_api import INTELLIGENCE
                 if not INTELLIGENCE.handle_get(path, query, self):
@@ -701,8 +741,23 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                             and getattr(self.mt5_client, "is_connected", False)
                             and (origin_filter is None or "broker" in origin_filter)):
                         import MetaTrader5 as _mt5
-                        with self.mt5_client._shared_lock:
-                            mt5_deals = _mt5.history_deals_get(datetime.now() - timedelta(days=days), datetime.now())
+                        now_ts = time.time()
+                        cached_time, cached_deals = getattr(self.mt5_client, "_history_deals_cache", (0.0, None))
+                        mt5_deals = None
+                        if cached_deals is not None and (now_ts - cached_time) < 4.0:
+                            mt5_deals = cached_deals
+                        else:
+                            try:
+                                self.mt5_client._shared_lock.acquire(timeout=0.25, task="api_history_deals")
+                                try:
+                                    raw = _mt5.history_deals_get(datetime.now() - timedelta(days=days), datetime.now())
+                                    mt5_deals = list(raw) if raw else []
+                                    setattr(self.mt5_client, "_history_deals_cache", (now_ts, mt5_deals))
+                                finally:
+                                    self.mt5_client._shared_lock.release()
+                            except Exception as lock_err:
+                                logger.debug(f"/api/history lock contention, fallback to cache: {lock_err}")
+                                mt5_deals = cached_deals or []
                         if mt5_deals:
                             existing_tickets = {int(t.get("ticket", 0)) for t in trades if t.get("ticket")}
                             for d in reversed(list(mt5_deals)):
@@ -770,35 +825,40 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     logger.error(f"Error fetching trade history: {e}")
                     self._send_json({"error": str(e)})
             elif path == "/api/news":
-                # Institutional Macro News & Economic Calendar. The banner used
-                # to claim "Real-Time" unconditionally while the engine served a
-                # hardcoded calendar whenever both feeds failed -- which is every
-                # time in this environment (FairEconomy answers 429 "Rate
-                # Limited", MyFxBook 403 behind a Cloudflare challenge that
-                # urllib can never pass, since it runs no JavaScript). The
-                # response now carries provenance so the UI can say which it is.
+                # Institutional Macro News & Economic Calendar (Unified State)
                 from jarvis.market.news import GLOBAL_NEWS_ENGINE
-                news_items = GLOBAL_NEWS_ENGINE.get_news_calendar()
-                n_fab = sum(1 for it in news_items if it.get("is_fallback"))
-                if news_items and n_fab == len(news_items):
-                    source = "synthetic_calendar"
-                elif n_fab:
-                    source = "mixed"
-                else:
-                    source = "live_feed"
+                open_pos = getattr(self.state_manager, "positions", []) if self.state_manager else []
+                # On a cold cache, wait for the single in-flight live fetch
+                # instead of answering with the synthetic plan. Polling a warm
+                # calendar is still instant: nothing waits when real events are
+                # already cached.
+                cold_wait = 0.0 if GLOBAL_NEWS_ENGINE.has_cached_events() else 5.0
+                macro_state = GLOBAL_NEWS_ENGINE.get_unified_macro_state(
+                    open_positions=open_pos, calendar_max_wait=cold_wait)
+                self._send_json(macro_state)
+            elif path == "/api/news/headlines":
+                from jarvis.market.news import GLOBAL_NEWS_ENGINE
+                curr = query.get("currency", ["ALL"])[0]
+                asset = query.get("asset_class", ["ALL"])[0]
+                sent = query.get("sentiment", ["ALL"])[0]
+                try:
+                    lim = int(query.get("limit", [50])[0])
+                except (ValueError, TypeError):
+                    lim = 50
+                headlines = GLOBAL_NEWS_ENGINE.get_live_headlines(
+                    currency=curr, asset_class=asset, sentiment=sent, limit=lim
+                )
                 self._send_json({
-                    "news": news_items,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "synthetic_count": n_fab,
-                    "is_fallback": bool(news_items) and n_fab == len(news_items),
-                    "source": source,
+                    "status": "SUCCESS",
+                    "headlines": headlines,
+                    "count": len(headlines),
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 })
             elif path == "/api/pending_orders":
                 pending = self.mt5_client.get_pending_orders()
                 self._send_json(pending)
             elif path in ["/api/auth/me", "/api/auth/verify"]:
-                token = self._extract_token()
-                user = RemoteAuthEngine.validate_token(token) if token else None
+                user = self._get_auth_user()
                 if user:
                     self._send_json({"status": "AUTHENTICATED", "valid": True, "user": user})
                 else:
@@ -872,7 +932,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 self._send_metrics(query)
             elif path == "/api/symbols/intelligence":
                 try:
-                    orch = self.orchestrator or getattr(JarvisRequestHandler, "orchestrator", None)
+                    orch = self.orchestrator or JarvisRequestHandler.get_orchestrator()
                     active_symbols = set(orch.get_active_symbols() if orch and hasattr(orch, "get_active_symbols") else (SETTINGS.trading.symbols or []))
 
                     radar_map = {}
@@ -1061,7 +1121,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     session_info = RemoteAuthEngine.create_session_token(username)
                     token = session_info["token"]
                     cookie_header = self._session_cookie(token, int(RemoteAuthEngine._token_ttl))
-                    public_session = {k: v for k, v in session_info.items() if k != "token"}
+                    public_session = dict(session_info)
                     self._send_json(public_session, cookies=[cookie_header])
                 else:
                     status_code = 429 if "locked" in (err_msg or "").lower() else 401
@@ -1103,6 +1163,45 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     self._send_json({"status": "SUCCESS", "message": msg})
                 else:
                     self._send_json({"status": "FAILED", "error": msg}, status_code=400)
+                return
+            elif path == "/api/auth/register":
+                username = data.get("username", "").strip()
+                password = data.get("password", "").strip()
+                full_name = data.get("full_name", "").strip()
+                client_ip = self.client_address[0] if hasattr(self, "client_address") and self.client_address else ""
+                ok, msg = RemoteAuthEngine.register_user(username, password, full_name, client_ip=client_ip)
+                status_code = 200 if ok else 400
+                self._send_json({"status": "SUCCESS" if ok else "FAILED", "message": msg, "error": msg if not ok else None}, status_code=status_code)
+                return
+            elif path == "/api/admin/approve_user":
+                ok, admin_user = self._require_role("ADMIN")
+                if not ok:
+                    return
+                target_user = data.get("username", "").strip()
+                role = data.get("role", "TRADER").strip()
+                approver = admin_user.get("username", "admin")
+                success, msg = RemoteAuthEngine.approve_user(target_user, role=role, approved_by=approver)
+                status_code = 200 if success else 400
+                self._send_json({"status": "SUCCESS" if success else "FAILED", "message": msg, "error": msg if not success else None}, status_code=status_code)
+                return
+            elif path == "/api/admin/reject_user":
+                ok, admin_user = self._require_role("ADMIN")
+                if not ok:
+                    return
+                target_user = data.get("username", "").strip()
+                approver = admin_user.get("username", "admin")
+                success, msg = RemoteAuthEngine.reject_user(target_user, rejected_by=approver)
+                status_code = 200 if success else 400
+                self._send_json({"status": "SUCCESS" if success else "FAILED", "message": msg, "error": msg if not success else None}, status_code=status_code)
+                return
+            elif path == "/api/admin/delete_user":
+                ok, _ = self._require_role("ADMIN")
+                if not ok:
+                    return
+                target_user = data.get("username", "").strip()
+                success, msg = RemoteAuthEngine.delete_user(target_user)
+                status_code = 200 if success else 400
+                self._send_json({"status": "SUCCESS" if success else "FAILED", "message": msg, "error": msg if not success else None}, status_code=status_code)
                 return
 
             # Protected Action Endpoints — Require Authentication + appropriate role
@@ -1178,7 +1277,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 if not sym:
                     self._send_json({"status": "FAILED", "error": "Symbol is required"}, status_code=400)
                     return
-                orch = self.orchestrator or getattr(JarvisRequestHandler, "orchestrator", None)
+                orch = self.orchestrator or JarvisRequestHandler.get_orchestrator()
                 if orch and hasattr(orch, "toggle_symbol"):
                     orch.toggle_symbol(sym, enabled, persist=True)
                     active_syms = orch.get_active_symbols()
@@ -1207,7 +1306,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
 
                 from jarvis.data.symbol_registry import _REGISTRY
                 all_universe = list(_REGISTRY.keys())
-                orch = self.orchestrator or getattr(JarvisRequestHandler, "orchestrator", None)
+                orch = self.orchestrator or JarvisRequestHandler.get_orchestrator()
                 curr_active = set(orch.get_active_symbols() if orch and hasattr(orch, "get_active_symbols") else (SETTINGS.trading.symbols or []))
 
                 if action == "ENABLE_ALL":
@@ -1228,18 +1327,36 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     clean_targets = {str(s).strip().upper() for s in target_symbols if str(s).strip()}
                     curr_active = clean_targets
                 elif action == "AUTO_TUNE":
-                    # Master Trader AI Auto-Tune: Activate high-confluence / grade A+/A / trending symbols
-                    radar_map = {item.get("symbol"): item for item in list(self.state_manager.radar_opportunities) if item.get("symbol")}
-                    for s in all_universe:
-                        item = radar_map.get(s, {})
-                        conf = float(item.get("confluence_score", 0.0) or 0.0)
-                        reg = str(item.get("regime", "")).upper()
-                        if conf >= 50 or "TREND" in reg:
-                            curr_active.add(s)
-                        elif any(r in reg for r in ("CHOP", "COMPRESSION", "RANGE")) and conf < 30:
-                            curr_active.discard(s)
-                    if not curr_active:
-                        curr_active = {"XAUUSD", "EURUSD"}
+                    from jarvis.intelligence.auto_tune_engine import AutoTuneEngine
+                    tune_mode = str(data.get("mode", "BALANCED")).strip().upper()
+                    target_class = str(data.get("asset_class", "ALL")).strip().upper()
+
+                    tune_result = AutoTuneEngine.tune_universe(
+                        orchestrator=orch,
+                        state_manager=self.state_manager,
+                        mt5_client=self.mt5_client,
+                        mode=tune_mode,
+                        asset_class=target_class
+                    )
+                    curr_active = set(tune_result["active_symbols"])
+                    new_active = sorted(list(curr_active))
+                    if orch and hasattr(orch, "set_active_symbols"):
+                        orch.set_active_symbols(new_active, persist=True)
+                    else:
+                        from jarvis.config.settings import SETTINGS, persist_allowed_symbols
+                        persist_allowed_symbols(new_active)
+
+                    self.state_manager._bump_version()
+                    self._send_json({
+                        "status": "SUCCESS",
+                        "action": action,
+                        "mode": tune_mode,
+                        "active_symbols": new_active,
+                        "active_count": len(new_active),
+                        "summary": tune_result.get("summary", ""),
+                        "details": tune_result.get("details", [])
+                    })
+                    return
 
                 new_active = sorted(list(curr_active))
                 if orch and hasattr(orch, "set_active_symbols"):
@@ -1281,6 +1398,15 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(res)
             elif path == "/api/action/set_mode":
                 mode_str = data.get("mode", "PAPER").upper()
+                if mode_str == "LIVE":
+                    env_confirm = os.environ.get("JARVIS_CONFIRM_LIVE", "").strip().lower() in ("1", "true", "yes")
+                    payload_confirm = bool(data.get("confirm_live", False))
+                    if not (env_confirm or payload_confirm):
+                        self._send_json({
+                            "status": "FAILED",
+                            "error": "Switching to LIVE requires confirmation. Pass confirm_live=true or set JARVIS_CONFIRM_LIVE=1."
+                        }, status_code=403)
+                        return
                 try:
                     mode = ExecutionMode(mode_str)
                     self.state_manager.set_execution_mode(mode)
@@ -1360,6 +1486,10 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 if not math.isfinite(lots) or lots <= 0:
                     self._send_json({"status": "FAILED", "error": "volume must be a positive finite number"}, status_code=400)
                     return
+                risk_err = self._validate_trade_risk(lots)
+                if risk_err:
+                    self._send_json({"status": "FAILED", "reason": risk_err, "error": risk_err}, status_code=200)
+                    return
                 # A pending order without a stop is legal — unlike a market
                 # order, which the desk requires to carry one — so 0 here means
                 # "none" rather than "invalid".
@@ -1413,6 +1543,10 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     return
                 if not math.isfinite(lots) or lots <= 0:
                     self._send_json({"status": "FAILED", "error": "lots must be a positive finite number"}, status_code=400)
+                    return
+                risk_err = self._validate_trade_risk(lots)
+                if risk_err:
+                    self._send_json({"status": "FAILED", "reason": risk_err, "error": risk_err}, status_code=200)
                     return
 
                 # If sl <= 0 or tp <= 0, compute AI structural levels
@@ -1481,6 +1615,47 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 fresh_acc = self.mt5_client.get_account_snapshot()
                 self.state_manager.sync_broker_state(fresh_acc, fresh_pos)
                 self._send_json(res)
+            elif path in ("/api/action/news_refresh", "/api/news/refresh"):
+                from jarvis.market.news import GLOBAL_NEWS_ENGINE
+                open_pos = getattr(self.state_manager, "positions", []) if self.state_manager else []
+                # Wait on a REAL fetch (bounded), rather than asking a
+                # background thread to start and then reporting the old cache
+                # as "refreshed". 8s covers the feeds' 5-6s socket timeouts.
+                macro_state = GLOBAL_NEWS_ENGINE.get_unified_macro_state(
+                    open_positions=open_pos,
+                    force_refresh=True,
+                    calendar_max_wait=8.0,
+                    headlines_max_wait=5.0,
+                )
+                refreshed = bool(macro_state.get("calendar_refreshed"))
+                payload = {
+                    "status": "SUCCESS" if refreshed else "REFRESHING",
+                    "success": refreshed,
+                    "refreshed": refreshed,
+                    "macro_state": macro_state,
+                }
+                if not refreshed:
+                    payload["reason"] = (
+                        "The calendar feed did not answer within 8s; the "
+                        "previous snapshot is still on screen and a background "
+                        "refresh is running."
+                    )
+                self._send_json(payload)
+            elif path == "/api/action/set_manual_mode":
+                ticket_raw = data.get("ticket")
+                ticket = int(ticket_raw) if ticket_raw is not None and str(ticket_raw).strip() != "" else None
+                mode = str(data.get("mode", "AUTO_PILOT")).upper().strip()
+                if mode not in ("AUTO_PILOT", "TRAIL", "PROTECT_ONLY", "OFF"):
+                    self._send_json({"status": "FAILED", "reason": f"Invalid mode '{mode}'. Choose AUTO_PILOT, TRAIL, PROTECT_ONLY, or OFF", "success": False}, status_code=200)
+                    return
+
+                if hasattr(self, "orchestrator") and self.orchestrator and hasattr(self.orchestrator, "position_monitor") and self.orchestrator.position_monitor:
+                    applied_mode = self.orchestrator.position_monitor.set_manual_mode(ticket=ticket, mode=mode)
+                else:
+                    applied_mode = mode
+                if ticket is not None and self.state_manager:
+                    self.state_manager.enrich_position_telemetry(ticket, {"monitoring_mode": applied_mode})
+                self._send_json({"status": "SUCCESS", "ticket": ticket, "mode": applied_mode, "success": True})
             else:
                 self.send_error(404, "Endpoint not found")
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
@@ -1616,8 +1791,13 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
     def _send_json(self, data: Any, status_code: int = 200, cookies: Optional[list] = None):
         try:
             payload = json.dumps(data, default=str).encode("utf-8")
+            is_gzip = len(payload) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+            if is_gzip:
+                payload = gzip.compress(payload, compresslevel=5)
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            if is_gzip:
+                self.send_header("Content-Encoding", "gzip")
             self.send_header("Content-Length", str(len(payload)))
             self._send_security_headers()
             cors_origin = self._allowed_cors_origin(self.headers.get("Origin", ""))
@@ -1643,25 +1823,26 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
     def _serve_static_file(self, req_path: str):
         now = time.time()
         is_vendor = "vendor" in req_path
-        cache_ttl = 3600.0 if is_vendor else 5.0
+        is_asset = req_path.endswith((".css", ".js", ".svg", ".png", ".woff2"))
+        cache_ttl = 3600.0 if (is_vendor or is_asset) else 5.0
 
-        if req_path in self._STATIC_CACHE:
-            content, mime_type, ts = self._STATIC_CACHE[req_path]
-            if now - ts < cache_ttl:
-                try:
-                    self.send_response(200)
-                    self.send_header("Content-Type", mime_type)
-                    self.send_header("Content-Length", str(len(content)))
-                    self._send_security_headers()
-                    if is_vendor:
-                        self.send_header("Cache-Control", "public, max-age=604800, immutable")
-                    else:
-                        self.send_header("Cache-Control", "no-cache, must-revalidate")
-                    self.end_headers()
-                    self.wfile.write(content)
-                except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
-                    pass
-                return
+        def _send_static_bytes(body: bytes, mtype: str):
+            is_gzip = len(body) > 512 and "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+            out_bytes = gzip.compress(body, compresslevel=5) if is_gzip else body
+            self.send_response(200)
+            self.send_header("Content-Type", mtype)
+            if is_gzip:
+                self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(out_bytes)))
+            self._send_security_headers()
+            if is_vendor:
+                self.send_header("Cache-Control", "public, max-age=604800, immutable")
+            elif is_asset:
+                self.send_header("Cache-Control", "public, max-age=86400")
+            else:
+                self.send_header("Cache-Control", "no-cache, must-revalidate")
+            self.end_headers()
+            self.wfile.write(out_bytes)
 
         static_dir = os.path.abspath(os.path.join(self.base_dir, "ui", "static"))
         rel = req_path.lstrip("/").replace("static/", "", 1)
@@ -1671,32 +1852,36 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
             found_path = target_path
 
         if found_path:
+            file_mtime = os.path.getmtime(found_path)
+            if req_path in self._STATIC_CACHE:
+                cached = self._STATIC_CACHE[req_path]
+                if len(cached) == 4:
+                    content, mime_type, ts, cached_mtime = cached
+                else:
+                    content, mime_type, ts = cached[:3]
+                    cached_mtime = 0
+                if (now - ts < cache_ttl) and (cached_mtime == file_mtime):
+                    try:
+                        _send_static_bytes(content, mime_type)
+                    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                        pass
+                    return
+
             mime_type, _ = mimetypes.guess_type(found_path)
             if not mime_type:
                 mime_type = "text/plain"
             if found_path.endswith(".css"):
-                mime_type = "text/css"
+                mime_type = "text/css; charset=utf-8"
             elif found_path.endswith(".js"):
-                mime_type = "application/javascript"
+                mime_type = "application/javascript; charset=utf-8"
 
             with open(found_path, "rb") as f:
                 content = f.read()
 
-            self._STATIC_CACHE[req_path] = (content, mime_type, now)
+            self._STATIC_CACHE[req_path] = (content, mime_type, now, file_mtime)
 
             try:
-                self.send_response(200)
-                self.send_header("Content-Type", mime_type)
-                self.send_header("Content-Length", str(len(content)))
-                self._send_security_headers()
-                if is_vendor:
-                    self.send_header("Cache-Control", "public, max-age=604800, immutable")
-                else:
-                    self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-                    self.send_header("Pragma", "no-cache")
-                    self.send_header("Expires", "0")
-                self.end_headers()
-                self.wfile.write(content)
+                _send_static_bytes(content, mime_type)
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
                 pass
         else:
@@ -1710,10 +1895,15 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
             with open(ui_path, "r", encoding="utf-8") as f:
                 content = f.read()
             content_bytes = content.encode("utf-8")
+            is_gzip = len(content_bytes) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+            if is_gzip:
+                content_bytes = gzip.compress(content_bytes, compresslevel=5)
 
             try:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                if is_gzip:
+                    self.send_header("Content-Encoding", "gzip")
                 self.send_header("Content-Length", str(len(content_bytes)))
                 self._send_security_headers()
                 self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -1802,6 +1992,8 @@ def start_server(host: str = "127.0.0.1", port: int = 8501, mt5_client: Optional
         JarvisRequestHandler.configure_broker(mt5_client)
     if orchestrator is not None:
         JarvisRequestHandler.configure_orchestrator(orchestrator)
+    else:
+        JarvisRequestHandler.get_orchestrator()
     ThreadingHTTPServer.allow_reuse_address = True
     server = _build_server(host, port)
     JarvisRequestHandler.start_background_syncer()
@@ -1816,6 +2008,8 @@ def run_web_server(port: int = 8501, host: str = "127.0.0.1", mt5_client: Option
         JarvisRequestHandler.configure_broker(mt5_client)
     if orchestrator is not None:
         JarvisRequestHandler.configure_orchestrator(orchestrator)
+    else:
+        JarvisRequestHandler.get_orchestrator()
     ThreadingHTTPServer.allow_reuse_address = True
     server = _build_server(host, port)
     JarvisRequestHandler.start_background_syncer()

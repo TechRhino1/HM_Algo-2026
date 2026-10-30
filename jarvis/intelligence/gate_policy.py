@@ -86,7 +86,7 @@ class AdaptiveGatePolicy:
         # Capital-protection hard gates NEVER soften under any circumstance.
         if len(soft) <= self.max_soft_fail:
             effective_min_wr = min(0.30, self.min_recent_win_rate)
-            if recent_win_rate is None or recent_win_rate >= effective_min_wr:
+            if recent_win_rate is not None and recent_win_rate >= effective_min_wr:
                 return ("SOFTEN", soft)
         return ("BLOCK", soft)
 

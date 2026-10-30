@@ -147,53 +147,54 @@ class MT5Client:
             return symbol
 
         def _resolve():
-            all_syms = mt5.symbols_get()
-            if not all_syms:
+            with self._lock:
+                all_syms = mt5.symbols_get()
+                if not all_syms:
+                    return symbol
+    
+                base_u = symbol.upper()
+                candidates = []
+                for s in all_syms:
+                    s_name_u = s.name.upper()
+                    if base_u in ["XAUUSD", "GOLD", "GOLD#"]:
+                        if any(k in s_name_u for k in ["GOLD.I#", "GOLD#", "GOLD.M", "XAUUSD.I#", "XAUUSD#", "GOLD", "XAUUSD"]):
+                            candidates.append(s)
+                    elif base_u in ["BTCUSD", "BTC"]:
+                        if any(k in s_name_u for k in ["BTCUSD#", "BTCUSD", "BITCOIN"]):
+                            candidates.append(s)
+                    elif base_u in ["ETHUSD", "ETH"]:
+                        if any(k in s_name_u for k in ["ETHUSD#", "ETHUSD", "ETHEREUM"]):
+                            candidates.append(s)
+                    elif base_u in ["SOLUSD", "SOL"]:
+                        if any(k in s_name_u for k in ["SOLUSD#", "SOLUSD", "SOLANA"]):
+                            candidates.append(s)
+                    elif base_u in ["NAS100", "US100", "USTEC", "NDX"]:
+                        if any(k in s_name_u for k in ["US100CASH#", "US100#", "NAS100#", "USTECH#", "US100"]):
+                            candidates.append(s)
+                    elif base_u in ["US500", "SPX500", "SP500"]:
+                        if any(k in s_name_u for k in ["US500CASH#", "US500#", "SPX500#"]):
+                            candidates.append(s)
+                    elif base_u in ["US30", "DJ30", "DOW"]:
+                        if any(k in s_name_u for k in ["US30CASH#", "US30#", "DJ30#"]):
+                            candidates.append(s)
+                    elif base_u in ["WTI", "USOIL", "OIL", "CRUDE"]:
+                        if any(k in s_name_u for k in ["OILCASH#", "BRENTCASH#", "USOIL#", "OIL#", "WTI#"]):
+                            candidates.append(s)
+                    elif base_u in s_name_u:
+                        candidates.append(s)
+    
+                if candidates:
+                    candidates.sort(key=lambda s: (
+                        0 if getattr(s, "trade_mode", 0) == getattr(mt5, "SYMBOL_TRADE_MODE_FULL", 4) else 1,
+                        0 if "#" in s.name else 1,
+                        len(s.name)
+                    ))
+                    best = candidates[0].name
+                    mt5.symbol_select(best, True)
+                    self.symbol_alias_cache[symbol] = best
+                    return best
                 return symbol
-
-            base_u = symbol.upper()
-            candidates = []
-            for s in all_syms:
-                s_name_u = s.name.upper()
-                if base_u in ["XAUUSD", "GOLD", "GOLD#"]:
-                    if any(k in s_name_u for k in ["GOLD.I#", "GOLD#", "GOLD.M", "XAUUSD.I#", "XAUUSD#", "GOLD", "XAUUSD"]):
-                        candidates.append(s)
-                elif base_u in ["BTCUSD", "BTC"]:
-                    if any(k in s_name_u for k in ["BTCUSD#", "BTCUSD", "BITCOIN"]):
-                        candidates.append(s)
-                elif base_u in ["ETHUSD", "ETH"]:
-                    if any(k in s_name_u for k in ["ETHUSD#", "ETHUSD", "ETHEREUM"]):
-                        candidates.append(s)
-                elif base_u in ["SOLUSD", "SOL"]:
-                    if any(k in s_name_u for k in ["SOLUSD#", "SOLUSD", "SOLANA"]):
-                        candidates.append(s)
-                elif base_u in ["NAS100", "US100", "USTEC", "NDX"]:
-                    if any(k in s_name_u for k in ["US100CASH#", "US100#", "NAS100#", "USTECH#", "US100"]):
-                        candidates.append(s)
-                elif base_u in ["US500", "SPX500", "SP500"]:
-                    if any(k in s_name_u for k in ["US500CASH#", "US500#", "SPX500#"]):
-                        candidates.append(s)
-                elif base_u in ["US30", "DJ30", "DOW"]:
-                    if any(k in s_name_u for k in ["US30CASH#", "US30#", "DJ30#"]):
-                        candidates.append(s)
-                elif base_u in ["WTI", "USOIL", "OIL", "CRUDE"]:
-                    if any(k in s_name_u for k in ["OILCASH#", "BRENTCASH#", "USOIL#", "OIL#", "WTI#"]):
-                        candidates.append(s)
-                elif base_u in s_name_u:
-                    candidates.append(s)
-
-            if candidates:
-                candidates.sort(key=lambda s: (
-                    0 if getattr(s, "trade_mode", 0) == getattr(mt5, "SYMBOL_TRADE_MODE_FULL", 4) else 1,
-                    0 if "#" in s.name else 1,
-                    len(s.name)
-                ))
-                best = candidates[0].name
-                mt5.symbol_select(best, True)
-                self.symbol_alias_cache[symbol] = best
-                return best
-            return symbol
-
+    
         res = TimeoutGuard.run_sync(_resolve, timeout_sec=5.0, default=None, task_name=f"ResolveSymbol_{symbol}")
         if res:
             self.symbol_alias_cache[symbol] = res
@@ -259,6 +260,10 @@ class MT5Client:
         except Exception as e:
             logger.warning(f"Failed to fetch MT5 symbol info for {resolved}: {e}")
         return spec_dict
+
+    def get_symbol_info(self, symbol: str) -> Dict[str, Any]:
+        """Convenience alias for get_symbol_trading_spec to ensure backward compatibility."""
+        return self.get_symbol_trading_spec(symbol)
 
     def get_market_depth(self, symbol: str) -> Optional[List[Dict[str, Any]]]:
         """
@@ -1142,8 +1147,16 @@ class MT5Client:
                 if not tick or not sym_info:
                     return {"status": "FAILED", "reason": f"Tick info unavailable for {symbol}"}
 
-                # Calculate volume to close
-                close_volume = float(volume) if (volume is not None and 0 < volume < p.volume) else float(p.volume)
+                # Calculate volume to close with strict broker step quantization
+                vol_step = getattr(sym_info, "volume_step", 0.01) or 0.01
+                vol_min = getattr(sym_info, "volume_min", 0.01) or 0.01
+                if volume is not None and 0 < volume < p.volume:
+                    steps = round((volume - vol_min) / vol_step)
+                    close_volume = min(float(p.volume), max(vol_min, vol_min + steps * vol_step))
+                    digits_vol = max(0, min(4, int(round(-math.log10(vol_step))))) if vol_step < 1.0 else 0
+                    close_volume = round(close_volume, digits_vol)
+                else:
+                    close_volume = float(p.volume)
                 is_partial = close_volume < p.volume
 
                 # Opposite order type
@@ -1166,6 +1179,24 @@ class MT5Client:
                 }
 
                 result = mt5.order_send(request)
+                # Fallback to FOK and RETURN if IOC filling is rejected
+                for filling in (getattr(mt5, "ORDER_FILLING_FOK", 0), getattr(mt5, "ORDER_FILLING_RETURN", 2)):
+                    if result and result.retcode in (10030, 10031):
+                        request["type_filling"] = filling
+                        result = mt5.order_send(request)
+                    else:
+                        break
+
+                # Requote retry loop (up to 2 retries on 10004)
+                retries = 0
+                while result and result.retcode == 10004 and retries < 2:
+                    retries += 1
+                    time.sleep(0.1)
+                    fresh_tick = mt5.symbol_info_tick(symbol)
+                    if fresh_tick:
+                        request["price"] = round(fresh_tick.bid if is_buy else fresh_tick.ask, sym_info.digits)
+                    result = mt5.order_send(request)
+
                 if result is None or result.retcode != getattr(mt5, "TRADE_RETCODE_DONE", 10009):
                     err_msg = result.comment if result else str(mt5.last_error())
                     logger.error(f"MT5 Close Order Failed for #{ticket}: {err_msg}")

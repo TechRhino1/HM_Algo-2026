@@ -80,6 +80,9 @@ data/metadata/
 # Canonical runtime database directory (see jarvis/config/paths.py)
 !data/*.db
 data/*_demo.db
+data/jarvis_users.db
+data/jarvis_live.db
+data/news_*_cache.json
 data/*.db-shm
 data/*.db-wal
 # Timestamped snapshots taken before a repair (tools/repair_forecast_column.py).

@@ -50,8 +50,18 @@ MIGRATIONS = {1: _migration_1}
 DAILY_DERISK_START_PCT = 2.5
 DAILY_RECOVERY_MAX_PCT = 6.5
 
-def _utc_now() -> datetime:
+def _default_broker_clock() -> datetime:
+    try:
+        import MetaTrader5 as mt5
+        ts = mt5.time_current()
+        if ts and ts > 0:
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+    except Exception:
+        pass
     return datetime.now(timezone.utc)
+
+def _utc_now() -> datetime:
+    return _default_broker_clock()
 
 class DrawdownGuard:
     def __init__(self, max_daily_loss_pct: float = 4.0, max_total_drawdown_pct: float = 10.0, db_path: str = "jarvis_drawdown_state.db", clock: Optional[Callable[[], datetime]] = None):

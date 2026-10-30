@@ -59,6 +59,12 @@ class RiskSettings:
     min_trade_score: float = 75.0
     high_risk_trade_score: float = 85.0
     max_symbol_exposure_count: int = 1
+    max_sector_exposure_count: int = 2
+    correlation_scaling_enabled: bool = True
+    correlation_scaling_floor: float = 0.40
+    breakeven_clears_correlation: bool = True
+    terminal_rsi_sell_floor: float = 22.0
+    terminal_rsi_buy_ceiling: float = 78.0
 
 @dataclass
 class TradingSettings:
@@ -197,6 +203,11 @@ class JarvisConfig:
                         cfg.trading.gate_policy_min_recent_win_rate = float(t_data["gate_policy_min_recent_win_rate"])
                     except (TypeError, ValueError) as exc:
                         logger.warning(f"Ignoring invalid gate_policy_min_recent_win_rate={t_data['gate_policy_min_recent_win_rate']!r}: {exc}")
+                if "max_daily_entries_per_symbol" in t_data:
+                    try:
+                        cfg.trading.max_daily_entries_per_symbol = int(t_data["max_daily_entries_per_symbol"])
+                    except (TypeError, ValueError) as exc:
+                        logger.warning(f"Ignoring invalid max_daily_entries_per_symbol={t_data['max_daily_entries_per_symbol']!r}: {exc}")
                 m_data = data.get("ml", {})
                 ml_keys = (
                     ("sgd_learning_rate", "sgd_learning_rate", float),

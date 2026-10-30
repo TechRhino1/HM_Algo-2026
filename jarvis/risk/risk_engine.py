@@ -65,6 +65,10 @@ class RiskEngine:
         self.max_drawdown_pct = max_drawdown_pct
         self.max_open_positions = max_open_positions
         self.max_symbol_positions = max_symbol_positions
+        self.max_sector_exposure_count = int(getattr(risk, "max_sector_exposure_count", 2) or 2)
+        self.correlation_scaling_enabled = bool(getattr(risk, "correlation_scaling_enabled", True))
+        self.correlation_scaling_floor = float(getattr(risk, "correlation_scaling_floor", 0.40) or 0.40)
+        self.breakeven_clears_correlation = bool(getattr(risk, "breakeven_clears_correlation", True))
         self.max_risk_per_trade_pct = max_risk_per_trade_pct
         self.max_portfolio_risk_pct = max_portfolio_risk_pct
         self.recovery_channel_enabled = bool(getattr(risk, "recovery_channel_enabled", False))
@@ -444,8 +448,9 @@ class RiskEngine:
             if not guard.get("passed"):
                 rejection_reasons.extend(guard.get("reasons", []))
 
-            # 8. Cross-Asset Directional Correlation check
+            # 8. Cross-Asset Directional Correlation check with Dynamic Risk Sizing
             target_side = getattr(decision, "bias", "BUY").upper()
+            corr_scaling_factor = 1.0
             for pos in positions:
                 if resolve_symbol(pos.symbol).canonical == canon:
                     continue  # Same-symbol is governed by adaptive same-symbol validator
@@ -454,11 +459,48 @@ class RiskEngine:
                 # Directional correlation: same direction with positive corr OR opposite direction with negative corr
                 same_direction = (target_side == pos_side)
                 directional_heat = corr if same_direction else -corr
-                if directional_heat > 0.75:
-                    rejection_reasons.append(
-                        f"CORRELATION_GATE: Excessive correlated directional exposure ({directional_heat:.2f}) "
-                        f"between incoming {target_side} {symbol} and existing {pos_side} {pos.symbol}."
+
+                # Break-Even Risk Clearance: If existing position is already risk-free, downside risk is mathematically $0.
+                pos_open_px = float(getattr(pos, "price_open", 0.0) or getattr(pos, "open_price", 0.0) or 0.0)
+                pos_sl = float(getattr(pos, "sl", 0.0) or 0.0)
+                pos_side_upper = str(pos_side).upper()
+                is_be_secured = False
+                if pos_open_px > 0 and pos_sl > 0:
+                    if pos_side_upper in ("BUY", "LONG", "0") and pos_sl >= pos_open_px:
+                        is_be_secured = True
+                    elif pos_side_upper in ("SELL", "SHORT", "1") and pos_sl <= pos_open_px:
+                        is_be_secured = True
+                if is_be_secured and self.breakeven_clears_correlation:
+                    logger.info(
+                        "CORRELATION_GATE: Existing %s position %s has SL secured at BE (open=%.4f, sl=%.4f); exempt from correlation penalty.",
+                        pos.symbol, pos_side, pos_open_px, pos_sl
                     )
+                    continue
+
+                if directional_heat > 0.70:
+                    incoming_sym_spec = resolve_symbol(symbol)
+                    incoming_asset_class = getattr(incoming_sym_spec, "asset_class", "UNKNOWN")
+                    sector_count = sum(
+                        1 for p in positions
+                        if getattr(resolve_symbol(p.symbol), "asset_class", "") == incoming_asset_class
+                    )
+                    max_sec_limit = getattr(self, "max_sector_exposure_count", 2)
+                    is_market_anchor = any(k in str(symbol).upper() for k in ["BTC", "ETH", "XAU", "GOLD"])
+
+                    if self.correlation_scaling_enabled and (sector_count < max_sec_limit or is_market_anchor):
+                        # Dynamic Correlation Sizing: Proportional lot scale down instead of fatal rejection
+                        scale_f = max(self.correlation_scaling_floor, 1.0 - (directional_heat - 0.70) * 1.5)
+                        corr_scaling_factor = min(corr_scaling_factor, scale_f)
+                        logger.info(
+                            "CORRELATION_SCALING: Correlated exposure (%.2f) between %s and %s. "
+                            "Sector count %d/%d permits entry with sizing scaled to %.2fx.",
+                            directional_heat, symbol, pos.symbol, sector_count, max_sec_limit, scale_f
+                        )
+                    else:
+                        rejection_reasons.append(
+                            f"CORRELATION_GATE: Excessive correlated directional exposure ({directional_heat:.2f}) "
+                            f"between incoming {target_side} {symbol} and existing {pos_side} {pos.symbol} (sector cap {sector_count}/{max_sec_limit} reached)."
+                        )
 
             if rejection_reasons:
                 return {
@@ -519,7 +561,7 @@ class RiskEngine:
                     "STREAK_DELEVERAGING: Consecutive losses = %d; scaling position size to %.2fx.",
                     self.circuit_breaker.consecutive_losses, streak_mult
                 )
-            combined_multiplier = heat_res.risk_multiplier * dd_risk_mult * daily_risk_mult * streak_mult
+            combined_multiplier = heat_res.risk_multiplier * dd_risk_mult * daily_risk_mult * streak_mult * corr_scaling_factor
 
             # Micro-account adaptive risk boost: the base 0.5% is designed for
             # $10k+ accounts.  On a $100 account 0.5% = $0.50, which cannot buy

@@ -321,29 +321,25 @@ class DecisionEngine:
         has_bear_smt = metals_smt.get("smt_active", False) and metals_smt.get("smt_type") == "BEARISH_SMT"
 
         bull_structure_confirmed = bool(
-            getattr(st, "choch", False)
-            or getattr(st, "choch_type", "") == "BULLISH"
+            getattr(st, "choch_type", "") == "BULLISH"
             or getattr(st, "bos_type", "") == "BULLISH"
             or has_bull_div
             or has_bull_smt
         )
         bear_structure_confirmed = bool(
-            getattr(st, "choch", False)
-            or getattr(st, "choch_type", "") == "BEARISH"
+            getattr(st, "choch_type", "") == "BEARISH"
             or getattr(st, "bos_type", "") == "BEARISH"
             or has_bear_div
             or has_bear_smt
         )
         bull_reversal_trigger = bool(
             (has_bull_sweep and bull_structure_confirmed)
-            or getattr(st, "choch", False)
             or getattr(st, "choch_type", "") == "BULLISH"
             or getattr(st, "bos_type", "") == "BULLISH"
             or has_bull_smt
         )
         bear_reversal_trigger = bool(
             (has_bear_sweep and bear_structure_confirmed)
-            or getattr(st, "choch", False)
             or getattr(st, "choch_type", "") == "BEARISH"
             or getattr(st, "bos_type", "") == "BEARISH"
             or has_bear_smt
@@ -927,8 +923,13 @@ class DecisionEngine:
             (tentative_bias == "BUY" and getattr(context.structure, "choch_type", "") == "BEARISH")
         )
 
+        # Terminal Climax Anti-Exhaustion Gate: Never sell into oversold panic (RSI < 22) or buy into parabolic blowoff (RSI > 78)
         is_exhausted = False
-        if tentative_bias == "BUY" and rsi_val > rsi_upper:
+        if tentative_bias == "SELL" and rsi_val < 22.0:
+            is_exhausted = True
+        elif tentative_bias == "BUY" and rsi_val > 78.0:
+            is_exhausted = True
+        elif tentative_bias == "BUY" and rsi_val > rsi_upper:
             if has_bear_div or has_counter_choch or not is_expansion_reg:
                 is_exhausted = True
         elif tentative_bias == "SELL" and rsi_val < rsi_lower:
@@ -1741,10 +1742,11 @@ class DecisionEngine:
         elif any(k in sym_name_eval for k in ["XAU", "GOLD", "XAG", "SILVER"]):
             # Institutional Precious Metals Discipline (ICT / SMC):
             # Strict Discount for BUY, Strict Premium for SELL. Reject Equilibrium entries unless confirmed CHOCH.
-            has_choch_reversal = bool(getattr(st, "choch", False))
-            if tentative_bias == "BUY" and st.discount_premium_zone != "DISCOUNT" and not has_choch_reversal:
+            has_bull_choch = getattr(st, "choch_type", "") == "BULLISH"
+            has_bear_choch = getattr(st, "choch_type", "") == "BEARISH"
+            if tentative_bias == "BUY" and st.discount_premium_zone != "DISCOUNT" and not has_bull_choch:
                 premium_discount_valid = False
-            elif tentative_bias == "SELL" and st.discount_premium_zone != "PREMIUM" and not has_choch_reversal:
+            elif tentative_bias == "SELL" and st.discount_premium_zone != "PREMIUM" and not has_bear_choch:
                 premium_discount_valid = False
         else:
             if tentative_bias == "BUY" and st.discount_premium_zone == "PREMIUM" and trend_score_val < 50:
@@ -2090,8 +2092,17 @@ class DecisionEngine:
                 entry_price = round(context.structure.equilibrium_price, digits)
             else:
                 entry_price = round(cur_mkt_price + (0.35 * atr_val), digits)
+            entry_delta = entry_price - getattr(context, "current_price", entry_price)
             sl_price = round(entry_price + risk_dist, digits)
             tp_price = round(entry_price - tp_dist, digits)
+            if tp1_price is not None:
+                tp1_price = round(tp1_price + entry_delta, digits)
+            if tp2_price is not None:
+                tp2_price = round(tp2_price + entry_delta, digits)
+            if tp3_price is not None:
+                tp3_price = round(tp3_price + entry_delta, digits)
+            if first_target_price is not None:
+                first_target_price = round(first_target_price + entry_delta, digits)
         elif is_chasing_premium_roof or (tentative_bias == "BUY" and is_reversal_or_pullback and not is_close_proximity):
             # Buy from the bottom: Route to LIMIT order placed at Discount / Bullish Order Block / FVG CE
             order_type_decision = "LIMIT"
@@ -2110,8 +2121,17 @@ class DecisionEngine:
                 entry_price = round(context.structure.equilibrium_price, digits)
             else:
                 entry_price = round(cur_mkt_price - (0.35 * atr_val), digits)
+            entry_delta = entry_price - getattr(context, "current_price", entry_price)
             sl_price = round(entry_price - risk_dist, digits)
             tp_price = round(entry_price + tp_dist, digits)
+            if tp1_price is not None:
+                tp1_price = round(tp1_price + entry_delta, digits)
+            if tp2_price is not None:
+                tp2_price = round(tp2_price + entry_delta, digits)
+            if tp3_price is not None:
+                tp3_price = round(tp3_price + entry_delta, digits)
+            if first_target_price is not None:
+                first_target_price = round(first_target_price + entry_delta, digits)
         elif is_close_proximity:
             # Price is within close proximity (<= 0.25 ATR) of the structural level: execute at market
             order_type_decision = "MARKET"
@@ -2141,6 +2161,14 @@ class DecisionEngine:
         # If the barrier allows viable runway (>= min_allowed_rr), tuck TP in front of it to capture profit before reversal.
         # If the barrier is too close (< min_allowed_rr), BLOCK the setup to prevent entering into an immediate obstacle.
         min_allowed_rr = 1.40 if is_micro_mode else (1.50 if _is_forex(context.symbol) else 1.60)
+        is_strong_trend_or_breakout = (
+            regime.primary_regime in (
+                MarketRegime.TREND_BEAR, MarketRegime.TREND_BULL,
+                MarketRegime.STRONG_TREND_BEAR, MarketRegime.STRONG_TREND_BULL,
+                MarketRegime.BREAKOUT
+            )
+            and (abs(getattr(context.momentum, "trend_score", 0.0)) >= 35.0 or getattr(context.momentum, "adx", 0.0) >= 24.0)
+        )
         if threat_lvl is not None and isinstance(threat_lvl, (int, float)) and threat_lvl > 0:
             if tentative_bias == "BUY" and entry_price < threat_lvl <= tp_price:
                 potential_tp = round(threat_lvl - (atr_val * 0.1), digits)
@@ -2148,6 +2176,13 @@ class DecisionEngine:
                 if tuck_r >= min_allowed_rr:
                     tp_price = potential_tp
                     tp_dist = abs(tp_price - entry_price)
+                elif is_strong_trend_or_breakout:
+                    # In strong trend/breakout, treat barrier as TP1 milestone; maintain structural target for full runner
+                    tp1_price = potential_tp
+                    tp2_price = tp_price
+                    logger.info(
+                        f"[{context.symbol}] Strong trend breakout active: Adversarial barrier at {threat_lvl} designated as TP1 ({tuck_r:.2f}R); retaining structural TP2 at {tp_price}."
+                    )
                 else:
                     gate_passed = False
                     gate_policy_decision = "BLOCK"
@@ -2164,6 +2199,13 @@ class DecisionEngine:
                 if tuck_r >= min_allowed_rr:
                     tp_price = potential_tp
                     tp_dist = abs(tp_price - entry_price)
+                elif is_strong_trend_or_breakout:
+                    # In strong trend/breakout, treat barrier as TP1 milestone; maintain structural target for full runner
+                    tp1_price = potential_tp
+                    tp2_price = tp_price
+                    logger.info(
+                        f"[{context.symbol}] Strong trend breakdown active: Adversarial barrier at {threat_lvl} designated as TP1 ({tuck_r:.2f}R); retaining structural TP2 at {tp_price}."
+                    )
                 else:
                     gate_passed = False
                     gate_policy_decision = "BLOCK"
@@ -2234,96 +2276,3 @@ class DecisionEngine:
             master_confluence_score=locals().get("_master_score", 0.0),
             master_confluence_tier=locals().get("_master_tier", "UNKNOWN")
         )
-
-    def _check_pullback_reclaim(
-        self,
-        context: MarketContext,
-        mtf_data: Optional[Dict[str, Any]] = None,
-        bias: str = "BUY"
-    ) -> bool:
-        """
-        Patch 3.2: Allow Bull-Flag Pullback Hook Re-Entries.
-        Bypass momentum deceleration rejection when price reclaims the EMA and
-        the latest closed M15/M5 bar closes in the direction of the trade (is_pullback_reclaim=True).
-        """
-        try:
-            df = None
-            if mtf_data and isinstance(mtf_data, dict):
-                df = mtf_data.get("timing")
-                if df is None or getattr(df, "empty", True):
-                    df = mtf_data.get("primary")
-            if df is None or getattr(df, "empty", True) or len(df) < 5:
-                df = getattr(context, "df_m5", None)
-            if df is None or getattr(df, "empty", True) or len(df) < 5:
-                return False
-
-            close = float(df["close"].iloc[-1])
-            open_p = float(df["open"].iloc[-1])
-            c_price = float(getattr(context, "current_price", close) or close)
-
-            # Fast EMA (span=9)
-            ema9 = float(df["close"].ewm(span=9, adjust=False).mean().iloc[-1])
-
-            if bias == "BUY":
-                # Price reclaimed EMA and latest closed candle is bullish
-                if (c_price >= ema9 or close >= ema9) and close > open_p:
-                    return True
-            elif bias == "SELL":
-                # Price broke below EMA and latest closed candle is bearish
-                if (c_price <= ema9 or close <= ema9) and close < open_p:
-                    return True
-        except Exception:
-            pass
-        return False
-
-    def _is_momentum_valid_for_regime(
-        self,
-        bias: str,
-        mom_score: float,
-        mom_delta: float,
-        regime: str,
-        order_flow_confirmed: bool = False,
-        is_pullback_reclaim: bool = False,
-        context: Optional[MarketContext] = None,
-        mtf_data: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, str]:
-        """
-        Regime-Adaptive Momentum Validator.
-        Allows uncapped momentum (up to ±98) in expansion/breakout regimes and index trends,
-        while strictly capping momentum (<= 75) in ranging/consolidation regimes.
-        Accommodates healthy trend pullbacks where momentum temporarily decelerates before re-acceleration.
-        Bypasses deceleration rejection when price reclaims the EMA and latest closed bar closes
-        in the direction of the trade (Patch 3.2).
-        """
-        if not is_pullback_reclaim and context is not None:
-            is_pullback_reclaim = self._check_pullback_reclaim(context, mtf_data, bias)
-
-        expansion_regimes = {
-            "TREND_BULL", "TREND_BEAR", "STRONG_TREND_BULL", "STRONG_TREND_BEAR",
-            "BREAKOUT", "POST_BREAKOUT"
-        }
-        is_expansion = (str(regime).upper() in expansion_regimes) or order_flow_confirmed or is_pullback_reclaim
-
-        max_abs_score = 98.0 if is_expansion else 75.0
-        min_abs_score = 8.0 if is_pullback_reclaim else (10.0 if is_expansion else 15.0)
-        decel_limit = -30.0 if is_pullback_reclaim else -15.0
-
-        if bias == "BUY":
-            if mom_score < min_abs_score:
-                return False, f"BUY momentum too weak ({mom_score:.2f} < {min_abs_score})"
-            if mom_score > max_abs_score:
-                return False, f"BUY momentum exhausted for regime {regime} ({mom_score:.2f} > {max_abs_score})"
-            if not is_expansion and mom_delta < decel_limit:
-                return False, f"BUY momentum decelerating ({mom_delta:.2f})"
-            return True, "OK"
-
-        if bias == "SELL":
-            if mom_score > -min_abs_score:
-                return False, f"SELL momentum too weak ({mom_score:.2f} > -{min_abs_score})"
-            if mom_score < -max_abs_score:
-                return False, f"SELL momentum exhausted for regime {regime} ({mom_score:.2f} < -{max_abs_score})"
-            if not is_expansion and mom_delta > -decel_limit:
-                return False, f"SELL momentum decelerating ({mom_delta:.2f})"
-            return True, "OK"
-
-        return False, "NEUTRAL bias"

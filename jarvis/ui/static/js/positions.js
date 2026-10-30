@@ -59,6 +59,7 @@
         '<th scope="col">Symbol</th>' +
         '<th scope="col">Side</th>' +
         '<th scope="col">Style</th>' +
+        '<th scope="col">AI Mode</th>' +
         '<th scope="col" class="tt-num">Vol</th>' +
         '<th scope="col" class="tt-num">Entry</th>' +
         '<th scope="col" class="tt-num">Now</th>' +
@@ -225,7 +226,7 @@
 
     var filtered = state.openPositions.filter(function (p) { return matchesFilter(p.symbol); });
     if (!filtered.length) {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:36px; color:var(--machined-silver);">No open positions matching criteria</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:36px; color:var(--machined-silver);">No open positions matching criteria</td></tr>';
       return;
     }
 
@@ -238,20 +239,36 @@
       var pnlCls = pnl > 0 ? 'tt-up' : (pnl < 0 ? 'tt-down' : '');
       var ticket = p.ticket || p.id || '';
 
-      var styleVal = String(p.style || (p.comment && (p.comment.indexOf('SCLP') !== -1 || p.comment.indexOf('SCALP') !== -1) ? 'SCALP' : ((p.comment && (p.comment.indexOf('SWNG') !== -1 || p.comment.indexOf('SWING') !== -1)) ? 'SWING' : 'DAY_TRADING'))).toUpperCase();
+      var styleVal = String(p.trade_style || p.style || (p.comment && (p.comment.indexOf('SCLP') !== -1 || p.comment.indexOf('SCALP') !== -1) ? 'SCALP' : ((p.comment && (p.comment.indexOf('SWNG') !== -1 || p.comment.indexOf('SWING') !== -1)) ? 'SWING' : 'DAY_TRADING'))).toUpperCase();
       var styleBadgeClass = styleVal === 'SCALP' ? 'badge-style-scalp' : (styleVal === 'SWING' ? 'badge-style-swing' : 'badge-style-day');
       var styleLabel = styleVal === 'DAY_TRADING' ? 'DAY' : styleVal;
+
+      var isManual = Boolean(p.is_manual);
+      var modeVal = String(p.monitoring_mode || 'AUTO_PILOT').toUpperCase();
+      var modeBadgeClass = modeVal === 'AUTO_PILOT' ? 'badge-mode-autopilot' : (modeVal === 'TRAIL' ? 'badge-mode-trail' : (modeVal === 'PROTECT_ONLY' ? 'badge-mode-protect' : 'badge-mode-off'));
+      var modeIcon = modeVal === 'AUTO_PILOT' ? '🟢' : (modeVal === 'TRAIL' ? '🔵' : (modeVal === 'PROTECT_ONLY' ? '🟡' : '⚪'));
+      var modeLabel = isManual ? (modeVal === 'AUTO_PILOT' ? 'AUTO-PILOT' : (modeVal === 'PROTECT_ONLY' ? 'PROTECT' : modeVal)) : 'BOT';
+
+      var modeCellHtml = isManual
+        ? '<button type="button" class="badge ' + modeBadgeClass + '" data-action-toggle-mode="' + esc(ticket) + '" data-mode="' + esc(modeVal) + '" title="Click to cycle AI mode: AUTO_PILOT -> TRAIL -> PROTECT -> OFF">' + modeIcon + ' ' + esc(modeLabel) + ' ↻</button>'
+        : '<span class="badge ' + modeBadgeClass + '" title="Automated Strategy Execution">🤖 AUTO</span>';
+
+      var beLockedHtml = p.is_be_locked ? '<div class="badge-be-locked">[BE LOCKED]</div>' : '';
+      var tp1Html = p.tp1 ? '<div class="tt-muted" style="font-size:10px;">TP1: ' + fmtPrice(p.tp1, sym) + '</div>' : '';
+      var milestoneHtml = (p.milestone_status && p.milestone_status !== 'OPEN') ? '<div class="badge-milestone">' + esc(p.milestone_status.replace(/_/g, ' ')) + '</div>' : '';
+      var rHtml = (p.current_r != null && p.current_r !== 0) ? '<span style="display:block; font-size:10px; opacity:0.85;">(' + (p.current_r > 0 ? '+' : '') + Number(p.current_r).toFixed(2) + 'R)</span>' : '';
 
       return '<tr>' +
         '<td><span class="tt-symbol">' + esc(sym) + '</span></td>' +
         '<td><span class="tt-dir ' + dirCls + '">' + esc(side || '—') + '</span></td>' +
         '<td><span class="badge ' + styleBadgeClass + '">' + esc(styleLabel) + '</span></td>' +
+        '<td>' + modeCellHtml + '</td>' +
         '<td class="tt-num">' + vol + '</td>' +
         '<td class="tt-num">' + fmtPrice(p.entry || p.entry_price, sym) + '</td>' +
         '<td class="tt-num">' + fmtPrice(p.now || p.current_price, sym) + '</td>' +
-        '<td class="tt-num">' + fmtPrice(p.sl, sym) + '</td>' +
-        '<td class="tt-num">' + fmtPrice(p.tp, sym) + '</td>' +
-        '<td class="tt-num ' + pnlCls + '" style="font-weight:700;">' + (pnl > 0 ? '+' : '') + '$' + pnl.toFixed(2) + '</td>' +
+        '<td class="tt-num">' + fmtPrice(p.sl, sym) + beLockedHtml + '</td>' +
+        '<td class="tt-num">' + fmtPrice(p.tp, sym) + tp1Html + milestoneHtml + '</td>' +
+        '<td class="tt-num ' + pnlCls + '" style="font-weight:700;">' + (pnl > 0 ? '+' : '') + '$' + pnl.toFixed(2) + rHtml + '</td>' +
         '<td class="tt-pos-actions">' +
           '<button class="tt-btn tt-btn--sm" data-action-modify="' + esc(ticket) + '" data-sym="' + esc(sym) + '" data-sl="' + (p.sl || '') + '" data-tp="' + (p.tp || '') + '" type="button" style="padding:2px 8px; margin-right:4px;">Edit</button>' +
           '<button class="tt-btn tt-btn--sm tt-btn--danger" data-action-close="' + esc(ticket) + '" type="button" style="padding:2px 8px;">Close</button>' +
@@ -260,6 +277,13 @@
     }).join('');
 
     // Attach actions
+    Array.prototype.forEach.call(tbody.querySelectorAll('[data-action-toggle-mode]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var t = Number(btn.getAttribute('data-action-toggle-mode'));
+        var cur = btn.getAttribute('data-mode') || 'AUTO_PILOT';
+        cycleManualMode(t, cur);
+      });
+    });
     Array.prototype.forEach.call(tbody.querySelectorAll('[data-action-close]'), function (btn) {
       btn.addEventListener('click', function () {
         var t = Number(btn.getAttribute('data-action-close'));
@@ -395,7 +419,32 @@
   }
 
   /* ── Actions: Close Position ───────────────────────────────────────── */
-  function closePosition(ticket) {
+    var MODES = ['AUTO_PILOT', 'TRAIL', 'PROTECT_ONLY', 'OFF'];
+  function cycleManualMode(ticket, currentMode) {
+    if (!ticket) return;
+    var idx = MODES.indexOf(currentMode);
+    var nextMode = MODES[(idx + 1) % MODES.length];
+
+    fetch('/api/action/set_manual_mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket: ticket, mode: nextMode })
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      if (res && res.success) {
+        toast('Ticket #' + ticket + ' mode: ' + nextMode, 'success');
+        loadTelemetry();
+      } else {
+        toast('Failed to set mode: ' + (res && res.error ? res.error : 'unknown'), 'error');
+      }
+    })
+    .catch(function (e) {
+      toast('Network error updating mode', 'error');
+    });
+  }
+
+function closePosition(ticket) {
     if (!ticket) return;
     if (!confirm('Close active position #' + ticket + '?')) return;
     fetch('/api/action/close_position', {
