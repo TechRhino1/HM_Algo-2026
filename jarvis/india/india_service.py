@@ -431,7 +431,7 @@ class IndiaMarketsService:
                 self._send_json(handler, res)
                 return True
 
-            elif path in ["/api/india/live_indices", "/api/india/live_cards"]:
+            elif path in ["/api/india/live_indices", "/api/india/live_cards", "/api/india/overview"]:
                 cards = INDIA_PREDICTIONS.get_live_indices_cards()
                 self._send_json(handler, {"cards": cards, "count": len(cards), "timestamp": time.strftime("%H:%M:%S IST")})
                 return True

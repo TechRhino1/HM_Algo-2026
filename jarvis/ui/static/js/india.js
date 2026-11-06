@@ -1036,60 +1036,153 @@
        an early tap threw "switchMobileIndiaView is not defined" and did nothing.
        Register the real behaviour with that bootstrap; fall back to assigning the
        global so this file still works if the bootstrap is absent. */
-    function applyMobileIndiaView(view) {
-        /* Record the selection. The resize handler and the init both read
-           state.activeMobileView, but nothing ever wrote it - so a resize at
-           <=900px silently reverted the user's tab to the default, and a tap made
-           before the controller loaded was reverted on DOMContentLoaded.
-           india_options.js already did this; india and stocks did not. */
-        state.activeMobileView = view;
-        const btnBuys = document.getElementById("mob-btn-buys");
-        const btnScreener = document.getElementById("mob-btn-screener");
-        const btnHeatmap = document.getElementById("mob-btn-heatmap");
-        const btnAll = document.getElementById("mob-btn-all");
+        window.toggleIndiaSidebar = function (forceState) {
+        const sidebar = document.getElementById("india-sidebar");
+        const appShell = document.getElementById("india-app-shell");
+        const backdrop = document.getElementById("india-sidebar-backdrop");
+        if (!sidebar || !appShell) return;
 
-        if (btnBuys) btnBuys.classList.toggle("active", view === "buys");
-        if (btnScreener) btnScreener.classList.toggle("active", view === "screener");
-        if (btnHeatmap) btnHeatmap.classList.toggle("active", view === "heatmap");
-        if (btnAll) btnAll.classList.toggle("active", view === "all");
+        const isMobile = window.innerWidth <= 900;
+        if (isMobile) {
+            const shouldOpen = typeof forceState === "boolean"
+                ? forceState
+                : !sidebar.classList.contains("mobile-open");
+            sidebar.classList.toggle("mobile-open", shouldOpen);
+            if (backdrop) backdrop.classList.toggle("active", shouldOpen);
+            document.body.style.overflow = shouldOpen ? "hidden" : "";
+        } else {
+            const isCollapsed = typeof forceState === "boolean"
+                ? !forceState
+                : !sidebar.classList.contains("collapsed");
+            sidebar.classList.toggle("collapsed", isCollapsed);
+            appShell.classList.toggle("sidebar-collapsed", isCollapsed);
+            try {
+                localStorage.setItem("india_sidebar_collapsed", isCollapsed ? "true" : "false");
+            } catch (e) {}
+        }
+    };
 
-        const secBuyNow = document.getElementById("section-buy-now");
-        const secScreener = document.getElementById("section-screener");
-        const secHeatmap = document.getElementById("sector-heatmap-section");
-        const secFilters = document.querySelector(".filter-panel-card");
-
-        if (window.innerWidth <= 900) {
-            if (view === "buys") {
-                if (secBuyNow) secBuyNow.style.display = "flex";
-                if (secFilters) secFilters.style.display = "none";
-                if (secScreener) secScreener.style.display = "none";
-                if (secHeatmap) secHeatmap.style.display = "none";
-            } else if (view === "screener") {
-                if (secBuyNow) secBuyNow.style.display = "none";
-                if (secFilters) secFilters.style.display = "flex";
-                if (secScreener) secScreener.style.display = "block";
-                if (secHeatmap) secHeatmap.style.display = "none";
-            } else if (view === "heatmap") {
-                if (secBuyNow) secBuyNow.style.display = "none";
-                if (secFilters) secFilters.style.display = "none";
-                if (secScreener) secScreener.style.display = "none";
-                if (secHeatmap) {
-                    secHeatmap.style.display = "flex";
-                    // Same defect as stocks.js: fetchHeatmapData() does not exist, so
-                    // this threw a ReferenceError on every Heatmap tap and left the
-                    // just-revealed panel empty. The real fetcher is
-                    // fetchSectorHeatmap(). The `state.heatmapLoaded` guard was dead —
-                    // nothing writes it — so fetch unconditionally, as the toggle does.
-                    fetchSectorHeatmap();
-                }
-            } else if (view === "all") {
-                if (secBuyNow) secBuyNow.style.display = "flex";
-                if (secFilters) secFilters.style.display = "flex";
-                if (secScreener) secScreener.style.display = "block";
-                if (secHeatmap) secHeatmap.style.display = "none";
+    window.selectQuickInstrument = function (symbol) {
+        const sym = (symbol || "NIFTY").toUpperCase().trim();
+        document.querySelectorAll(".sidebar-inst-btn").forEach(b => {
+            const s = (b.getAttribute("data-symbol") || "").toUpperCase();
+            b.classList.toggle("active", s === sym);
+        });
+        if (["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"].includes(sym)) {
+            const sel = document.getElementById("adv-stock-select");
+            if (sel) {
+                sel.value = sym;
+                sel.dispatchEvent(new Event("change"));
+            }
+        } else {
+            if (typeof window.openIndiaDossier === "function") {
+                window.openIndiaDossier(sym);
             }
         }
+    };
+
+    window.switchIndiaView = function (view) {
+        const targetView = (view || "overview").toLowerCase();
+        state.activeView = targetView;
+        state.activeMobileView = targetView;
+        try {
+            localStorage.setItem("india_active_view", targetView);
+        } catch (e) {}
+
+        const navIds = ["overview", "advisor", "predictions", "buys", "screener", "heatmap", "all"];
+        navIds.forEach(id => {
+            const navBtn = document.getElementById(`nav-item-${id}`);
+            if (navBtn) navBtn.classList.toggle("active", id === targetView);
+        });
+
+        navIds.forEach(id => {
+            const tabBtn = document.getElementById(`tab-btn-${id}`);
+            if (tabBtn) {
+                const isActive = id === targetView;
+                tabBtn.classList.toggle("active", isActive);
+                tabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
+            }
+        });
+
+        ["buys", "screener", "heatmap", "all"].forEach(id => {
+            const mobBtn = document.getElementById(`mob-btn-${id}`);
+            if (mobBtn) {
+                const isAct = id === targetView || (targetView === "overview" && id === "all");
+                mobBtn.classList.toggle("active", isAct);
+                mobBtn.setAttribute("aria-selected", isAct ? "true" : "false");
+            }
+        });
+
+        const secOverview = document.getElementById("section-overview");
+        const secAdvisor = document.getElementById("section-options-advisor");
+        const secPredictions = document.getElementById("section-market-predictions");
+        const secBuyNow = document.getElementById("section-buy-now");
+        const secScreener = document.getElementById("section-screener") || document.getElementById("section-stock-scanner");
+        const secHeatmap = document.getElementById("sector-heatmap-section");
+
+        if (targetView === "overview") {
+            if (secOverview) secOverview.style.display = "block";
+            if (secAdvisor) secAdvisor.style.display = "none";
+            if (secPredictions) secPredictions.style.display = "block";
+            if (secBuyNow) secBuyNow.style.display = "block";
+            if (secScreener) secScreener.style.display = "block";
+            if (secHeatmap) secHeatmap.style.display = "none";
+        } else if (targetView === "advisor") {
+            if (secOverview) secOverview.style.display = "none";
+            if (secAdvisor) secAdvisor.style.display = "block";
+            if (secPredictions) secPredictions.style.display = "none";
+            if (secBuyNow) secBuyNow.style.display = "none";
+            if (secScreener) secScreener.style.display = "none";
+            if (secHeatmap) secHeatmap.style.display = "none";
+        } else if (targetView === "predictions") {
+            if (secOverview) secOverview.style.display = "none";
+            if (secAdvisor) secAdvisor.style.display = "none";
+            if (secPredictions) secPredictions.style.display = "block";
+            if (secBuyNow) secBuyNow.style.display = "none";
+            if (secScreener) secScreener.style.display = "none";
+            if (secHeatmap) secHeatmap.style.display = "none";
+        } else if (targetView === "buys") {
+            if (secOverview) secOverview.style.display = "none";
+            if (secAdvisor) secAdvisor.style.display = "none";
+            if (secPredictions) secPredictions.style.display = "none";
+            if (secBuyNow) secBuyNow.style.display = "block";
+            if (secScreener) secScreener.style.display = "none";
+            if (secHeatmap) secHeatmap.style.display = "none";
+        } else if (targetView === "screener") {
+            if (secOverview) secOverview.style.display = "none";
+            if (secAdvisor) secAdvisor.style.display = "none";
+            if (secPredictions) secPredictions.style.display = "none";
+            if (secBuyNow) secBuyNow.style.display = "none";
+            if (secScreener) secScreener.style.display = "block";
+            if (secHeatmap) secHeatmap.style.display = "none";
+        } else if (targetView === "heatmap") {
+            if (secOverview) secOverview.style.display = "none";
+            if (secAdvisor) secAdvisor.style.display = "none";
+            if (secPredictions) secPredictions.style.display = "none";
+            if (secBuyNow) secBuyNow.style.display = "none";
+            if (secScreener) secScreener.style.display = "none";
+            if (secHeatmap) {
+                secHeatmap.style.display = "block";
+                fetchSectorHeatmap();
+            }
+        } else if (targetView === "all") {
+            if (secOverview) secOverview.style.display = "block";
+            if (secAdvisor) secAdvisor.style.display = "block";
+            if (secPredictions) secPredictions.style.display = "block";
+            if (secBuyNow) secBuyNow.style.display = "block";
+            if (secScreener) secScreener.style.display = "block";
+            if (secHeatmap) secHeatmap.style.display = state.heatmapVisible ? "block" : "none";
+        }
+
+        if (window.innerWidth <= 900) {
+            window.toggleIndiaSidebar(false);
+        }
+    };
+
+    function applyMobileIndiaView(view) {
+        window.switchIndiaView(view);
     }
+    window.switchMobileIndiaView = applyMobileIndiaView;
 
     if (typeof window.registerMobileView === "function") {
         window.registerMobileView("india", applyMobileIndiaView);
@@ -1165,6 +1258,8 @@
             if (sym === "NIFTY") cardEl = document.getElementById("card-nifty");
             else if (sym === "SENSEX") cardEl = document.getElementById("card-sensex");
             else if (sym === "BANKNIFTY") cardEl = document.getElementById("card-banknifty");
+            else if (sym === "FINNIFTY") cardEl = document.getElementById("card-finnifty");
+            else if (sym === "MIDCPNIFTY") cardEl = document.getElementById("card-midcpnifty");
 
             if (!cardEl) return;
             cardEl.classList.remove("loading");
@@ -1228,12 +1323,17 @@
         });
     }
 
+    window.getOptionsAdvisorActiveSymbol = function () {
+        return state.activeOptionsSymbol || "NIFTY";
+    };
+
     window.selectOptionsAdvisorIndex = async function (symbol) {
         const sym = (symbol || "NIFTY").toUpperCase().trim();
         state.activeOptionsSymbol = sym;
 
         // Highlight selected overview card and tab
-        ["NIFTY", "SENSEX", "BANKNIFTY"].forEach(s => {
+        const supportedIndices = ["NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"];
+        supportedIndices.forEach(s => {
             const cardEl = document.getElementById(`card-${s.toLowerCase()}`);
             if (cardEl) {
                 if (s === sym) cardEl.classList.add("active-selected");
@@ -1250,6 +1350,15 @@
                 }
             }
         });
+
+        const stockSelect = document.getElementById("adv-stock-select");
+        if (stockSelect) {
+            if (!supportedIndices.includes(sym)) {
+                stockSelect.value = sym;
+            } else {
+                stockSelect.value = "";
+            }
+        }
 
         await fetchOptionsAdvisorData(sym);
         await fetchOptionChainForAdvisor(sym);
@@ -1350,6 +1459,91 @@
             if (tpEl) tpEl.textContent = `₹${pe.target_1} / ₹${pe.target_2}`;
             if (greeksEl) greeksEl.textContent = `Δ ${pe.delta} • θ ${pe.theta_per_day}`;
             if (riskEl) riskEl.textContent = `₹${Number(pe.max_risk_per_lot).toLocaleString("en-IN")}`;
+        }
+
+        // Render Which One to Select Decision Gate
+        if (data.selection_decision) {
+            const dec = data.selection_decision;
+            const targetBadge = document.getElementById("adv-active-target-badge");
+            const decTitle = document.getElementById("adv-decision-title");
+            const decDesc = document.getElementById("adv-decision-desc");
+            const popVal = document.getElementById("adv-pop-val");
+            const ceConvLbl = document.getElementById("adv-ce-conv-lbl");
+            const peConvLbl = document.getElementById("adv-pe-conv-lbl");
+            const ceConvBar = document.getElementById("adv-conv-bar-ce");
+            const peConvBar = document.getElementById("adv-conv-bar-pe");
+
+            if (decTitle) decTitle.textContent = dec.decision_summary;
+            if (decDesc) decDesc.textContent = dec.decision_reasoning;
+            if (popVal) popVal.textContent = dec.trade_expectancy_pop || "70%";
+
+            if (ceConvLbl) ceConvLbl.textContent = `CALL (CE) Conviction: ${dec.ce_conviction_score}%`;
+            if (peConvLbl) peConvLbl.textContent = `PUT (PE) Conviction: ${dec.pe_conviction_score}%`;
+            if (ceConvBar) ceConvBar.style.width = `${dec.ce_conviction_score}%`;
+            if (peConvBar) peConvBar.style.width = `${dec.pe_conviction_score}%`;
+
+            if (targetBadge) {
+                if (dec.selected_side === "CE") {
+                    targetBadge.textContent = "★ ALGO SELECTS: CALL (CE)";
+                    targetBadge.className = "mot-badge-target";
+                } else if (dec.selected_side === "PE") {
+                    targetBadge.textContent = "★ ALGO SELECTS: PUT (PE)";
+                    targetBadge.className = "mot-badge-target mot-badge-target-pe";
+                } else {
+                    targetBadge.textContent = "⚠️ AVOID NAKED BUYING (WAIT / SPREAD)";
+                    targetBadge.className = "mot-badge-target mot-badge-target-wait";
+                }
+            }
+        }
+
+        // Render Action Verdict Badge
+        const verdictEl = document.getElementById("adv-verdict-badge");
+        if (verdictEl && data.recommendation) {
+            verdictEl.textContent = data.recommendation;
+            const rec = data.recommendation.toUpperCase();
+            if (rec.startsWith("BUY CALL")) {
+                verdictEl.className = "adv-badge-pill badge-verdict-buy";
+            } else if (rec.startsWith("BUY PUT")) {
+                verdictEl.className = "adv-badge-pill badge-verdict-sell";
+            } else if (rec.includes("HEDGED") || rec.includes("SPREAD")) {
+                verdictEl.className = "adv-badge-pill badge-verdict-spread";
+            } else {
+                verdictEl.className = "adv-badge-pill badge-verdict-wait";
+            }
+        }
+
+        // Render Regime Badge
+        const regimeEl = document.getElementById("adv-regime-badge");
+        if (regimeEl && data.market_regime) {
+            regimeEl.textContent = `REGIME: ${data.market_regime.replace(/_/g, " ")}`;
+        }
+
+        // Render Freshness Badge
+        const freshnessEl = document.getElementById("adv-freshness-badge");
+        if (freshnessEl && data.data_freshness_status) {
+            freshnessEl.textContent = data.data_freshness_status;
+            if (data.data_freshness_status.includes("LIVE")) {
+                freshnessEl.className = "adv-badge-pill badge-freshness-live";
+            } else {
+                freshnessEl.className = "adv-badge-pill badge-freshness-warn";
+            }
+        }
+
+        // Render AI Strike Selection & Rejection Analysis
+        const whyEl = document.getElementById("adv-why-text");
+        if (whyEl && data.why_recommended) {
+            whyEl.textContent = data.why_recommended;
+        }
+
+        const rejectedEl = document.getElementById("adv-rejected-text");
+        if (rejectedEl && data.why_alternatives_rejected) {
+            rejectedEl.textContent = data.why_alternatives_rejected;
+        }
+
+        const hedgeEl = document.getElementById("adv-hedge-text");
+        if (hedgeEl && data.hedged_alternative) {
+            const h = data.hedged_alternative;
+            hedgeEl.innerHTML = `<strong>${h.strategy || 'Defined Spread'}</strong> (${h.wings_range || 'Wings'}): ${h.description || 'Capitalizes on theta harvest.'}`;
         }
     }
 

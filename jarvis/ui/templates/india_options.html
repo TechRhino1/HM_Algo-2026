@@ -15,16 +15,16 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="/static/css/bootstrap.min.css">
     <!-- India Options Stylesheet -->
-    <link rel="stylesheet" href="/static/css/india_options.css?v=20260912_v2">
-    <link rel="stylesheet" href="/static/css/auth.css?v=20260912_v2">
+    <link rel="stylesheet" href="/static/css/india_options.css?v=20261106_v5">
+    <link rel="stylesheet" href="/static/css/auth.css?v=20261106_v5">
     <!-- Unified Design System (loaded LAST - see hm_ui.css) -->
-    <link rel="stylesheet" href="/static/css/hm_ui.css?v=20260912_v2">
+    <link rel="stylesheet" href="/static/css/hm_ui.css?v=20261106_v5">
     <!-- iOS liquid-glass responsive layer (small screens only; desktop untouched) -->
-    <link rel="stylesheet" href="/static/css/ios_pages.css?v=20260922_v1">
+    <link rel="stylesheet" href="/static/css/ios_pages.css?v=20261106_v5">
     <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
     <link rel="stylesheet" href="/static/css/theme_bugatti.css">
 <!-- Mobile v3 "Aurora" iOS design system (small screens only; loaded last) -->
-<link rel="stylesheet" href="/static/css/hm_ios_v3.css?v=20261019_v5">
+<link rel="stylesheet" href="/static/css/hm_ios_v3.css?v=20261106_v5">
 </head>
 <body>
 
@@ -119,89 +119,464 @@
          has defined the handler, so an early tap threw
          "switchMobileOptionsView is not defined" and did nothing. Must load
          before the dock, not deferred. -->
-    <script src="/static/js/mobile_dock.js?v=20260922_v1"></script>
-    <nav class="mobile-nav-bar" id="mobile-nav-bar" role="tablist" aria-label="Options view selector">
-        <button id="mob-btn-singles" class="mob-tab-btn active" role="tab" aria-selected="true" onclick="switchMobileOptionsView('singles')">⚡ Single Buys</button>
-        <button id="mob-btn-spreads" class="mob-tab-btn" role="tab" aria-selected="false" onclick="switchMobileOptionsView('spreads')">🛡️ Spreads</button>
-        <button id="mob-btn-payoff" class="mob-tab-btn" role="tab" aria-selected="false" onclick="switchMobileOptionsView('payoff')">📈 Payoff & OI</button>
-        <button id="mob-btn-chain" class="mob-tab-btn" role="tab" aria-selected="false" onclick="switchMobileOptionsView('chain')">📋 Option Chain</button>
-        <button id="mob-btn-all" class="mob-tab-btn" role="tab" aria-selected="false" onclick="switchMobileOptionsView('all')">🌐 All View</button>
+    <script src="/static/js/mobile_dock.js?v=20261106_v5"></script>
+        <nav class="mobile-nav-bar" id="mobile-nav-bar" role="tablist" aria-label="Options view selector">
+        <button id="mob-btn-advisor" class="mob-tab-btn active" role="tab" aria-selected="true" onclick="window.switchOptionsView('advisor')">👑 Master Advisor</button>
+        <button id="mob-btn-singles" class="mob-tab-btn" role="tab" aria-selected="false" onclick="window.switchOptionsView('singles')">⚡ Single Buys</button>
+        <button id="mob-btn-spreads" class="mob-tab-btn" role="tab" aria-selected="false" onclick="window.switchOptionsView('spreads')">🛡️ Spreads</button>
+        <button id="mob-btn-payoff" class="mob-tab-btn" role="tab" aria-selected="false" onclick="window.switchOptionsView('payoff')">📈 Payoff &amp; OI</button>
+        <button id="mob-btn-chain" class="mob-tab-btn" role="tab" aria-selected="false" onclick="window.switchOptionsView('chain')">📋 Option Chain</button>
+        <button id="mob-btn-all" class="mob-tab-btn" role="tab" aria-selected="false" onclick="window.switchOptionsView('all')">🌐 All View</button>
     </nav>
 
-    <!-- The page previously had no main landmark: its content sections are
-         body-level siblings. Wrap them so the skip link has a target and
-         assistive tech can jump past the HUD. Verified safe: india_options.css
-         has no structural selectors (no `body >`, no `:nth-child`) and
-         india_options.js performs no DOM traversal. -->
+    <!-- Skip link target and landmark for assistive technology -->
     <main role="main" id="hm-main" aria-label="Options intelligence workspace">
+      <div class="options-app-shell" id="options-app-shell">
 
-    <!-- ==========================================================================
-         UNDERLYING SELECTOR & REAL-TIME SPOT TELEMETRY BAR
-         ========================================================================== -->
-    <div class="underlying-selector-bar">
-        <div class="underlying-pills-scroll">
-            <button class="und-pill active" onclick="window.selectUnderlying('NIFTY', this)">NIFTY 50</button>
-            <button class="und-pill" onclick="window.selectUnderlying('BANKNIFTY', this)">BANK NIFTY</button>
-            <button class="und-pill" onclick="window.selectUnderlying('FINNIFTY', this)">FIN NIFTY</button>
-            <button class="und-pill" onclick="window.selectUnderlying('MIDCPNIFTY', this)">MIDCAP NIFTY</button>
-            <button class="und-pill" onclick="window.selectUnderlying('SENSEX', this)">SENSEX</button>
-            <button class="und-pill" onclick="window.selectUnderlying('RELIANCE', this)">RELIANCE</button>
-            <button class="und-pill" onclick="window.selectUnderlying('HDFCBANK', this)">HDFC BANK</button>
-            <button class="und-pill" onclick="window.selectUnderlying('TCS', this)">TCS</button>
-            <button class="und-pill" onclick="window.selectUnderlying('INFY', this)">INFOSYS</button>
-            <button class="und-pill" onclick="window.selectUnderlying('TMPV', this)">TMPV (TATA MOTORS)</button>
-            <button class="und-pill" onclick="window.selectUnderlying('ZOMATO', this)">ZOMATO</button>
-            <button class="und-pill" onclick="window.selectUnderlying('BAJFINANCE', this)">BAJAJ FINANCE</button>
+        <!-- ==========================================================================
+             DYNAMIC COLLAPSIBLE SIDE PANEL
+             ========================================================================== -->
+        <aside class="options-sidebar" id="options-sidebar" aria-label="Options Terminal Sidebar">
+            <!-- Sidebar Header & Toggle -->
+            <div class="sidebar-brand-box">
+                <div class="sidebar-brand-content">
+                    <span class="sidebar-brand-icon">⚡</span>
+                    <div class="sidebar-brand-text">
+                        <span class="sidebar-title">F&amp;O INTELLIGENCE</span>
+                        <span class="sidebar-subtitle">AI DERIVATIVES TERMINAL</span>
+                    </div>
+                </div>
+                <button type="button" class="sidebar-toggle-btn" id="sidebar-toggle-btn" onclick="window.toggleOptionsSidebar()" title="Toggle Sidebar (Expand/Collapse)" aria-label="Toggle Sidebar">
+                    <svg class="sidebar-toggle-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Scrollable Content -->
+            <div class="sidebar-scroll-container">
+                <!-- Section: Active Instrument Quick Selector -->
+                <div class="sidebar-nav-group">
+                    <div class="sidebar-group-header">
+                        <span class="sidebar-group-title">F&amp;O INSTRUMENTS</span>
+                        <span class="sidebar-group-badge">8 INDEX &amp; EQ</span>
+                    </div>
+                    <div class="sidebar-instruments-list">
+                        <button type="button" class="sidebar-inst-btn active" data-symbol="NIFTY" onclick="window.selectUnderlying('NIFTY', this)" title="NIFTY 50 (Index - Lot 25)">
+                            <span class="inst-symbol">NIFTY 50</span>
+                            <span class="inst-lot">Lot 25</span>
+                        </button>
+                        <button type="button" class="sidebar-inst-btn" data-symbol="BANKNIFTY" onclick="window.selectUnderlying('BANKNIFTY', this)" title="BANK NIFTY (Index - Lot 15)">
+                            <span class="inst-symbol">BANK NIFTY</span>
+                            <span class="inst-lot">Lot 15</span>
+                        </button>
+                        <button type="button" class="sidebar-inst-btn" data-symbol="FINNIFTY" onclick="window.selectUnderlying('FINNIFTY', this)" title="FIN NIFTY (Index - Lot 40)">
+                            <span class="inst-symbol">FIN NIFTY</span>
+                            <span class="inst-lot">Lot 40</span>
+                        </button>
+                        <button type="button" class="sidebar-inst-btn" data-symbol="MIDCPNIFTY" onclick="window.selectUnderlying('MIDCPNIFTY', this)" title="MIDCAP NIFTY (Index - Lot 75)">
+                            <span class="inst-symbol">MIDCAP NIFTY</span>
+                            <span class="inst-lot">Lot 75</span>
+                        </button>
+                        <button type="button" class="sidebar-inst-btn" data-symbol="SENSEX" onclick="window.selectUnderlying('SENSEX', this)" title="SENSEX (BSE Index - Lot 10)">
+                            <span class="inst-symbol">SENSEX</span>
+                            <span class="inst-lot">Lot 10</span>
+                        </button>
+                        <button type="button" class="sidebar-inst-btn" data-symbol="RELIANCE" onclick="window.selectUnderlying('RELIANCE', this)" title="RELIANCE (Equity - Lot 250)">
+                            <span class="inst-symbol">RELIANCE</span>
+                            <span class="inst-lot">Lot 250</span>
+                        </button>
+                        <button type="button" class="sidebar-inst-btn" data-symbol="HDFCBANK" onclick="window.selectUnderlying('HDFCBANK', this)" title="HDFC BANK (Equity - Lot 550)">
+                            <span class="inst-symbol">HDFC BANK</span>
+                            <span class="inst-lot">Lot 550</span>
+                        </button>
+                        <button type="button" class="sidebar-inst-btn" data-symbol="TCS" onclick="window.selectUnderlying('TCS', this)" title="TCS (Equity - Lot 175)">
+                            <span class="inst-symbol">TCS</span>
+                            <span class="inst-lot">Lot 175</span>
+                        </button>
+                        <button type="button" class="sidebar-inst-btn" data-symbol="INFY" onclick="window.selectUnderlying('INFY', this)" title="INFOSYS (Equity - Lot 400)">
+                            <span class="inst-symbol">INFOSYS</span>
+                            <span class="inst-lot">Lot 400</span>
+                        </button>
+                        <button type="button" class="sidebar-inst-btn" data-symbol="TMPV" onclick="window.selectUnderlying('TMPV', this)" title="TMPV Tata Motors (Equity - Lot 1425)">
+                            <span class="inst-symbol">TMPV</span>
+                            <span class="inst-lot">Lot 1425</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Section: Options View Selector -->
+                <div class="sidebar-nav-group">
+                    <div class="sidebar-group-header">
+                        <span class="sidebar-group-title">TERMINAL WORKSPACES</span>
+                    </div>
+                    <nav class="sidebar-nav-list" role="navigation" aria-label="Terminal views">
+                        <button type="button" class="sidebar-nav-item active" id="nav-item-advisor" onclick="window.switchOptionsView('advisor')" title="Master Option Trader — Algorithmic Best Strike &amp; Decision Gate">
+                            <span class="nav-item-icon">👑</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Master AI Advisor</span>
+                                <span class="nav-item-sub">Strike Decision Gate</span>
+                            </div>
+                            <span class="nav-item-pill pill-gold">PRO</span>
+                        </button>
+                        <button type="button" class="sidebar-nav-item" id="nav-item-singles" onclick="window.switchOptionsView('singles')" title="AI High-Velocity Single Entry Option Signals">
+                            <span class="nav-item-icon">⚡</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Single Buys (CE/PE)</span>
+                                <span class="nav-item-sub">Delta Scalps &amp; Momentum</span>
+                            </div>
+                        </button>
+                        <button type="button" class="sidebar-nav-item" id="nav-item-spreads" onclick="window.switchOptionsView('spreads')" title="AI Recommended Defined-Risk Spreads">
+                            <span class="nav-item-icon">🛡️</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Defined Spreads</span>
+                                <span class="nav-item-sub">Theta Decay Multi-Leg</span>
+                            </div>
+                        </button>
+                        <button type="button" class="sidebar-nav-item" id="nav-item-payoff" onclick="window.switchOptionsView('payoff')" title="Interactive Payoff &amp; Multi-Leg Builder">
+                            <span class="nav-item-icon">📈</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Strategy Architect</span>
+                                <span class="nav-item-sub">Payoff Curve &amp; Greeks</span>
+                            </div>
+                        </button>
+                        <button type="button" class="sidebar-nav-item" id="nav-item-chain" onclick="window.switchOptionsView('chain')" title="Live Interactive Option Chain Matrix">
+                            <span class="nav-item-icon">⛓️</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Option Chain Matrix</span>
+                                <span class="nav-item-sub">Real OI &amp; Volume</span>
+                            </div>
+                        </button>
+                        <button type="button" class="sidebar-nav-item" id="nav-item-all" onclick="window.switchOptionsView('all')" title="All-in-One Panoramic Options Cockpit">
+                            <span class="nav-item-icon">🌐</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">All-in-One Desk</span>
+                                <span class="nav-item-sub">Panoramic Workspace</span>
+                            </div>
+                        </button>
+                    </nav>
+                </div>
+
+                <!-- Section: Trading Discipline & Institutional Risk Gate -->
+                <div class="sidebar-nav-group sidebar-risk-group">
+                    <div class="sidebar-group-header">
+                        <span class="sidebar-group-title">INSTITUTIONAL RISK GATE</span>
+                    </div>
+                    <div class="sidebar-risk-card">
+                        <div class="risk-card-row">
+                            <span class="risk-lbl">Discipline Gate:</span>
+                            <span class="risk-val text-bull">5/5 PASSED</span>
+                        </div>
+                        <div class="risk-card-row">
+                            <span class="risk-lbl">Mandate R:R:</span>
+                            <span class="risk-val text-gold">&ge; 1:2.0</span>
+                        </div>
+                        <div class="risk-card-row">
+                            <span class="risk-lbl">Stop Loss:</span>
+                            <span class="risk-val text-bear">Strict -30% Prem</span>
+                        </div>
+                        <div class="risk-card-desc">
+                            Taylor Series Greeks expansion active. Sizing strictly bound to predefined risk capital.
+                        </div>
+                    </div>
+                    <div class="sidebar-quick-links">
+                        <a href="/india" class="sidebar-ext-link">
+                            <span>🇮🇳 Indian Equity Desk</span>
+                            <span class="ext-arrow">&rarr;</span>
+                        </a>
+                        <a href="/positions" class="sidebar-ext-link">
+                            <span>📋 Open Positions Desk</span>
+                            <span class="ext-arrow">&rarr;</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sidebar Footer -->
+            <div class="sidebar-footer-box">
+                <div class="live-feed-indicator">
+                    <span class="pulse-dot"></span>
+                    <div class="feed-text">
+                        <span class="feed-title">NSE / BSE LIVE FEED</span>
+                        <span class="feed-sub">Auto-sync 30s • Validated</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Mobile Drawer Overlay Backdrop -->
+        <div class="options-sidebar-backdrop" id="options-sidebar-backdrop" onclick="window.toggleOptionsSidebar(false)"></div>
+
+        <!-- ==========================================================================
+             MAIN WORKSPACE VIEWPORT
+             ========================================================================== -->
+        <div class="options-main-viewport" id="options-main-viewport">
+            
+            <!-- Top Controls & Telemetry Header -->
+            <div class="opt-top-header">
+                <div class="opt-header-top-row">
+                    <!-- Mobile Hamburger Toggle Button -->
+                    <button type="button" class="opt-mobile-menu-btn" id="mobile-sidebar-toggle" onclick="window.toggleOptionsSidebar(true)" aria-label="Open Navigation Sidebar">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
+                        <span>Menu</span>
+                    </button>
+
+                    <!-- Horizontal Underlying Pills Bar -->
+                    <div class="underlying-pills-scroll">
+                        <button class="und-pill active" onclick="window.selectUnderlying('NIFTY', this)">NIFTY 50</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('BANKNIFTY', this)">BANK NIFTY</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('FINNIFTY', this)">FIN NIFTY</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('MIDCPNIFTY', this)">MIDCAP NIFTY</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('SENSEX', this)">SENSEX</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('RELIANCE', this)">RELIANCE</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('HDFCBANK', this)">HDFC BANK</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('TCS', this)">TCS</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('INFY', this)">INFOSYS</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('TMPV', this)">TMPV (TATA MOTORS)</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('ZOMATO', this)">ZOMATO</button>
+                        <button class="und-pill" onclick="window.selectUnderlying('BAJFINANCE', this)">BAJAJ FINANCE</button>
+                    </div>
+
+                    <!-- Expiry Dropdown Selector -->
+                    <div class="expiry-selector-wrap">
+                        <span class="ctrl-label">Expiry:</span>
+                        <select id="opt-expiry-select" onchange="window.onExpiryChange(this.value)">
+                            <option value="CURRENT">Current Weekly</option>
+                            <option value="NEXT">Next Weekly</option>
+                            <option value="MONTHLY">Monthly Expiry</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Spot KPI Summary Ribbon -->
+                <div class="opt-kpi-ribbon">
+                    <div class="kpi-box">
+                        <span class="kpi-lbl">Underlying Spot</span>
+                        <div id="spot-price-val" class="kpi-val text-white">₹24,850.00</div>
+                    </div>
+                    <div class="kpi-box">
+                        <span class="kpi-lbl">ATM Strike</span>
+                        <div id="atm-strike-val" class="kpi-val text-gold">&mdash;</div>
+                    </div>
+                    <div class="kpi-box">
+                        <span class="kpi-lbl">Max Pain Strike</span>
+                        <div id="max-pain-val" class="kpi-val text-cyan">&mdash;</div>
+                    </div>
+                    <div class="kpi-box">
+                        <span class="kpi-lbl">Put-Call Ratio (PCR)</span>
+                        <div id="pcr-val" class="kpi-val text-bull">1.22 (Bullish)</div>
+                    </div>
+                    <div class="kpi-box">
+                        <span class="kpi-lbl">ATM Straddle Premium</span>
+                        <div id="straddle-prem-val" class="kpi-val text-white">₹385.00 (±1.5%)</div>
+                    </div>
+                    <div class="kpi-box">
+                        <span class="kpi-lbl">IV Rank / Skew</span>
+                        <div id="iv-rank-val" class="kpi-val text-gold">48.5 (Neutral IV)</div>
+                    </div>
+                    <div class="kpi-box">
+                        <span class="kpi-lbl">NSE Lot Size</span>
+                        <div id="lot-size-val" class="kpi-val text-white">25 Qty</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick View Switcher Tabs Ribbon -->
+            <div class="opt-view-tabs" role="tablist" aria-label="Options Workspaces">
+                <button class="opt-tab-btn active" id="tab-btn-advisor" role="tab" aria-selected="true" onclick="window.switchOptionsView('advisor')">
+                    <span class="tab-icon">👑</span>
+                    <span class="tab-text">Master AI Advisor</span>
+                    <span class="tab-pill">DECISION GATE</span>
+                </button>
+                <button class="opt-tab-btn" id="tab-btn-singles" role="tab" aria-selected="false" onclick="window.switchOptionsView('singles')">
+                    <span class="tab-icon">⚡</span>
+                    <span class="tab-text">Single Buys (CE/PE)</span>
+                </button>
+                <button class="opt-tab-btn" id="tab-btn-spreads" role="tab" aria-selected="false" onclick="window.switchOptionsView('spreads')">
+                    <span class="tab-icon">🛡️</span>
+                    <span class="tab-text">Defined Spreads</span>
+                </button>
+                <button class="opt-tab-btn" id="tab-btn-payoff" role="tab" aria-selected="false" onclick="window.switchOptionsView('payoff')">
+                    <span class="tab-icon">📈</span>
+                    <span class="tab-text">Payoff &amp; Architect</span>
+                </button>
+                <button class="opt-tab-btn" id="tab-btn-chain" role="tab" aria-selected="false" onclick="window.switchOptionsView('chain')">
+                    <span class="tab-icon">⛓️</span>
+                    <span class="tab-text">Option Chain Matrix</span>
+                </button>
+                <button class="opt-tab-btn" id="tab-btn-all" role="tab" aria-selected="false" onclick="window.switchOptionsView('all')">
+                    <span class="tab-icon">🌐</span>
+                    <span class="tab-text">All-in-One Desk</span>
+                </button>
+            </div>
+
+            <!-- Modular Viewport Panes Container -->
+            <div class="opt-views-container">
+<section id="section-master-trader-strike" class="master-strike-section opt-view-pane" data-view="advisor" aria-label="Master Option Trader Best Strike Prediction">
+        <div class="master-strike-header">
+            <div class="master-strike-title-group">
+                <span class="master-badge-icon">👑</span>
+                <div>
+                    <div class="master-strike-title-row">
+                        <h2 class="master-strike-heading">Master Option Trader &mdash; Algorithmic Best Strike Prediction</h2>
+                        <div class="master-badges-wrap">
+                            <span id="mot-verdict-badge" class="adv-badge-pill badge-verdict-wait">WAIT / NO TRADE</span>
+                            <span id="mot-regime-badge" class="adv-badge-pill badge-regime">REGIME: LOADING...</span>
+                            <span id="mot-freshness-badge" class="adv-badge-pill badge-freshness-live">🟢 LIVE EXCHANGE DATA</span>
+                        </div>
+                    </div>
+                    <span class="master-strike-subtitle">Algorithmic Strike Selection via Taylor Series Expansion, Central Pivot Range, VWAP &amp; Dealer GEX Alignment</span>
+                </div>
+            </div>
+            
+            <div class="master-quick-actions">
+                <button class="master-action-btn" onclick="window.loadBestStrikeToPayoff('CE')">⚡ Load Best CE into Payoff</button>
+                <button class="master-action-btn" onclick="window.loadBestStrikeToPayoff('PE')">🛡️ Load Best PE into Payoff</button>
+                <a href="/india#section-options-advisor" class="master-link-btn" title="View in Indian Market Dashboard">🇮🇳 Market Desk Rationale ➔</a>
+            </div>
         </div>
 
-        <div class="expiry-selector-wrap">
-            <span class="ctrl-label">Expiry:</span>
-            <select id="opt-expiry-select" onchange="window.onExpiryChange(this.value)">
-                <option value="CURRENT">Current Weekly</option>
-                <option value="NEXT">Next Weekly</option>
-                <option value="MONTHLY">Monthly Expiry</option>
-            </select>
-        </div>
-    </div>
+        <!-- ======================================================================
+             ALGORITHMIC DECISION GATE: WHICH ONE SHOULD I SELECT?
+             ====================================================================== -->
+        <div class="mot-decision-gate" id="mot-decision-gate">
+            <div class="mot-decision-banner" id="mot-decision-banner">
+                <div class="mot-banner-left">
+                    <span class="mot-badge-target" id="mot-active-target-badge">★ ALGO SELECTION</span>
+                    <div>
+                        <div class="mot-banner-title" id="mot-decision-title">SELECT CALL (CE) &mdash; Bullish Confluence</div>
+                        <p class="mot-banner-desc" id="mot-decision-desc">Spot holding firmly above VWAP and CPR Top with PCR put-writing floor.</p>
+                    </div>
+                </div>
 
-    <!-- ==========================================================================
-         SPOT KPI SUMMARY RIBBON
-         ========================================================================== -->
-    <div class="opt-kpi-ribbon">
-        <div class="kpi-box">
-            <span class="kpi-lbl">Underlying Spot</span>
-            <div id="spot-price-val" class="kpi-val text-white">₹24,850.00</div>
+                <div class="mot-banner-right">
+                    <div class="mot-pop-box">
+                        <span class="mot-pop-label">Trade POP %</span>
+                        <span class="mot-pop-val" id="mot-pop-val">74%</span>
+                    </div>
+                    <button class="mot-copy-btn" id="mot-copy-btn" onclick="window.copyActiveBrokerOrder()">📋 Copy Order</button>
+                    <button class="mot-simulate-primary-btn" id="mot-sim-primary-btn" onclick="window.loadPrimaryBestStrikeToPayoff()">⚡ Execute Primary Pick »</button>
+                </div>
+            </div>
+
+            <!-- Quantitative Conviction Meter (Bull vs Bear / CE vs PE) -->
+            <div class="mot-conviction-widget">
+                <div class="mot-conviction-labels">
+                    <span class="mot-conv-lbl text-bull" id="mot-ce-conv-lbl">CALL (CE) Conviction: 82%</span>
+                    <span class="mot-conv-center">⚡ Algorithmic Momentum Balance</span>
+                    <span class="mot-conv-lbl text-bear" id="mot-pe-conv-lbl">PUT (PE) Conviction: 18%</span>
+                </div>
+                <div class="mot-conviction-bar-track">
+                    <div class="mot-conv-bar-ce" id="mot-conv-bar-ce" style="width: 82%;"></div>
+                    <div class="mot-conv-bar-pe" id="mot-conv-bar-pe" style="width: 18%;"></div>
+                </div>
+            </div>
+
+            <!-- Execution Triggers & Activation Gates -->
+            <div class="mot-triggers-grid">
+                <div class="mot-trigger-card">
+                    <span class="mot-trig-badge badge-trig-ce">CE BUY GATE</span>
+                    <span class="mot-trig-txt" id="mot-ce-trigger">5-min close above VWAP/CPR TC with volume &gt; 1.2x</span>
+                </div>
+                <div class="mot-trigger-card">
+                    <span class="mot-trig-badge badge-trig-pe">PE BUY GATE</span>
+                    <span class="mot-trig-txt" id="mot-pe-trigger">5-min close below CPR BC with PCR &lt; 0.85</span>
+                </div>
+                <div class="mot-trigger-card">
+                    <span class="mot-trig-badge badge-trig-inv">HARD INVALIDATION</span>
+                    <span class="mot-trig-txt" id="mot-inv-trigger">Spot reverts inside CPR range</span>
+                </div>
+            </div>
         </div>
-        <div class="kpi-box">
-            <span class="kpi-lbl">ATM Strike</span>
-            <div id="atm-strike-val" class="kpi-val text-gold">&mdash;</div>
+
+        <!-- Master Strike Cards Grid (CE & PE) -->
+        <div class="master-strike-grid">
+            <!-- CE Best Strike Card -->
+            <div class="mot-card mot-card-ce" id="mot-card-ce">
+                <div class="mot-card-top">
+                    <span class="mot-tag mot-tag-ce">★ MASTER TRADER BEST CALL (CE)</span>
+                    <span class="mot-metric-pill" id="mot-ce-delta-pill">Δ 0.52 (High Gamma)</span>
+                </div>
+                <div class="mot-strike-title" id="mot-ce-strike">NIFTY 24850 CE</div>
+                <div class="mot-formula-box">
+                    <span class="mot-formula-label">Taylor Series Target Formula:</span>
+                    <span class="mot-formula-code">Target Prem = Prem + (Δ·ΔS) + ½Γ(ΔS)² &minus; (θ·Δt)</span>
+                </div>
+                <div class="mot-price-grid">
+                    <div class="mot-pbox"><span class="mot-plbl">Entry Range</span><span id="mot-ce-entry" class="mot-pval text-white">₹185 &ndash; ₹189</span></div>
+                    <div class="mot-pbox"><span class="mot-plbl">Stop Loss (-30%)</span><span id="mot-ce-sl" class="mot-pval text-bear">₹129.50</span></div>
+                    <div class="mot-pbox"><span class="mot-plbl">Target 1 (+40%)</span><span id="mot-ce-tp1" class="mot-pval text-bull">₹259.00</span></div>
+                    <div class="mot-pbox"><span class="mot-plbl">Target 2 (+80%)</span><span id="mot-ce-tp2" class="mot-pval text-bull">₹333.00</span></div>
+                </div>
+                <div class="mot-meta-details">
+                    <div class="mot-drow"><span>Risk per Lot:</span><strong id="mot-ce-risk" class="text-gold">₹1,387.50</strong></div>
+                    <div class="mot-drow"><span>Capital Needed:</span><strong id="mot-ce-cap" class="text-white">₹4,625.00</strong></div>
+                    <div class="mot-drow"><span>Risk-Reward Ratio:</span><strong class="text-bull">1:2.0 (Strictly Disciplined)</strong></div>
+                    <div class="mot-drow"><span>Holding Horizon:</span><strong class="text-cyan">Intraday / Momentum Scalp</strong></div>
+                </div>
+                <p id="mot-ce-why" class="mot-why-desc">Analyzing market microstructure, delta efficiency, and liquidity...</p>
+                <button class="mot-load-btn" onclick="window.loadBestStrikeToPayoff('CE')">📈 Simulate CE in Strategy Payoff &raquo;</button>
+            </div>
+
+            <!-- PE Best Strike Card -->
+            <div class="mot-card mot-card-pe" id="mot-card-pe">
+                <div class="mot-card-top">
+                    <span class="mot-tag mot-tag-pe">★ MASTER TRADER BEST PUT (PE)</span>
+                    <span class="mot-metric-pill" id="mot-pe-delta-pill">Δ -0.48 (Balanced)</span>
+                </div>
+                <div class="mot-strike-title" id="mot-pe-strike">NIFTY 24850 PE</div>
+                <div class="mot-formula-box">
+                    <span class="mot-formula-label">Taylor Series Target Formula:</span>
+                    <span class="mot-formula-code">Target Prem = Prem + (Δ·ΔS) + ½Γ(ΔS)² &minus; (θ·Δt)</span>
+                </div>
+                <div class="mot-price-grid">
+                    <div class="mot-pbox"><span class="mot-plbl">Entry Range</span><span id="mot-pe-entry" class="mot-pval text-white">₹145 &ndash; ₹149</span></div>
+                    <div class="mot-pbox"><span class="mot-plbl">Stop Loss (-30%)</span><span id="mot-pe-sl" class="mot-pval text-bear">₹101.50</span></div>
+                    <div class="mot-pbox"><span class="mot-plbl">Target 1 (+40%)</span><span id="mot-pe-tp1" class="mot-pval text-bull">₹203.00</span></div>
+                    <div class="mot-pbox"><span class="mot-plbl">Target 2 (+80%)</span><span id="mot-pe-tp2" class="mot-pval text-bull">₹261.00</span></div>
+                </div>
+                <div class="mot-meta-details">
+                    <div class="mot-drow"><span>Risk per Lot:</span><strong id="mot-pe-risk" class="text-gold">₹1,087.50</strong></div>
+                    <div class="mot-drow"><span>Capital Needed:</span><strong id="mot-pe-cap" class="text-white">₹3,625.00</strong></div>
+                    <div class="mot-drow"><span>Risk-Reward Ratio:</span><strong class="text-bull">1:2.0 (Strictly Disciplined)</strong></div>
+                    <div class="mot-drow"><span>Holding Horizon:</span><strong class="text-cyan">Intraday / Reversal Breakdown</strong></div>
+                </div>
+                <p id="mot-pe-why" class="mot-why-desc">Analyzing market microstructure, delta efficiency, and liquidity...</p>
+                <button class="mot-load-btn" onclick="window.loadBestStrikeToPayoff('PE')">📉 Simulate PE in Strategy Payoff &raquo;</button>
+            </div>
         </div>
-        <div class="kpi-box">
-            <span class="kpi-lbl">Max Pain Strike</span>
-            <div id="max-pain-val" class="kpi-val text-cyan">&mdash;</div>
+
+        <!-- Master Trader Algorithmic Rejection & Sizing Explainer Matrix -->
+        <div class="mot-matrix-row">
+            <div class="mot-matrix-card">
+                <span class="mot-matrix-hdr">🎯 Algorithmic Selection Criteria</span>
+                <p id="mot-selection-criteria">
+                    Strike is chosen dynamically where Delta is between 0.50 and 0.55 (ATM or 1-step OTM) with highest bid-ask liquidity and tightest spread. This maximizes price elasticity while avoiding low-delta time decay.
+                </p>
+            </div>
+            <div class="mot-matrix-card">
+                <span class="mot-matrix-hdr">🛡️ Why Other Strikes Are Rejected</span>
+                <p id="mot-rejection-criteria">
+                    Far OTM strikes (&gt;2 steps away) are rejected because their Delta (&lt;0.25) carries an 80%+ statistical probability of expiring worthless. Deep ITM strikes are rejected due to excessive capital requirement and wider spread slippage.
+                </p>
+            </div>
+            <div class="mot-matrix-card">
+                <span class="mot-matrix-hdr">⚖️ Market Movement &amp; Hedged Alternative</span>
+                <p id="mot-movement-criteria">
+                    Expected Intraday Movement: &plusmn;1.2% to &plusmn;1.5% based on ATR and CPR range. If the market compresses into sideways chop or VIX &gt; 18, defined-risk spreads (Bull Call Spread or Iron Condor) are activated.
+                </p>
+            </div>
         </div>
-        <div class="kpi-box">
-            <span class="kpi-lbl">Put-Call Ratio (PCR)</span>
-            <div id="pcr-val" class="kpi-val text-bull">1.22 (Bullish)</div>
-        </div>
-        <div class="kpi-box">
-            <span class="kpi-lbl">ATM Straddle Premium</span>
-            <div id="straddle-prem-val" class="kpi-val text-white">₹385.00 (±1.5%)</div>
-        </div>
-        <div class="kpi-box">
-            <span class="kpi-lbl">IV Rank / Skew</span>
-            <div id="iv-rank-val" class="kpi-val text-gold">48.5 (Neutral IV)</div>
-        </div>
-        <div class="kpi-box">
-            <span class="kpi-lbl">NSE Lot Size</span>
-            <div id="lot-size-val" class="kpi-val text-white">25 Qty</div>
-        </div>
-    </div>
+    </section>
 
     <!-- ==========================================================================
          AI HIGH-VELOCITY SINGLE ENTRY OPTION BUYING SIGNALS (CE / PE)
          ========================================================================== -->
-    <div id="section-singles" class="opt-single-signals-section">
+    <div id="section-singles" class="opt-single-signals-section opt-view-pane" data-view="singles">
         <div class="single-signals-header-bar">
             <div class="single-signals-title">
                 <span class="pulse-dot"></span>
@@ -234,7 +609,7 @@
     <!-- ==========================================================================
          AI RECOMMENDED OPTIONS TRADES & STRATEGIES SHOWCASE (MULTI-LEG SPREADS)
          ========================================================================== -->
-    <div id="section-spreads" class="opt-recommendations-section">
+    <div id="section-spreads" class="opt-recommendations-section opt-view-pane" data-view="spreads">
         <div class="opt-rec-header-bar">
             <div class="opt-rec-title">
                 <span class="pulse-dot"></span>
@@ -259,12 +634,12 @@
     <!-- ==========================================================================
          MAIN OPTIONS WORKSPACE (2-COLUMN ARCHITECTURE)
          ========================================================================== -->
-    <div class="opt-workspace-grid">
+    <div class="opt-workspace-grid" id="opt-workspace-grid">
 
         <!-- ======================================================================
              LEFT PANE: INTERACTIVE MULTI-LEG PAYOFF & STRATEGY BUILDER
              ====================================================================== -->
-        <div id="section-payoff" class="opt-left-pane">
+        <div id="section-payoff" class="opt-left-pane opt-view-pane" data-view="payoff">
             
             <!-- Payoff Diagram Card -->
             <div class="pane-card payoff-card">
@@ -425,7 +800,7 @@
         <!-- ======================================================================
              RIGHT PANE: FULL INTERACTIVE OPTION CHAIN (CE / PE MATRIX)
              ====================================================================== -->
-        <div id="section-chain" class="opt-right-pane">
+        <div id="section-chain" class="opt-right-pane opt-view-pane" data-view="chain">
             <div class="pane-card chain-card">
                 <div class="pane-header-row">
                     <div class="pane-title">
@@ -473,17 +848,22 @@
         </div>
 
     </div>
+            </div>
 
+        </div><!-- /options-main-viewport -->
+
+      </div><!-- /options-app-shell -->
     </main>
+
 
     <!-- Bootstrap 5 JS Bundle -->
     <script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
     <!-- Universal Authentication & Options Terminal Controller Script -->
-    <script src="/static/js/auth.js?v=20260912_v2"></script>
-    <script src="/static/js/india_options.js?v=20260912_v2"></script>
+    <script src="/static/js/auth.js?v=20261106_v5"></script>
+    <script src="/static/js/india_options.js?v=20261106_v5"></script>
     <!-- Unified UX / accessibility layer (loaded LAST). -->
-    <script src="/static/js/hm_ui.js?v=20260912_v2" defer></script>
-<script src="/static/js/hm_mobile_nav.js?v=20261019_v3"></script>
-<script src="/static/js/hm_mobile_ux.js?v=20261019_v3"></script>
+    <script src="/static/js/hm_ui.js?v=20261106_v5" defer></script>
+<script src="/static/js/hm_mobile_nav.js?v=20261106_v5"></script>
+<script src="/static/js/hm_mobile_ux.js?v=20261106_v5"></script>
 </body>
 </html>

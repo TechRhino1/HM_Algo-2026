@@ -19,6 +19,7 @@
         daysToTarget: 0.0,
         simulatedSpot: 24850.0,
         chainData: null,
+        masterTraderAdvisor: null,
         payoffChart: null,
         oiChart: null,
         legs: [
@@ -81,6 +82,223 @@
     /* ==========================================================================
        1. DATA FETCHING & API INTERACTION
        ========================================================================== */
+
+    async function fetchMasterOptionTraderAdvisor(symbol) {
+        try {
+            const sym = (symbol || state.symbol || "NIFTY").toUpperCase().trim();
+            const res = await fetch(`/api/india/options/ai_advisor?symbol=${sym}`);
+            const data = await res.json();
+            if (data) {
+                state.masterTraderAdvisor = data;
+                renderMasterTraderHUD(data);
+            }
+        } catch (err) {
+            console.error("Master Option Trader advisor fetch error:", err);
+        }
+    }
+
+    function renderMasterTraderHUD(data) {
+        if (!data) return;
+
+        // 0. Algorithmic Decision Gate: Which One to Select
+        if (data.selection_decision) {
+            const dec = data.selection_decision;
+            const targetBadge = document.getElementById("mot-active-target-badge");
+            const decTitle = document.getElementById("mot-decision-title");
+            const decDesc = document.getElementById("mot-decision-desc");
+            const popVal = document.getElementById("mot-pop-val");
+            const ceConvLbl = document.getElementById("mot-ce-conv-lbl");
+            const peConvLbl = document.getElementById("mot-pe-conv-lbl");
+            const ceConvBar = document.getElementById("mot-conv-bar-ce");
+            const peConvBar = document.getElementById("mot-conv-bar-pe");
+            const ceTrig = document.getElementById("mot-ce-trigger");
+            const peTrig = document.getElementById("mot-pe-trigger");
+            const invTrig = document.getElementById("mot-inv-trigger");
+            const cardCe = document.getElementById("mot-card-ce");
+            const cardPe = document.getElementById("mot-card-pe");
+
+            if (decTitle) decTitle.textContent = dec.decision_summary;
+            if (decDesc) decDesc.textContent = dec.decision_reasoning;
+            if (popVal) popVal.textContent = dec.trade_expectancy_pop || "70%";
+
+            if (ceConvLbl) ceConvLbl.textContent = `CALL (CE) Conviction: ${dec.ce_conviction_score}%`;
+            if (peConvLbl) peConvLbl.textContent = `PUT (PE) Conviction: ${dec.pe_conviction_score}%`;
+            if (ceConvBar) ceConvBar.style.width = `${dec.ce_conviction_score}%`;
+            if (peConvBar) peConvBar.style.width = `${dec.pe_conviction_score}%`;
+
+            if (ceTrig) ceTrig.textContent = dec.ce_trigger;
+            if (peTrig) peTrig.textContent = dec.pe_trigger;
+            if (invTrig) invTrig.textContent = dec.invalidation;
+
+            if (dec.selected_side === "CE") {
+                if (targetBadge) {
+                    targetBadge.textContent = "★ ALGO SELECTS: CALL (CE)";
+                    targetBadge.className = "mot-badge-target";
+                }
+                if (cardCe) cardCe.className = "mot-card mot-card-ce mot-card-active";
+                if (cardPe) cardPe.className = "mot-card mot-card-pe mot-card-inactive";
+            } else if (dec.selected_side === "PE") {
+                if (targetBadge) {
+                    targetBadge.textContent = "★ ALGO SELECTS: PUT (PE)";
+                    targetBadge.className = "mot-badge-target mot-badge-target-pe";
+                }
+                if (cardPe) cardPe.className = "mot-card mot-card-pe mot-card-active";
+                if (cardCe) cardCe.className = "mot-card mot-card-ce mot-card-inactive";
+            } else {
+                if (targetBadge) {
+                    targetBadge.textContent = "⚠️ AVOID NAKED BUYING (WAIT / SPREAD)";
+                    targetBadge.className = "mot-badge-target mot-badge-target-wait";
+                }
+                if (cardCe) cardCe.className = "mot-card mot-card-ce mot-card-inactive";
+                if (cardPe) cardPe.className = "mot-card mot-card-pe mot-card-inactive";
+            }
+        }
+
+        // 1. Badges
+        const verdictEl = document.getElementById("mot-verdict-badge");
+        if (verdictEl && data.recommendation) {
+            verdictEl.textContent = data.recommendation;
+            const rec = data.recommendation.toUpperCase();
+            if (rec.startsWith("BUY CALL")) verdictEl.className = "adv-badge-pill badge-verdict-buy";
+            else if (rec.startsWith("BUY PUT")) verdictEl.className = "adv-badge-pill badge-verdict-sell";
+            else if (rec.includes("HEDGED") || rec.includes("SPREAD")) verdictEl.className = "adv-badge-pill badge-verdict-spread";
+            else verdictEl.className = "adv-badge-pill badge-verdict-wait";
+        }
+
+        const regimeEl = document.getElementById("mot-regime-badge");
+        if (regimeEl && data.market_regime) {
+            regimeEl.textContent = `REGIME: ${data.market_regime.replace(/_/g, " ")}`;
+        }
+
+        const freshnessEl = document.getElementById("mot-freshness-badge");
+        if (freshnessEl && data.data_freshness_status) {
+            freshnessEl.textContent = data.data_freshness_status;
+            freshnessEl.className = data.data_freshness_status.includes("LIVE")
+                ? "adv-badge-pill badge-freshness-live"
+                : "adv-badge-pill badge-freshness-warn";
+        }
+
+        // 2. CE Card
+        const ce = data.call_opportunity;
+        if (ce) {
+            const ceStrikeEl = document.getElementById("mot-ce-strike");
+            const ceEntryEl = document.getElementById("mot-ce-entry");
+            const ceSlEl = document.getElementById("mot-ce-sl");
+            const ceTp1El = document.getElementById("mot-ce-tp1");
+            const ceTp2El = document.getElementById("mot-ce-tp2");
+            const ceRiskEl = document.getElementById("mot-ce-risk");
+            const ceCapEl = document.getElementById("mot-ce-cap");
+            const ceWhyEl = document.getElementById("mot-ce-why");
+            const ceDeltaPill = document.getElementById("mot-ce-delta-pill");
+
+            if (ceStrikeEl) ceStrikeEl.textContent = `${data.symbol} ${ce.strike} CE`;
+            if (ceEntryEl) ceEntryEl.textContent = ce.entry_range || `₹${ce.ltp}`;
+            if (ceSlEl) ceSlEl.textContent = `₹${ce.stop_loss} (-30%)`;
+            if (ceTp1El) ceTp1El.textContent = `₹${ce.target_1} (+40%)`;
+            if (ceTp2El) ceTp2El.textContent = `₹${ce.target_2} (+80%)`;
+            if (ceRiskEl) ceRiskEl.textContent = `₹${Number(ce.max_risk_per_lot).toLocaleString("en-IN")}`;
+            if (ceCapEl) ceCapEl.textContent = `₹${Number(ce.capital_per_lot).toLocaleString("en-IN")}`;
+            if (ceWhyEl) ceWhyEl.textContent = data.why_recommended || "Delta-optimized strike aligned with momentum.";
+            if (ceDeltaPill) ceDeltaPill.textContent = `Δ ${ce.delta} (θ ${ce.theta_per_day}/day)`;
+        }
+
+        // 3. PE Card
+        const pe = data.put_opportunity;
+        if (pe) {
+            const peStrikeEl = document.getElementById("mot-pe-strike");
+            const peEntryEl = document.getElementById("mot-pe-entry");
+            const peSlEl = document.getElementById("mot-pe-sl");
+            const peTp1El = document.getElementById("mot-pe-tp1");
+            const peTp2El = document.getElementById("mot-pe-tp2");
+            const peRiskEl = document.getElementById("mot-pe-risk");
+            const peCapEl = document.getElementById("mot-pe-cap");
+            const peWhyEl = document.getElementById("mot-pe-why");
+            const peDeltaPill = document.getElementById("mot-pe-delta-pill");
+
+            if (peStrikeEl) peStrikeEl.textContent = `${data.symbol} ${pe.strike} PE`;
+            if (peEntryEl) peEntryEl.textContent = pe.entry_range || `₹${pe.ltp}`;
+            if (peSlEl) peSlEl.textContent = `₹${pe.stop_loss} (-30%)`;
+            if (peTp1El) peTp1El.textContent = `₹${pe.target_1} (+40%)`;
+            if (peTp2El) peTp2El.textContent = `₹${pe.target_2} (+80%)`;
+            if (peRiskEl) peRiskEl.textContent = `₹${Number(pe.max_risk_per_lot).toLocaleString("en-IN")}`;
+            if (peCapEl) peCapEl.textContent = `₹${Number(pe.capital_per_lot).toLocaleString("en-IN")}`;
+            if (peWhyEl) peWhyEl.textContent = data.why_alternatives_rejected || "Evaluating risk-decay profile and low-probability OTM traps.";
+            if (peDeltaPill) peDeltaPill.textContent = `Δ ${pe.delta} (θ ${pe.theta_per_day}/day)`;
+        }
+
+        // 4. Matrix Row
+        const selCrit = document.getElementById("mot-selection-criteria");
+        if (selCrit && data.why_recommended) {
+            selCrit.textContent = data.why_recommended;
+        }
+
+        const rejCrit = document.getElementById("mot-rejection-criteria");
+        if (rejCrit && data.why_alternatives_rejected) {
+            rejCrit.textContent = data.why_alternatives_rejected;
+        }
+
+        const movCrit = document.getElementById("mot-movement-criteria");
+        if (movCrit && data.hedged_alternative) {
+            const h = data.hedged_alternative;
+            movCrit.innerHTML = `<strong>Hedged Alternative:</strong> ${h.strategy} (${h.wings_range}) &mdash; ${h.description}`;
+        }
+    }
+
+    window.loadBestStrikeToPayoff = function (type) {
+        if (!state.masterTraderAdvisor) {
+            console.warn("Master trader advisor data not yet loaded");
+            return;
+        }
+        const opt = type === "CE" ? state.masterTraderAdvisor.call_opportunity : state.masterTraderAdvisor.put_opportunity;
+        if (!opt) return;
+
+        state.legs = [
+            {
+                action: "BUY",
+                type: opt.type,
+                strike: parseFloat(opt.strike),
+                price: parseFloat(opt.ltp),
+                lots: 1
+            }
+        ];
+
+        renderLegsTableDOM();
+        recalculatePayoff();
+
+        if (typeof window.switchOptionsView === "function") {
+            window.switchOptionsView("payoff");
+        }
+        const payoffSec = document.getElementById("section-payoff");
+        if (payoffSec) {
+            payoffSec.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+    };
+
+    window.loadPrimaryBestStrikeToPayoff = function () {
+        if (!state.masterTraderAdvisor) return;
+        const side = state.masterTraderAdvisor.selection_decision
+            ? state.masterTraderAdvisor.selection_decision.selected_side
+            : "CE";
+        window.loadBestStrikeToPayoff(side === "PE" ? "PE" : "CE");
+    };
+
+    window.copyActiveBrokerOrder = function () {
+        if (!state.masterTraderAdvisor || !state.masterTraderAdvisor.selection_decision) return;
+        const dec = state.masterTraderAdvisor.selection_decision;
+        const orderText = dec.selected_side === "PE" ? dec.pe_broker_syntax : dec.ce_broker_syntax;
+        if (navigator.clipboard && orderText) {
+            navigator.clipboard.writeText(orderText).then(() => {
+                const btn = document.getElementById("mot-copy-btn");
+                if (btn) {
+                    const orig = btn.textContent;
+                    btn.textContent = "✓ Copied!";
+                    setTimeout(() => { btn.textContent = orig; }, 2000);
+                }
+            }).catch(err => {
+                console.error("Clipboard copy error:", err);
+            });
+        }
+    };
 
     async function fetchSingleOptionSignals() {
         if (!el.aiSingleSignalsGrid) return;
@@ -211,7 +429,17 @@
             lots: 1
         }];
 
+        document.querySelectorAll(".sidebar-inst-btn").forEach(b => {
+            const s = (b.getAttribute("data-symbol") || "").toUpperCase();
+            b.classList.toggle("active", s === sig.symbol);
+        });
+
         fetchOptionChain(sig.symbol);
+        fetchMasterOptionTraderAdvisor(sig.symbol);
+
+        if (typeof window.switchOptionsView === "function") {
+            window.switchOptionsView("payoff");
+        }
     };
 
     window.copySingleOrderTicketByIndex = function (idx) {
@@ -644,11 +872,23 @@
        ========================================================================== */
 
     window.selectUnderlying = function (sym, btn) {
-        state.symbol = sym;
-        document.querySelectorAll(".und-pill").forEach(p => p.classList.remove("active"));
-        if (btn) btn.classList.add("active");
+        if (!sym) return;
+        state.symbol = sym.toUpperCase().trim();
+        document.querySelectorAll(".und-pill").forEach(p => {
+            const txt = p.textContent.trim().toUpperCase();
+            p.classList.toggle("active", txt.includes(state.symbol));
+        });
+        document.querySelectorAll(".sidebar-inst-btn").forEach(b => {
+            const s = (b.getAttribute("data-symbol") || "").toUpperCase();
+            b.classList.toggle("active", s === state.symbol);
+        });
         state.legs = [];
-        fetchOptionChain(sym);
+        fetchOptionChain(state.symbol);
+        fetchMasterOptionTraderAdvisor(state.symbol);
+
+        if (window.innerWidth <= 900 && typeof window.toggleOptionsSidebar === "function") {
+            window.toggleOptionsSidebar(false);
+        }
     };
 
     window.applyPresetStrategy = async function (presetType) {
@@ -834,80 +1074,163 @@
     }
 
     /* ==========================================================================
-       6. MOBILE DOCK NAVIGATION CONTROLLER
+       6. WORKSPACE VIEWPORT & DYNAMIC SIDEBAR CONTROLLER
        ========================================================================== */
 
-    /* The dock's global is installed by mobile_dock.js, which loads BEFORE the
-       dock markup so the buttons work from first paint. Defining it here instead
-       meant the buttons were live ~360 lines of markup before this file ran, and
-       an early tap threw "switchMobileOptionsView is not defined" and did
-       nothing. Register the real behaviour with that bootstrap; fall back to
-       assigning the global so this file still works if the bootstrap is absent. */
-    function applyMobileOptionsView(view) {
-        state.activeMobileView = view;
-        const btnSingles = document.getElementById("mob-btn-singles");
-        const btnSpreads = document.getElementById("mob-btn-spreads");
-        const btnPayoff = document.getElementById("mob-btn-payoff");
-        const btnChain = document.getElementById("mob-btn-chain");
-        const btnAll = document.getElementById("mob-btn-all");
+    window.toggleOptionsSidebar = function (forceState) {
+        const sidebar = document.getElementById("options-sidebar");
+        const appShell = document.getElementById("options-app-shell");
+        const backdrop = document.getElementById("options-sidebar-backdrop");
+        if (!sidebar || !appShell) return;
 
-        if (btnSingles) btnSingles.classList.toggle("active", view === "singles");
-        if (btnSpreads) btnSpreads.classList.toggle("active", view === "spreads");
-        if (btnPayoff) btnPayoff.classList.toggle("active", view === "payoff");
-        if (btnChain) btnChain.classList.toggle("active", view === "chain");
-        if (btnAll) btnAll.classList.toggle("active", view === "all");
+        const isMobile = window.innerWidth <= 900;
+        if (isMobile) {
+            const shouldOpen = typeof forceState === "boolean"
+                ? forceState
+                : !sidebar.classList.contains("mobile-open");
+            sidebar.classList.toggle("mobile-open", shouldOpen);
+            if (backdrop) backdrop.classList.toggle("active", shouldOpen);
+            document.body.style.overflow = shouldOpen ? "hidden" : "";
+        } else {
+            const isCollapsed = typeof forceState === "boolean"
+                ? !forceState
+                : !sidebar.classList.contains("collapsed");
+            sidebar.classList.toggle("collapsed", isCollapsed);
+            appShell.classList.toggle("sidebar-collapsed", isCollapsed);
+            try {
+                localStorage.setItem("options_sidebar_collapsed", isCollapsed ? "true" : "false");
+            } catch (e) {}
+            setTimeout(() => {
+                if (state.payoffChart) state.payoffChart.resize();
+                if (state.oiChart) state.oiChart.resize();
+            }, 300);
+        }
+    };
 
+    window.switchOptionsView = function (view) {
+        const targetView = (view || "advisor").toLowerCase();
+        state.activeView = targetView;
+        state.activeMobileView = targetView;
+        try {
+            localStorage.setItem("options_active_view", targetView);
+        } catch (e) {}
+
+        // 1. Update Sidebar Nav Items
+        const navIds = ["advisor", "singles", "spreads", "payoff", "chain", "all"];
+        navIds.forEach(id => {
+            const navBtn = document.getElementById(`nav-item-${id}`);
+            if (navBtn) navBtn.classList.toggle("active", id === targetView);
+        });
+
+        // 2. Update Top Tabs
+        navIds.forEach(id => {
+            const tabBtn = document.getElementById(`tab-btn-${id}`);
+            if (tabBtn) {
+                const isActive = id === targetView;
+                tabBtn.classList.toggle("active", isActive);
+                tabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
+            }
+        });
+
+        // 3. Update Mobile Dock
+        navIds.forEach(id => {
+            const mobBtn = document.getElementById(`mob-btn-${id}`);
+            if (mobBtn) {
+                const isActive = id === targetView;
+                mobBtn.classList.toggle("active", isActive);
+                mobBtn.setAttribute("aria-selected", isActive ? "true" : "false");
+            }
+        });
+
+        // 4. Viewport Panes Visibility
+        const secAdvisor = document.getElementById("section-master-trader-strike");
         const secSingles = document.getElementById("section-singles");
         const secSpreads = document.getElementById("section-spreads");
         const secPayoff = document.getElementById("section-payoff");
         const secChain = document.getElementById("section-chain");
-        const optWorkspaceGrid = document.querySelector(".opt-workspace-grid");
+        const optWorkspaceGrid = document.querySelector(".opt-workspace-grid") || document.getElementById("opt-workspace-grid");
 
-        if (window.innerWidth <= 900) {
-            if (view === "singles") {
-                if (secSingles) secSingles.style.display = "block";
-                if (secSpreads) secSpreads.style.display = "none";
-                if (optWorkspaceGrid) optWorkspaceGrid.style.display = "none";
-                if (secPayoff) secPayoff.style.display = "none";
-                if (secChain) secChain.style.display = "none";
-            } else if (view === "spreads") {
-                if (secSingles) secSingles.style.display = "none";
-                if (secSpreads) secSpreads.style.display = "block";
-                if (optWorkspaceGrid) optWorkspaceGrid.style.display = "none";
-                if (secPayoff) secPayoff.style.display = "none";
-                if (secChain) secChain.style.display = "none";
-            } else if (view === "payoff") {
-                if (secSingles) secSingles.style.display = "none";
-                if (secSpreads) secSpreads.style.display = "none";
-                if (optWorkspaceGrid) optWorkspaceGrid.style.display = "grid";
-                if (secPayoff) {
-                    secPayoff.style.display = "flex";
-                    setTimeout(() => {
-                        if (state.payoffChart) state.payoffChart.resize();
-                        if (state.oiChart) state.oiChart.resize();
-                    }, 60);
-                }
-                if (secChain) secChain.style.display = "none";
-            } else if (view === "chain") {
-                if (secSingles) secSingles.style.display = "none";
-                if (secSpreads) secSpreads.style.display = "none";
-                if (optWorkspaceGrid) optWorkspaceGrid.style.display = "grid";
-                if (secPayoff) secPayoff.style.display = "none";
-                if (secChain) secChain.style.display = "flex";
-            } else if (view === "all") {
-                if (secSingles) secSingles.style.display = "block";
-                if (secSpreads) secSpreads.style.display = "block";
-                if (optWorkspaceGrid) optWorkspaceGrid.style.display = "grid";
-                if (secPayoff) {
-                    secPayoff.style.display = "flex";
-                    setTimeout(() => {
-                        if (state.payoffChart) state.payoffChart.resize();
-                        if (state.oiChart) state.oiChart.resize();
-                    }, 60);
-                }
-                if (secChain) secChain.style.display = "flex";
+        if (targetView === "advisor") {
+            if (secAdvisor) secAdvisor.style.display = "block";
+            if (secSingles) secSingles.style.display = "none";
+            if (secSpreads) secSpreads.style.display = "none";
+            if (optWorkspaceGrid) optWorkspaceGrid.style.display = "none";
+            if (secPayoff) secPayoff.style.display = "none";
+            if (secChain) secChain.style.display = "none";
+        } else if (targetView === "singles") {
+            if (secAdvisor) secAdvisor.style.display = "none";
+            if (secSingles) secSingles.style.display = "block";
+            if (secSpreads) secSpreads.style.display = "none";
+            if (optWorkspaceGrid) optWorkspaceGrid.style.display = "none";
+            if (secPayoff) secPayoff.style.display = "none";
+            if (secChain) secChain.style.display = "none";
+        } else if (targetView === "spreads") {
+            if (secAdvisor) secAdvisor.style.display = "none";
+            if (secSingles) secSingles.style.display = "none";
+            if (secSpreads) secSpreads.style.display = "block";
+            if (optWorkspaceGrid) optWorkspaceGrid.style.display = "none";
+            if (secPayoff) secPayoff.style.display = "none";
+            if (secChain) secChain.style.display = "none";
+        } else if (targetView === "payoff") {
+            if (secAdvisor) secAdvisor.style.display = "none";
+            if (secSingles) secSingles.style.display = "none";
+            if (secSpreads) secSpreads.style.display = "none";
+            if (optWorkspaceGrid) {
+                optWorkspaceGrid.style.display = "grid";
+                optWorkspaceGrid.style.gridTemplateColumns = "1fr";
+            }
+            if (secPayoff) {
+                secPayoff.style.display = "flex";
+                secPayoff.style.width = "100%";
+                setTimeout(() => {
+                    if (state.payoffChart) state.payoffChart.resize();
+                    if (state.oiChart) state.oiChart.resize();
+                }, 60);
+            }
+            if (secChain) secChain.style.display = "none";
+        } else if (targetView === "chain") {
+            if (secAdvisor) secAdvisor.style.display = "none";
+            if (secSingles) secSingles.style.display = "none";
+            if (secSpreads) secSpreads.style.display = "none";
+            if (optWorkspaceGrid) {
+                optWorkspaceGrid.style.display = "grid";
+                optWorkspaceGrid.style.gridTemplateColumns = "1fr";
+            }
+            if (secPayoff) secPayoff.style.display = "none";
+            if (secChain) {
+                secChain.style.display = "flex";
+                secChain.style.width = "100%";
+            }
+        } else if (targetView === "all") {
+            if (secAdvisor) secAdvisor.style.display = "block";
+            if (secSingles) secSingles.style.display = "block";
+            if (secSpreads) secSpreads.style.display = "block";
+            if (optWorkspaceGrid) {
+                optWorkspaceGrid.style.display = "grid";
+                optWorkspaceGrid.style.gridTemplateColumns = window.innerWidth <= 1100 ? "1fr" : "1.1fr 1fr";
+            }
+            if (secPayoff) {
+                secPayoff.style.display = "flex";
+                secPayoff.style.width = "auto";
+                setTimeout(() => {
+                    if (state.payoffChart) state.payoffChart.resize();
+                    if (state.oiChart) state.oiChart.resize();
+                }, 60);
+            }
+            if (secChain) {
+                secChain.style.display = "flex";
+                secChain.style.width = "auto";
             }
         }
+
+        // Close mobile drawer if open
+        if (window.innerWidth <= 900) {
+            window.toggleOptionsSidebar(false);
+        }
+    };
+
+    function applyMobileOptionsView(view) {
+        window.switchOptionsView(view);
     }
 
     if (typeof window.registerMobileView === "function") {
@@ -921,33 +1244,52 @@
        ========================================================================== */
 
     document.addEventListener("DOMContentLoaded", () => {
-        fetchOptionChain("NIFTY");
+        // Restore sidebar collapse preference on desktop
+        try {
+            const savedCollapsed = localStorage.getItem("options_sidebar_collapsed") === "true";
+            if (savedCollapsed && window.innerWidth > 900) {
+                const sidebar = document.getElementById("options-sidebar");
+                const appShell = document.getElementById("options-app-shell");
+                if (sidebar) sidebar.classList.add("collapsed");
+                if (appShell) appShell.classList.add("sidebar-collapsed");
+            }
+        } catch (e) {}
+
+        const urlSym = new URLSearchParams(window.location.search).get("symbol");
+        if (urlSym) {
+            state.symbol = urlSym.toUpperCase().trim();
+        }
+        const activeSym = state.symbol || "NIFTY";
+
+        document.querySelectorAll(".und-pill").forEach(p => {
+            p.classList.toggle("active", p.textContent.trim().toUpperCase().includes(activeSym));
+        });
+        document.querySelectorAll(".sidebar-inst-btn").forEach(b => {
+            const s = (b.getAttribute("data-symbol") || "").toUpperCase();
+            b.classList.toggle("active", s === activeSym);
+        });
+
+        fetchOptionChain(activeSym);
+        fetchMasterOptionTraderAdvisor(activeSym);
         fetchSingleOptionSignals();
         fetchOptionRecommendations();
-        if (window.innerWidth <= 900) {
-            /* Honour a selection made before this file loaded (the dock is live
-               from first paint). Hardcoding "singles" here reverted it. */
-            window.switchMobileOptionsView(state.activeMobileView || "singles");
-        }
+
+        // Restore active view (default to "all" on desktop, "advisor" on mobile)
+        let savedView = window.innerWidth > 900 ? "all" : "advisor";
+        try {
+            const stored = localStorage.getItem("options_active_view");
+            if (stored) savedView = stored;
+        } catch (e) {}
+        window.switchOptionsView(savedView);
     });
 
     window.addEventListener("resize", () => {
         if (state.payoffChart) state.payoffChart.resize();
         if (state.oiChart) state.oiChart.resize();
 
-        if (window.innerWidth <= 900) {
-            window.switchMobileOptionsView(state.activeMobileView || "singles");
-        } else {
-            const secSingles = document.getElementById("section-singles");
-            const secSpreads = document.getElementById("section-spreads");
-            const secPayoff = document.getElementById("section-payoff");
-            const secChain = document.getElementById("section-chain");
-            if (secSingles) secSingles.style.display = "block";
-            if (secSpreads) secSpreads.style.display = "block";
-            if (secPayoff) secPayoff.style.display = "block";
-            if (secChain) secChain.style.display = "block";
+        if (state.activeView) {
+            window.switchOptionsView(state.activeView);
         }
     });
 
 })();
-

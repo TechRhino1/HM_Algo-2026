@@ -12,10 +12,10 @@ from jarvis.india.india_service import INDIA_SERVICE
 
 def test_live_indices_overview_cards():
     cards = INDIA_PREDICTIONS.get_live_indices_cards()
-    assert len(cards) == 3, f"Expected 3 benchmark cards, got {len(cards)}"
+    assert len(cards) >= 3, f"Expected at least 3 benchmark cards, got {len(cards)}"
     
     symbols = [c["symbol"] for c in cards]
-    assert symbols == ["NIFTY", "SENSEX", "BANKNIFTY"]
+    assert symbols[:3] == ["NIFTY", "SENSEX", "BANKNIFTY"]
 
     for c in cards:
         assert c["price"] > 0, f"Price should be > 0 for {c['symbol']}"

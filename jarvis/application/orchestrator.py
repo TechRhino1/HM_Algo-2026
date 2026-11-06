@@ -464,6 +464,8 @@ class JarvisOrchestrator:
         else:
             # A pending order is an INTENT, not a trade. Hold the payload until
             # the broker confirms a position; `_on_position_opened` journals it.
+            if not hasattr(self, "_pending_trade_memory") or self._pending_trade_memory is None:
+                self._pending_trade_memory = {}
             self._pending_trade_memory[int(ticket)] = trade_payload
             logger.info(
                 f"📝 Pending order #{ticket} ({decision.symbol} {decision.bias} {trade_style}): "
@@ -535,8 +537,10 @@ class JarvisOrchestrator:
             key = int(ticket)
         except (TypeError, ValueError):
             return
-        self._pending_features.pop(key, None)
-        self._pending_trade_memory.pop(key, None)
+        pending_features = getattr(self, "_pending_features", None) or {}
+        pending_features.pop(key, None)
+        pending_memory = getattr(self, "_pending_trade_memory", None) or {}
+        pending_memory.pop(key, None)
         try:
             if self.trade_memory.delete_unfilled_intent(key):
                 logger.info("🧹 Removed phantom journal intent for cancelled order #%s", key)
@@ -557,7 +561,10 @@ class JarvisOrchestrator:
             key = int(ticket)
         except (TypeError, ValueError):
             return
-        payload = self._pending_trade_memory.pop(key, None)
+        pending_memory = getattr(self, "_pending_trade_memory", None)
+        if pending_memory is None:
+            return
+        payload = pending_memory.pop(key, None)
         if not payload:
             return
         try:
@@ -643,7 +650,8 @@ class JarvisOrchestrator:
         deferred_payload = None
         if ticket is not None:
             try:
-                deferred_payload = self._pending_trade_memory.pop(int(ticket), None)
+                pending_memory = getattr(self, "_pending_trade_memory", None) or {}
+                deferred_payload = pending_memory.pop(int(ticket), None)
             except (TypeError, ValueError):
                 deferred_payload = None
         if ticket:

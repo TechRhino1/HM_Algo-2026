@@ -89,6 +89,7 @@ data/*.db-wal
 # These are binary and local-only; `data/*.db` above does not match them because
 # the suffix is appended, not replaced.
 data/*.db.bak-*
+data/*.backup*
 
 # Derived signal-scan cache (regenerate with tools/scan_signals.py)
 data/signals/

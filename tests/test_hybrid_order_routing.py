@@ -53,7 +53,7 @@ class TestHybridSmartOrderRouting(unittest.TestCase):
             stop_loss=2385.0,
             take_profit=2420.0,
             risk_reward_ratio=2.5,
-            calculated_risk_percent=1.0,
+            calculated_risk_percent=0.5,
             expected_value=1.5,
             model_confidence=0.85,
             adversarial_penalty=0.0,
@@ -68,7 +68,7 @@ class TestHybridSmartOrderRouting(unittest.TestCase):
         )
 
         self.mock_mt5.place_pending_order.return_value = {"status": "PLACED", "ticket": 77701}
-        res = self.engine.execute_decision(dec, lots=0.10)
+        res = self.engine.execute_decision(dec, lots=0.02)
 
         self.mock_mt5.place_pending_order.assert_called_once()
         self.mock_mt5.send_market_order.assert_not_called()
@@ -94,7 +94,7 @@ class TestHybridSmartOrderRouting(unittest.TestCase):
             stop_loss=2385.0,
             take_profit=2420.0,
             risk_reward_ratio=2.5,
-            calculated_risk_percent=1.0,
+            calculated_risk_percent=0.5,
             expected_value=1.5,
             model_confidence=0.85,
             adversarial_penalty=0.0,
@@ -109,7 +109,7 @@ class TestHybridSmartOrderRouting(unittest.TestCase):
         )
 
         self.mock_mt5.send_market_order.return_value = {"status": "FILLED", "ticket": 77702, "price": 2400.20}
-        res = self.engine.execute_decision(dec, lots=0.10)
+        res = self.engine.execute_decision(dec, lots=0.02)
 
         # Fallback to market order triggered
         self.mock_mt5.send_market_order.assert_called_once()

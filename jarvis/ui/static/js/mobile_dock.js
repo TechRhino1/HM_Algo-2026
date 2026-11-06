@@ -80,5 +80,5 @@
        controllers register below, and the id lists mirror each dock's markup. */
     install('stocks', 'switchMobileStocksView', ['setups', 'screener', 'heatmap', 'all']);
     install('india', 'switchMobileIndiaView', ['buys', 'screener', 'heatmap', 'all']);
-    install('options', 'switchMobileOptionsView', ['singles', 'spreads', 'payoff', 'chain', 'all']);
+    install('options', 'switchMobileOptionsView', ['advisor', 'singles', 'spreads', 'payoff', 'chain', 'all']);
 })();

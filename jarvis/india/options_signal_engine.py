@@ -92,14 +92,15 @@ class OptionSignalEngine:
         rvol = analysis["rvol"]
         is_squeeze = analysis["is_squeeze"]
 
-        # Modelled PCR / IV rank for the symbol. Drawn from a local RNG seeded
-        # deterministically from the symbol, so the same instrument yields the
-        # same value in every process. This used to seed the module-level
-        # generator from `hash()`, which both leaked into every other caller of
-        # `random` in the process and changed on every interpreter start.
-        rng = random.Random(stable_seed(symbol))
-        pcr = round(rng.uniform(0.75, 1.45), 2)
-        iv_rank = round(rng.uniform(22.0, 68.0), 1)
+        # Derive true PCR and IV from options chain rather than RNG
+        try:
+            chain_sample = INDIA_OPTIONS.generate_option_chain(symbol)
+            pcr_dict = chain_sample.get("pcr", {})
+            pcr = float(pcr_dict.get("pcr_oi", 1.0))
+            iv_rank = float(chain_sample.get("iv_rank", 45.0))
+        except Exception:
+            pcr = 1.0
+            iv_rank = 45.0
 
         # 1. Determine Trade Direction (CALL vs PUT)
         # Bullish conditions: Price > VWAP, Price > CPR TCP, Camarilla >= H3, PCR > 1.05

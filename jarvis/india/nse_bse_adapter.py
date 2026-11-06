@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional, List
 import logging
 import time
 import json
+import math
 import urllib.request
 import datetime as _dt
 
@@ -67,7 +68,7 @@ INDEX_META = {
         "nse_sym": "NIFTY",
         "type": "Indices",
         "lot_size": 25,
-        "base_ref": 22450.0
+        "base_ref": 24850.0
     },
     "SENSEX": {
         "ticker": "%5EBSESN",
@@ -77,7 +78,7 @@ INDEX_META = {
         "nse_sym": "SENSEX",
         "type": "Indices",
         "lot_size": 10,
-        "base_ref": 72850.0
+        "base_ref": 80500.0
     },
     "BANKNIFTY": {
         "ticker": "%5ENSEBANK",
@@ -87,7 +88,57 @@ INDEX_META = {
         "nse_sym": "BANKNIFTY",
         "type": "Indices",
         "lot_size": 15,
-        "base_ref": 54200.0
+        "base_ref": 58750.0
+    },
+    "FINNIFTY": {
+        "ticker": "NIFTY_FIN_SERVICE.NS",
+        "name": "FIN NIFTY",
+        "exchange": "NSE",
+        "tradingview": "NSE:FINNIFTY",
+        "nse_sym": "FINNIFTY",
+        "type": "Indices",
+        "lot_size": 25,
+        "base_ref": 27050.0
+    },
+    "MIDCPNIFTY": {
+        "ticker": "NIFTY_MID_SELECT.NS",
+        "name": "MIDCAP NIFTY",
+        "exchange": "NSE",
+        "tradingview": "NSE:MIDCPNIFTY",
+        "nse_sym": "MIDCPNIFTY",
+        "type": "Indices",
+        "lot_size": 50,
+        "base_ref": 13950.0
+    },
+    "BANKEX": {
+        "ticker": "%5EBSEBANK",
+        "name": "BSE BANKEX",
+        "exchange": "BSE",
+        "tradingview": "BSE:BANKEX",
+        "nse_sym": "BANKEX",
+        "type": "Indices",
+        "lot_size": 15,
+        "base_ref": 62500.0
+    },
+    "NIFTYIT": {
+        "ticker": "%5ECNXIT",
+        "name": "NIFTY IT",
+        "exchange": "NSE",
+        "tradingview": "NSE:CNXIT",
+        "nse_sym": "NIFTYIT",
+        "type": "Indices",
+        "lot_size": 25,
+        "base_ref": 32800.0
+    },
+    "NIFTYAUTO": {
+        "ticker": "%5ECNXAUTO",
+        "name": "NIFTY AUTO",
+        "exchange": "NSE",
+        "tradingview": "NSE:CNXAUTO",
+        "nse_sym": "NIFTYAUTO",
+        "type": "Indices",
+        "lot_size": 25,
+        "base_ref": 27600.0
     }
 }
 
@@ -194,7 +245,7 @@ def fetch_live_index_quotes() -> List[Dict[str, Any]]:
 
 
 def _fetch_yf_chart_quote(encoded_ticker: str) -> Optional[Dict[str, Any]]:
-    """Fetches fast real-time summary via chart quote endpoint."""
+    """Fetches fast real-time summary via chart quote endpoint with volume and timestamps."""
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded_ticker}?interval=1d&range=1d"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
@@ -210,6 +261,15 @@ def _fetch_yf_chart_quote(encoded_ticker: str) -> Optional[Dict[str, Any]]:
                 return None
             diff = lp - prev
             pct = (diff / prev * 100.0) if prev > 0 else 0.0
+
+            # Extract genuine volume from indicators or meta
+            indicators = res[0].get("indicators", {})
+            quote_list = indicators.get("quote", [{}])[0]
+            vols = quote_list.get("volume", [])
+            raw_vol = meta.get("regularMarketVolume") or (vols[-1] if vols and vols[-1] is not None else 0)
+            vol = int(raw_vol or 0)
+            market_time = int(meta.get("regularMarketTime") or time.time())
+
             return {
                 "price": lp,
                 "prev_close": prev,
@@ -218,6 +278,8 @@ def _fetch_yf_chart_quote(encoded_ticker: str) -> Optional[Dict[str, Any]]:
                 "high": float(meta.get("regularMarketDayHigh") or lp),
                 "low": float(meta.get("regularMarketDayLow") or lp),
                 "open": float(meta.get("regularMarketOpen") or lp),
+                "volume": vol,
+                "timestamp": market_time
             }
     except Exception as exc:
         logger.debug("Failed YF chart quote for %s: %s", encoded_ticker, exc)
@@ -375,6 +437,94 @@ def _normalize_nse_chain(j: Dict[str, Any], symbol: str) -> Dict[str, Any]:
     }
 
 
+def fetch_nse_historical(symbol: str, days: int = 180, timeframe: str = "1D") -> Optional[List[Dict[str, Any]]]:
+    """
+    Fetches real exchange historical OHLCV candles for Indian indices and equities.
+    Supports both daily and intraday timeframes (1M, 5M, 15M, 1H, 1D).
+    Returns list of dicts: [{'time': int, 'open': float, 'high': float, 'low': float, 'close': float, 'volume': int}]
+    """
+    sym = (symbol or "NIFTY").upper().strip()
+    
+    # 1. Resolve ticker
+    if sym in INDEX_META:
+        ticker = INDEX_META[sym]["ticker"]
+    elif sym.startswith("^") or sym.endswith(".NS") or sym.endswith(".BO"):
+        ticker = sym
+    elif sym in ("NIFTY", "NIFTY50", "NIFTY 50"):
+        ticker = "%5ENSEI"
+    elif sym in ("BANKNIFTY", "BANK NIFTY"):
+        ticker = "%5ENSEBANK"
+    elif sym in ("SENSEX", "BSESN"):
+        ticker = "%5EBSESN"
+    elif sym == "FINNIFTY":
+        ticker = "NIFTY_FIN_SERVICE.NS"
+    elif sym == "MIDCPNIFTY":
+        ticker = "NIFTY_MID_SELECT.NS"
+    else:
+        ticker = f"{sym}.NS"
+
+    # 2. Map timeframe to Yahoo chart interval & range
+    tf = timeframe.upper().strip()
+    tf_to_yf = {
+        "1M": ("1m", "5d"),
+        "5M": ("5m", "5d"),
+        "15M": ("15m", "5d"),
+        "30M": ("30m", "5d"),
+        "1H": ("1h", "1mo"),
+        "4H": ("1h", "3mo"),
+        "1D": ("1d", "1y" if days > 90 else "6mo"),
+        "1W": ("1wk", "2y"),
+        "1MO": ("1mo", "5y"),
+    }
+    interval, range_param = tf_to_yf.get(tf, ("1d", "1y"))
+
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={range_param}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            j = json.loads(resp.read().decode())
+            res = j.get("chart", {}).get("result", [])
+            if not res:
+                return None
+            res0 = res[0]
+            timestamps = res0.get("timestamp", [])
+            if not timestamps:
+                return None
+            quote = res0.get("indicators", {}).get("quote", [{}])[0]
+            opens = quote.get("open", [])
+            highs = quote.get("high", [])
+            lows = quote.get("low", [])
+            closes = quote.get("close", [])
+            volumes = quote.get("volume", [])
+
+            candles = []
+            for i in range(len(timestamps)):
+                t = timestamps[i]
+                c = closes[i] if i < len(closes) else None
+                if c is None or c <= 0.0 or math.isnan(c):
+                    continue
+                o = opens[i] if (i < len(opens) and opens[i] is not None and not math.isnan(opens[i])) else c
+                h = highs[i] if (i < len(highs) and highs[i] is not None and not math.isnan(highs[i])) else max(o, c)
+                l = lows[i] if (i < len(lows) and lows[i] is not None and not math.isnan(lows[i])) else min(o, c)
+                v = int(volumes[i] if (i < len(volumes) and volumes[i] is not None and not math.isnan(volumes[i])) else 0)
+
+                candles.append({
+                    "time": int(t),
+                    "open": round(float(o), 2),
+                    "high": round(float(h), 2),
+                    "low": round(float(l), 2),
+                    "close": round(float(c), 2),
+                    "volume": max(0, v)
+                })
+
+            if candles:
+                return candles[-days:] if tf in ("1D", "1W", "1MO") else candles
+            return None
+    except Exception as exc:
+        logger.debug("Failed fetch_nse_historical for %s (%s): %s", sym, ticker, exc)
+        return None
+
+
 def fetch_nse_quote(symbol: str) -> Optional[Dict[str, Any]]:
     """Live NSE equity/index quote, retained for callers of the original API."""
     return fetch_live_india_quote(symbol)
@@ -401,7 +551,7 @@ def fetch_live_india_quote(symbol: str) -> Optional[Dict[str, Any]]:
                 "high": chart_data["high"],
                 "low": chart_data["low"],
                 "open": chart_data["open"],
-                "volume": 0
+                "volume": int(chart_data.get("volume", 0) or 0)
             }
 
     # Equities
@@ -419,7 +569,7 @@ def fetch_live_india_quote(symbol: str) -> Optional[Dict[str, Any]]:
             "high": chart_data["high"],
             "low": chart_data["low"],
             "open": chart_data["open"],
-            "volume": 0
+            "volume": int(chart_data.get("volume", 0) or 0)
         }
 
     # BSE fallback

@@ -1843,7 +1843,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
             if is_vendor:
                 self.send_header("Cache-Control", "public, max-age=604800, immutable")
             elif is_asset:
-                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Cache-Control", "no-cache, must-revalidate")
             else:
                 self.send_header("Cache-Control", "no-cache, must-revalidate")
             self.end_headers()

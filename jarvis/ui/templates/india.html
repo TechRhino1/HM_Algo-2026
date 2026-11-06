@@ -16,16 +16,16 @@
     <script>if(typeof LightweightCharts==='undefined'){document.write('<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"><\/script>');}</script>
     <link rel="stylesheet" href="/static/css/bootstrap.min.css">
     <!-- India Terminal Stylesheet -->
-    <link rel="stylesheet" href="/static/css/india.css?v=20260912_v2">
-    <link rel="stylesheet" href="/static/css/auth.css?v=20260912_v2">
+    <link rel="stylesheet" href="/static/css/india.css?v=20261106_v5">
+    <link rel="stylesheet" href="/static/css/auth.css?v=20261106_v5">
     <!-- Unified Design System (loaded LAST - see hm_ui.css) -->
-    <link rel="stylesheet" href="/static/css/hm_ui.css?v=20260912_v2">
+    <link rel="stylesheet" href="/static/css/hm_ui.css?v=20261106_v5">
     <!-- iOS liquid-glass responsive layer (small screens only; desktop untouched) -->
-    <link rel="stylesheet" href="/static/css/ios_pages.css?v=20260922_v1">
+    <link rel="stylesheet" href="/static/css/ios_pages.css?v=20261106_v5">
     <!-- Bugatti Cockpit & Unified Responsive Theme loaded LAST for authoritative precedence -->
     <link rel="stylesheet" href="/static/css/theme_bugatti.css">
 <!-- Mobile v3 "Aurora" iOS design system (small screens only; loaded last) -->
-<link rel="stylesheet" href="/static/css/hm_ios_v3.css?v=20261019_v5">
+<link rel="stylesheet" href="/static/css/hm_ios_v3.css?v=20261106_v5">
 </head>
 <body>
 
@@ -119,7 +119,7 @@
          dock is tappable before india.js (near the end of the document) has
          defined the handler, so an early tap threw "switchMobileIndiaView is
          not defined" and did nothing. Must load before the dock, not deferred. -->
-    <script src="/static/js/mobile_dock.js?v=20260922_v1"></script>
+    <script src="/static/js/mobile_dock.js?v=20261106_v5"></script>
     <nav class="mobile-nav-bar" id="mobile-nav-bar" role="tablist" aria-label="India market view selector">
         <button id="mob-btn-buys" class="mob-tab-btn active" role="tab" aria-selected="true" onclick="switchMobileIndiaView('buys')">⚡ Prime Buys</button>
         <button id="mob-btn-screener" class="mob-tab-btn" role="tab" aria-selected="false" onclick="switchMobileIndiaView('screener')">📋 Screener</button>
@@ -130,35 +130,223 @@
     <!-- ==========================================================================
          1. THREE PROMINENT LIVE MARKET OVERVIEW CARDS (NIFTY 50, SENSEX, BANK NIFTY)
          ========================================================================== -->
-    <section class="live-overview-section" aria-label="Live Benchmark Overview">
-        <div class="live-overview-header">
-            <div class="section-title-wrap">
-                <span class="live-pulse-badge"><span class="pulse-ring"></span> LIVE EXCHANGE</span>
-                <h1 class="overview-main-heading">Indian Markets Command Dashboard</h1>
-                <span class="live-clock-badge" id="live-exchange-clock">NSE / BSE Real-Time Feed</span>
-            </div>
-            <div class="overview-meta-info">
-                <span class="data-mode-tag">✓ Direct Broker Tick Resolution</span>
-                <span class="click-hint-tag">⚡ Click any card to launch Options Expert Advisor</span>
-            </div>
-        </div>
-        <div class="live-overview-grid" id="live-overview-cards" role="region" aria-label="Index overview cards">
-            <div class="index-overview-card loading" id="card-nifty" tabindex="0" role="button" aria-label="NIFTY 50 overview card" onclick="window.selectOptionsAdvisorIndex('NIFTY')">
-                <div class="card-loading-shimmer">Loading NIFTY 50 live feed...</div>
-            </div>
-            <div class="index-overview-card loading" id="card-sensex" tabindex="0" role="button" aria-label="SENSEX overview card" onclick="window.selectOptionsAdvisorIndex('SENSEX')">
-                <div class="card-loading-shimmer">Loading SENSEX live feed...</div>
-            </div>
-            <div class="index-overview-card loading" id="card-banknifty" tabindex="0" role="button" aria-label="BANK NIFTY overview card" onclick="window.selectOptionsAdvisorIndex('BANKNIFTY')">
-                <div class="card-loading-shimmer">Loading BANK NIFTY live feed...</div>
-            </div>
-        </div>
-    </section>
-
+    
     <!-- ==========================================================================
-         INSTITUTIONAL FII / DII CASH & DERIVATIVES FLOW RIBBON
+         INSTITUTIONAL APP SHELL & DYNAMIC COLLAPSIBLE SIDEBAR
          ========================================================================== -->
-    <div class="fii-dii-ribbon">
+    <div class="india-app-shell" id="india-app-shell">
+        <aside class="india-sidebar" id="india-sidebar" aria-label="Indian Markets Navigation">
+            <!-- Sidebar Brand Box -->
+            <div class="sidebar-brand-box">
+                <div class="sidebar-brand-content">
+                    <span class="sidebar-brand-icon">🇮🇳</span>
+                    <div class="sidebar-brand-text">
+                        <span class="sidebar-title">HM INDIA DESK</span>
+                        <span class="sidebar-subtitle">NSE / BSE MULTI-ASSET</span>
+                    </div>
+                </div>
+                <button class="sidebar-toggle-btn" id="india-sidebar-toggle-btn" onclick="window.toggleIndiaSidebar()" title="Collapse / Expand Sidebar" aria-label="Toggle Navigation Sidebar">
+                    <svg class="sidebar-toggle-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="sidebar-scroll-container">
+                <!-- Group 1: Quick Instruments -->
+                <div class="sidebar-group">
+                    <div class="sidebar-group-header">
+                        <span>QUICK INSTRUMENTS</span>
+                        <span class="sidebar-badge-fno">F&amp;O</span>
+                    </div>
+                    <div class="sidebar-inst-grid">
+                        <button class="sidebar-inst-btn active" data-symbol="NIFTY" onclick="window.selectQuickInstrument('NIFTY')">
+                            <span class="inst-symbol">NIFTY</span>
+                            <span class="inst-lot">Lot 25</span>
+                        </button>
+                        <button class="sidebar-inst-btn" data-symbol="BANKNIFTY" onclick="window.selectQuickInstrument('BANKNIFTY')">
+                            <span class="inst-symbol">BANKNIFTY</span>
+                            <span class="inst-lot">Lot 15</span>
+                        </button>
+                        <button class="sidebar-inst-btn" data-symbol="FINNIFTY" onclick="window.selectQuickInstrument('FINNIFTY')">
+                            <span class="inst-symbol">FINNIFTY</span>
+                            <span class="inst-lot">Lot 25</span>
+                        </button>
+                        <button class="sidebar-inst-btn" data-symbol="MIDCPNIFTY" onclick="window.selectQuickInstrument('MIDCPNIFTY')">
+                            <span class="inst-symbol">MIDCPNIFTY</span>
+                            <span class="inst-lot">Lot 50</span>
+                        </button>
+                        <button class="sidebar-inst-btn" data-symbol="SENSEX" onclick="window.selectQuickInstrument('SENSEX')">
+                            <span class="inst-symbol">SENSEX</span>
+                            <span class="inst-lot">Lot 10</span>
+                        </button>
+                        <button class="sidebar-inst-btn" data-symbol="RELIANCE" onclick="window.selectQuickInstrument('RELIANCE')">
+                            <span class="inst-symbol">RELIANCE</span>
+                            <span class="inst-lot">Lot 250</span>
+                        </button>
+                        <button class="sidebar-inst-btn" data-symbol="HDFCBANK" onclick="window.selectQuickInstrument('HDFCBANK')">
+                            <span class="inst-symbol">HDFCBANK</span>
+                            <span class="inst-lot">Lot 550</span>
+                        </button>
+                        <button class="sidebar-inst-btn" data-symbol="TCS" onclick="window.selectQuickInstrument('TCS')">
+                            <span class="inst-symbol">TCS</span>
+                            <span class="inst-lot">Lot 175</span>
+                        </button>
+                        <button class="sidebar-inst-btn" data-symbol="INFY" onclick="window.selectQuickInstrument('INFY')">
+                            <span class="inst-symbol">INFY</span>
+                            <span class="inst-lot">Lot 400</span>
+                        </button>
+                        <button class="sidebar-inst-btn" data-symbol="TATAMOTORS" onclick="window.selectQuickInstrument('TATAMOTORS')">
+                            <span class="inst-symbol">TATAMOTORS</span>
+                            <span class="inst-lot">Lot 1425</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Group 2: Workspaces Navigation -->
+                <div class="sidebar-group">
+                    <div class="sidebar-group-header">
+                        <span>TERMINAL WORKSPACES</span>
+                    </div>
+                    <div class="sidebar-nav-list">
+                        <button class="sidebar-nav-item active" id="nav-item-overview" onclick="window.switchIndiaView('overview')">
+                            <span class="nav-item-icon">📊</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Market Overview</span>
+                                <span class="nav-item-sub">Live Indices &amp; Direction</span>
+                            </div>
+                        </button>
+                        <button class="sidebar-nav-item" id="nav-item-advisor" onclick="window.switchIndiaView('advisor')">
+                            <span class="nav-item-icon">👑</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">AI Options Advisor</span>
+                                <span class="nav-item-sub">Best Strike Algorithmic Gate</span>
+                            </div>
+                            <span class="nav-item-pill">AI</span>
+                        </button>
+                        <button class="sidebar-nav-item" id="nav-item-predictions" onclick="window.switchIndiaView('predictions')">
+                            <span class="nav-item-icon">🔮</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Market Predictions</span>
+                                <span class="nav-item-sub">Multi-Timeframe Probability</span>
+                            </div>
+                        </button>
+                        <button class="sidebar-nav-item" id="nav-item-buys" onclick="window.switchIndiaView('buys')">
+                            <span class="nav-item-icon">⚡</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Prime Buys</span>
+                                <span class="nav-item-sub">High-Conviction Breakouts</span>
+                            </div>
+                            <span class="nav-item-pill">ALPHA</span>
+                        </button>
+                        <button class="sidebar-nav-item" id="nav-item-screener" onclick="window.switchIndiaView('screener')">
+                            <span class="nav-item-icon">📋</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Stock Screener</span>
+                                <span class="nav-item-sub">CPR, VWAP &amp; Camarilla H4</span>
+                            </div>
+                        </button>
+                        <button class="sidebar-nav-item" id="nav-item-heatmap" onclick="window.switchIndiaView('heatmap')">
+                            <span class="nav-item-icon">🗺️</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Sector Heatmap</span>
+                                <span class="nav-item-sub">Rotation &amp; Breadth</span>
+                            </div>
+                        </button>
+                        <button class="sidebar-nav-item" id="nav-item-all" onclick="window.switchIndiaView('all')">
+                            <span class="nav-item-icon">🖥️</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Panoramic Desk</span>
+                                <span class="nav-item-sub">All-in-One Dashboard</span>
+                            </div>
+                        </button>
+                        <a href="/options" class="sidebar-nav-item" title="Open Dedicated Derivatives Desk">
+                            <span class="nav-item-icon">⛓️</span>
+                            <div class="nav-item-content">
+                                <span class="nav-item-title">Options Desk</span>
+                                <span class="nav-item-sub">Live Chain &amp; Multi-Leg Payoff</span>
+                            </div>
+                            <span class="nav-item-pill" style="background:rgba(56,189,248,0.2); color:#38bdf8; border-color:rgba(56,189,248,0.4);">LIVE</span>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Group 3: Institutional Risk Protocol -->
+                <div class="sidebar-group sidebar-risk-group">
+                    <div class="sidebar-group-header">
+                        <span>INSTITUTIONAL RISK GATE</span>
+                    </div>
+                    <div class="risk-gate-card">
+                        <div class="risk-metric-row">
+                            <span class="risk-lbl">Risk Per Trade</span>
+                            <span class="risk-val text-cyan">&le; 1.5% Capital</span>
+                        </div>
+                        <div class="risk-metric-row">
+                            <span class="risk-lbl">Min Risk-Reward</span>
+                            <span class="risk-val text-green">&ge; 1:2.0 R:R</span>
+                        </div>
+                        <div class="risk-metric-row">
+                            <span class="risk-lbl">Drawdown Circuit</span>
+                            <span class="risk-val text-green">NORMAL (Active)</span>
+                        </div>
+                        <div class="risk-metric-row">
+                            <span class="risk-lbl">Naked Options</span>
+                            <span class="risk-val text-red">BLOCKED (Hedge Req)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Group 4: Live Heartbeat Footer -->
+                <div class="sidebar-feed-footer">
+                    <div class="feed-pulse-dot"></div>
+                    <div class="feed-text">
+                        <span class="feed-title">NSE / BSE STREAM: ACTIVE</span>
+                        <span class="feed-sub">Ultra-low latency real-time data</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Mobile Drawer Backdrop -->
+        <div class="india-sidebar-backdrop" id="india-sidebar-backdrop" onclick="window.toggleIndiaSidebar(false)"></div>
+
+        <!-- Main Panoramic Workspace Viewport -->
+        <div class="india-main-viewport" role="main" id="hm-main">
+            <!-- Top Workspace Header & Ribbon -->
+            <div class="india-top-header">
+                <div class="india-top-action-bar">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <button class="india-mobile-menu-btn" id="india-mobile-menu-btn" onclick="window.toggleIndiaSidebar(true)" aria-label="Open Sidebar Navigation">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                        </button>
+                        <div class="section-title-wrap">
+                            <span class="live-pulse-badge"><span class="pulse-ring"></span> LIVE EXCHANGE</span>
+                            <h1 class="overview-main-heading">Indian Markets Command Dashboard</h1>
+                            <span class="live-clock-badge" id="live-exchange-clock">NSE / BSE Real-Time Feed</span>
+                        </div>
+                    </div>
+
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <a href="/options" class="btn-action-tool" style="text-decoration:none; color:inherit;" title="Open Options Chain &amp; Payoff Simulator">
+                            <span>⛓️</span> Options Terminal
+                        </a>
+                        <button class="btn-action-tool" onclick="window.toggleSectorHeatmap()">
+                            <span>🗺️</span> Heatmap
+                        </button>
+                        <button class="btn-action-tool" onclick="window.exportIndiaCsv()">
+                            <span>📥</span> Export CSV
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Indices Ticker Marquee Track -->
+                <div class="indices-ticker-bar">
+                    <div class="indices-title-tag">NSE / BSE TICKER</div>
+                    <div class="indices-track" id="indices-track"></div>
+                </div>
+
+                <!-- FII / DII Institutional Flow Ribbon -->
+                <div class="fii-dii-ribbon">
         <div class="fii-card">
             <span class="flow-label">FII Net Cash:</span>
             <span id="fii-cash-val" class="flow-val text-bull">+₹1,845.50 Cr</span>
@@ -181,6 +369,72 @@
         </div>
     </div>
 
+                <!-- Workspace View Selector Tabs Ribbon -->
+                <div class="india-view-tabs" role="tablist" aria-label="Terminal Workspace Views">
+                    <button id="tab-btn-overview" class="india-tab-btn active" role="tab" aria-selected="true" onclick="window.switchIndiaView('overview')">
+                        <span>📊</span> Overview
+                    </button>
+                    <button id="tab-btn-advisor" class="india-tab-btn" role="tab" aria-selected="false" onclick="window.switchIndiaView('advisor')">
+                        <span>👑</span> AI Options Advisor
+                    </button>
+                    <button id="tab-btn-predictions" class="india-tab-btn" role="tab" aria-selected="false" onclick="window.switchIndiaView('predictions')">
+                        <span>🔮</span> AI Predictions
+                    </button>
+                    <button id="tab-btn-buys" class="india-tab-btn" role="tab" aria-selected="false" onclick="window.switchIndiaView('buys')">
+                        <span>⚡</span> Prime Buys
+                    </button>
+                    <button id="tab-btn-screener" class="india-tab-btn" role="tab" aria-selected="false" onclick="window.switchIndiaView('screener')">
+                        <span>📋</span> Stock Screener
+                    </button>
+                    <button id="tab-btn-heatmap" class="india-tab-btn" role="tab" aria-selected="false" onclick="window.switchIndiaView('heatmap')">
+                        <span>🗺️</span> Sector Heatmap
+                    </button>
+                    <button id="tab-btn-all" class="india-tab-btn" role="tab" aria-selected="false" onclick="window.switchIndiaView('all')">
+                        <span>🖥️</span> Panoramic Desk
+                    </button>
+                </div>
+            </div>
+
+            <!-- Workspace Section 1: Live Overview Cards -->
+            <section id="section-overview" class="live-overview-section" aria-label="Live Benchmark Overview">
+        <div class="live-overview-header">
+            <div class="section-title-wrap">
+                <span class="live-pulse-badge"><span class="pulse-ring"></span> LIVE EXCHANGE</span>
+                <h1 class="overview-main-heading">Indian Markets Command Dashboard</h1>
+                <span class="live-clock-badge" id="live-exchange-clock">NSE / BSE Real-Time Feed</span>
+            </div>
+            <div class="overview-meta-info">
+                <span class="data-mode-tag">✓ Direct Broker Tick Resolution</span>
+                <span class="click-hint-tag">⚡ Click any card to launch Options Expert Advisor</span>
+            </div>
+        </div>
+        <div class="live-overview-grid" id="live-overview-cards" role="region" aria-label="Index overview cards">
+            <div class="index-overview-card loading" id="card-nifty" tabindex="0" role="button" aria-label="NIFTY 50 overview card" onclick="window.selectOptionsAdvisorIndex('NIFTY')">
+                <div class="card-loading-shimmer">Loading NIFTY 50 live feed...</div>
+            </div>
+            <div class="index-overview-card loading" id="card-sensex" tabindex="0" role="button" aria-label="SENSEX overview card" onclick="window.selectOptionsAdvisorIndex('SENSEX')">
+                <div class="card-loading-shimmer">Loading SENSEX live feed...</div>
+            </div>
+            <div class="index-overview-card loading" id="card-banknifty" tabindex="0" role="button" aria-label="BANK NIFTY overview card" onclick="window.selectOptionsAdvisorIndex('BANKNIFTY')">
+                <div class="card-loading-shimmer">Loading BANK NIFTY live feed...</div>
+            </div>
+            <div class="index-overview-card loading" id="card-finnifty" tabindex="0" role="button" aria-label="FINNIFTY overview card" onclick="window.selectOptionsAdvisorIndex('FINNIFTY')">
+                <div class="card-loading-shimmer">Loading FINNIFTY live feed...</div>
+            </div>
+            <div class="index-overview-card loading" id="card-midcpnifty" tabindex="0" role="button" aria-label="MIDCPNIFTY overview card" onclick="window.selectOptionsAdvisorIndex('MIDCPNIFTY')">
+                <div class="card-loading-shimmer">Loading MIDCPNIFTY live feed...</div>
+            </div>
+        </div>
+    </section>
+
+            <!-- Other Workspace Sections -->
+            
+
+    <!-- ==========================================================================
+         INSTITUTIONAL FII / DII CASH & DERIVATIVES FLOW RIBBON
+         ========================================================================== -->
+    
+
     <!-- ==========================================================================
          MAIN VIEWPORT CONTAINER
          ========================================================================== -->
@@ -199,10 +453,73 @@
                     </div>
                 </div>
 
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <select id="adv-stock-select" class="form-select form-select-sm" style="background:#0f172a; border-color:#334155; color:#f8fafc; font-size:11.5px; padding:4px 8px; border-radius:6px; cursor:pointer;" onchange="window.selectOptionsAdvisorIndex(this.value)">
+                        <option value="NIFTY">NIFTY 50</option>
+                        <option value="BANKNIFTY">BANK NIFTY</option>
+                        <option value="FINNIFTY">FINNIFTY</option>
+                        <option value="MIDCPNIFTY">MIDCPNIFTY</option>
+                        <option value="SENSEX">SENSEX</option>
+                        <option value="RELIANCE">RELIANCE</option>
+                        <option value="HDFCBANK">HDFCBANK</option>
+                        <option value="TCS">TCS</option>
+                        <option value="INFY">INFY</option>
+                        <option value="TATAMOTORS">TATAMOTORS</option>
+                    </select>
+                </div>
                 <div class="advisor-index-tabs" role="tablist" aria-label="Select Index for Options Analysis">
                     <button id="tab-opt-nifty" class="advisor-tab-btn active" role="tab" aria-selected="true" onclick="window.selectOptionsAdvisorIndex('NIFTY')">NIFTY 50</button>
                     <button id="tab-opt-sensex" class="advisor-tab-btn" role="tab" aria-selected="false" onclick="window.selectOptionsAdvisorIndex('SENSEX')">SENSEX</button>
                     <button id="tab-opt-banknifty" class="advisor-tab-btn" role="tab" aria-selected="false" onclick="window.selectOptionsAdvisorIndex('BANKNIFTY')">BANK NIFTY</button>
+                </div>
+            </div>
+
+            
+            <!-- Algorithmic Decision Gate: Which One to Select (Call vs Put) -->
+            <div class="mot-decision-gate" id="mot-decision-gate" style="margin-bottom:14px;">
+                <div class="mot-decision-banner" id="mot-decision-banner">
+                    <div class="mot-banner-left">
+                        <span class="mot-badge-target" id="adv-active-target-badge">🎯 ALGO SELECTION</span>
+                        <div>
+                            <div class="mot-banner-title" id="adv-decision-title">SELECT CALL (CE) &mdash; Bullish Confluence</div>
+                            <p class="mot-banner-desc" id="adv-decision-desc">Spot holding firmly above VWAP and CPR Top with PCR put-writing floor.</p>
+                        </div>
+                    </div>
+
+                    <div class="mot-banner-right">
+                        <div class="mot-pop-box">
+                            <span class="mot-pop-label">Trade POP %</span>
+                            <span class="mot-pop-val" id="adv-pop-val">74%</span>
+                        </div>
+                        <button class="mot-copy-btn" id="btn-copy-broker-order" onclick="window.copyActiveBrokerOrder()">📋 Copy Order</button>
+                        <a href="/options" class="mot-simulate-primary-btn" title="Open Full Derivatives Terminal">⚡ Execute in Options Desk ↗</a>
+                    </div>
+                </div>
+
+                <!-- Quantitative Conviction Meter (Bull vs Bear / CE vs PE) -->
+                <div class="mot-conviction-widget">
+                    <div class="mot-conviction-labels">
+                        <span class="mot-conv-lbl text-bull" id="adv-ce-conv-lbl">CALL (CE) Conviction: 68%</span>
+                        <span class="mot-conv-lbl text-bear" id="adv-pe-conv-lbl">PUT (PE) Conviction: 32%</span>
+                    </div>
+                    <div class="mot-conviction-bar-track">
+                        <div class="mot-conv-bar-ce" id="adv-conv-bar-ce" style="width: 68%;"></div>
+                        <div class="mot-conv-bar-pe" id="adv-conv-bar-pe" style="width: 32%;"></div>
+                    </div>
+                </div>
+
+                <!-- Meta Badges: Regime, Verdict & Freshness -->
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-top:10px; padding-top:8px; border-top:1px solid rgba(51,65,85,0.3); font-size:11px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span class="badge badge-regime" id="adv-regime-badge">Bullish Trend</span>
+                        <span class="badge badge-verdict" id="adv-verdict-badge">LONG BIAS</span>
+                        <span class="badge badge-freshness" id="adv-freshness-badge">Live Tick</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:12px; font-size:10.5px; color:var(--text-dim);">
+                        <span>Why: <strong id="adv-why-text" class="text-white">Trend alignment &amp; order-flow</strong></span>
+                        <span>Hedge: <strong id="adv-hedge-text" class="text-cyan">OTM Bear Put Spread</strong></span>
+                        <span>Avoid: <strong id="adv-rejected-text" class="text-bear">Naked Long PE</strong></span>
+                    </div>
                 </div>
             </div>
 
@@ -382,11 +699,34 @@
         <!-- ======================================================================
              SECTION 3: LIVE STOCK SCANNER & TRADING OPPORTUNITIES
              ====================================================================== -->
-        <section id="section-stock-scanner" class="stock-scanner-section" aria-label="Live Stock Scanner">
+        
+        <!-- ======================================================================
+             SECTION 3: AI PRIME INTRADAY BUYS & OUTPERFORMERS
+             ====================================================================== -->
+        <section id="section-buy-now" class="ai-buy-now-section" aria-label="Prime Intraday Buys">
+            <div class="table-header-bar" style="margin-bottom:12px;">
+                <div class="table-title">
+                    <span>⚡ AI Prime Intraday Buys &amp; Outperformers</span>
+                    <span class="table-count-badge">Algorithmic Breakout &amp; Momentum Picks</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-dim);">
+                    <span style="color:var(--neon-bull); font-weight:700;">★ High Win-Rate Setups</span>
+                    <span>• Filtered by CPR &amp; Camarilla H4 Breakouts</span>
+                </div>
+            </div>
+            <div id="ai-buy-now-grid" class="ai-buy-now-grid buy-now-cards-grid">
+                <div style="grid-column:1 / -1; text-align:center; padding:30px; color:var(--text-dim); font-size:12px;">
+                    Scanning 100+ NSE liquid equities for algorithmic high-conviction intraday setups...
+                </div>
+            </div>
+        </section>
+<section id="section-screener"><span id="section-stock-scanner" style="display:none;"></span> class="stock-scanner-section" aria-label="Live Stock Scanner">
             <div class="table-header-bar" style="margin-bottom:12px;">
                 <div class="table-title">
                     <span>📊 Live Stock Scanner &amp; Trading Opportunities</span>
-                    <span id="scanner-total-count" class="table-count-badge">Scanning 100+ Equities...</span>
+                    <span id="table-count-badge" class="table-count-badge">Scanning 100+ Equities...</span>
+                    <span id="scan-countdown" class="scan-countdown-badge" title="Auto-Scan Refresh Interval">30s</span>
+                    <span id="scanner-total-count" style="display:none;"></span>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <button class="btn-action-tool" onclick="window.toggleSectorHeatmap()">
@@ -484,7 +824,10 @@
     <!-- ==========================================================================
          STOCK INTELLIGENCE DOSSIER MODAL
          ========================================================================== -->
-    <div id="india-dossier-modal" class="modal-overlay" style="display:none;">
+    
+        </div>
+    </div>
+<div id="india-dossier-modal" class="modal-overlay" style="display:none;">
         <div class="modal-card">
             <!-- Modal Header -->
             <div class="modal-header">
@@ -791,11 +1134,11 @@
     <!-- Bootstrap 5 JS Bundle -->
     <script src="/static/js/vendor/bootstrap.bundle.min.js"></script>
     <!-- Universal Authentication & India Controller Script -->
-    <script src="/static/js/auth.js?v=20260912_v2"></script>
-    <script src="/static/js/india.js?v=20260912_v2"></script>
+    <script src="/static/js/auth.js?v=20261106_v5"></script>
+    <script src="/static/js/india.js?v=20261106_v5"></script>
     <!-- Unified UX / accessibility layer (loaded LAST). -->
-    <script src="/static/js/hm_ui.js?v=20260912_v2" defer></script>
-<script src="/static/js/hm_mobile_nav.js?v=20261019_v3"></script>
-<script src="/static/js/hm_mobile_ux.js?v=20261019_v3"></script>
+    <script src="/static/js/hm_ui.js?v=20261106_v5" defer></script>
+<script src="/static/js/hm_mobile_nav.js?v=20261106_v5"></script>
+<script src="/static/js/hm_mobile_ux.js?v=20261106_v5"></script>
 </body>
 </html>

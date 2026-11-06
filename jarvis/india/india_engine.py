@@ -37,14 +37,19 @@ class IndiaTechnicalEngine:
     ) -> List[Dict[str, Any]]:
         """
         Returns OHLC candle series for the instrument.
-        Generates geometrically accurate candles anchored to the live hydrated profile price.
-
-        Every bar here is GENERATED — this engine never reads a broker feed — so the series
-        is never labelled ``live``. The anchor's provenance is recorded separately, and the
-        series carries its own ``source`` (read it off the RETURN VALUE, not off
-        ``self._last_data_source``: this engine is a singleton and callers may run
-        concurrently).
+        Prioritizes genuine live exchange candles via fetch_real_candles().
+        Falls back to geometrically bounded synthetic candles when offline.
         """
+        # 1. Attempt genuine live exchange candles
+        try:
+            from jarvis.data.market_data_provider import fetch_real_candles, CandleSeries, SOURCE_LIVE
+            real_bars = fetch_real_candles(symbol, timeframe=timeframe, num_bars=num_bars, market="IN")
+            if real_bars and len(real_bars) >= 2:
+                self._last_data_source = SOURCE_LIVE
+                return CandleSeries(real_bars, source=SOURCE_LIVE, anchor_source="exchange")
+        except Exception:
+            pass
+
         profile = get_india_profile(symbol)
         live_price = float(profile.get("price") or profile.get("base_price", 1000.0))
         if live_price <= 0:
@@ -352,10 +357,15 @@ class IndiaTechnicalEngine:
         vwap_lower2 = round(vwap - (2 * vwap_sd), 2)
 
         # 6. CPR & Camarilla Structural Levels
-        # Calculated from previous session high/low/close or realistic daily bounds
-        p_close = float(profile.get("prev_close") or profile.get("previous_close") or prev_close)
-        p_high = profile.get("prev_high") or profile.get("previous_high")
-        p_low = profile.get("prev_low") or profile.get("previous_low")
+        # Calculated from genuine previous session high/low/close when available
+        if len(candles) >= 2 and candles[-2].get("high") and candles[-2].get("low"):
+            p_high = float(candles[-2]["high"])
+            p_low = float(candles[-2]["low"])
+            p_close = float(candles[-2]["close"])
+        else:
+            p_close = float(profile.get("prev_close") or profile.get("previous_close") or prev_close)
+            p_high = profile.get("prev_high") or profile.get("previous_high")
+            p_low = profile.get("prev_low") or profile.get("previous_low")
 
         if p_high is None or p_low is None or float(p_high) <= 0 or float(p_low) <= 0:
             is_index_sym = profile.get("is_index", False) or symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX")
@@ -490,7 +500,46 @@ class IndiaTechnicalEngine:
         tp1_hit_pct = round(float(np.mean(paths >= tp1) * 100.0), 1)
         tp2_hit_pct = round(float(np.mean(paths >= tp2) * 100.0), 1)
 
+        # Smart Money Concepts (SMC) & Market Structure
+        smc_structure = {
+            "liquidity_sweep": "NONE",
+            "fair_value_gap": "NONE",
+            "order_block": "NONE",
+            "bos_status": "INSIDE_RANGE",
+            "choch_status": "TREND_INTACT"
+        }
+        if len(candles) >= 3:
+            b1 = candles[-3]
+            b2 = candles[-2]
+            b3 = candles[-1]
+            if b3["low"] > b1["high"]:
+                smc_structure["fair_value_gap"] = "BULLISH_FVG"
+            elif b3["high"] < b1["low"]:
+                smc_structure["fair_value_gap"] = "BEARISH_FVG"
+
+            if b3["high"] > b2["high"] and b3["close"] < b2["high"]:
+                smc_structure["liquidity_sweep"] = "BEARISH_SWEEP_PDH"
+            elif b3["low"] < b2["low"] and b3["close"] > b2["low"]:
+                smc_structure["liquidity_sweep"] = "BULLISH_SWEEP_PDL"
+
+            if current_price > b2["high"]:
+                smc_structure["bos_status"] = "BULLISH_BOS"
+            elif current_price < b2["low"]:
+                smc_structure["bos_status"] = "BEARISH_BOS"
+
+        # Market Regime Detection
+        if current_price > vwap and current_price > cpr["tc"] and rsi >= 52:
+            market_regime = "BULLISH_TRENDING"
+        elif current_price < vwap and current_price < cpr["bc"] and rsi <= 48:
+            market_regime = "BEARISH_TRENDING"
+        elif atr14 > (current_price * 0.02) or is_squeeze:
+            market_regime = "HIGH_VOLATILITY"
+        else:
+            market_regime = "SIDEWAYS_CONSOLIDATION"
+
         data = {
+            "market_regime": market_regime,
+            "smc_structure": smc_structure,
             "symbol": symbol,
             "name": profile.get("name", f"{symbol} India Ltd"),
             "sector": profile.get("sector", "Equities"),
