@@ -11,8 +11,16 @@ from jarvis.data.schemas import (
 
 
 class TestGoldEntryFixes(unittest.TestCase):
-    def test_pending_order_does_not_log_to_executed_trades(self):
-        """Verify that placing a pending limit order (status=PLACED) does NOT log a row into executed_trades."""
+    def test_pending_order_logs_pending_row_for_reconciliation(self):
+        """Placing a pending limit must journal a PENDING row, not drop it.
+
+        `sync_mt5_history` closes this row when the broker either fills or
+        cancels the order. Suppressing the write at placement (the old
+        ``if is_fill:`` change) made every pending fill invisible to
+        reconciliation. The phantom-journal defect was in `trade_records`,
+        where an intent was recorded as if it were a trade; that is fixed by
+        deferring `TradeMemory.record_trade` until POSITION_OPENED.
+        """
         mock_mt5 = MagicMock()
         mock_mt5.is_connected = True
         mock_mt5.get_pending_orders.return_value = []
@@ -83,8 +91,9 @@ class TestGoldEntryFixes(unittest.TestCase):
         with patch("jarvis.data.database.TRADE_DB.log_trade") as mock_log:
             res = engine.execute_decision(decision, lots=0.01)
             self.assertEqual(res.get("status"), "PLACED")
-            # CRITICAL ASSERTION: log_trade must NOT be called for resting pending limit orders!
-            mock_log.assert_not_called()
+            # The pending row is what `sync_mt5_history` later closes or cancels.
+            mock_log.assert_called_once()
+            self.assertIsNone(mock_log.call_args.kwargs.get("position_id"))
 
     def test_market_fill_does_log_to_executed_trades(self):
         """Verify that a filled market order (status=FILLED) DOES log to executed_trades."""
