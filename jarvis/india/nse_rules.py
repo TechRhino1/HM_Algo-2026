@@ -30,6 +30,7 @@ NSE_LOT_SIZES: Dict[str, int] = {
     "HINDUNILVR": 300,
     "TATAMOTORS": 1500,
     "TMPV": 1500,
+    "TTML": 1,
     "MARUTI": 50,
     "SUNPHARMA": 350,
     "BAJFINANCE": 125,

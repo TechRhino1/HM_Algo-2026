@@ -390,7 +390,24 @@ INDIA_UNIVERSE: Dict[str, Dict[str, Any]] = {
         "description": "Incubator flagship of Adani Group spearheading green hydrogen, airports, data centers, and roads.",
         "tags": ["NIFTY50", "ADANI_GROUP", "HIGH_BETA", "F&O"]
     },
-    "TATASTEEL": {
+        "TTML": {
+        "symbol": "TTML",
+        "name": "Tata Teleservices (Maharashtra) Limited",
+        "sector": "Technology",
+        "industry": "Telecom Infrastructure & Enterprise Cloud",
+        "market": "NSE_EQUITY",
+        "market_cap": "₹15,800 Cr",
+        "base_price": 82.50,
+        "beta": 1.45,
+        "avg_volume": "8.5M",
+        "pe_ratio": None,
+        "week52_high": 109.00,
+        "week52_low": 65.20,
+        "lot_size": 1,
+        "description": "Tata Group connectivity and cloud solutions provider offering smart cloud, cyber security, IoT, and enterprise connectivity.",
+        "tags": ["TATA_GROUP", "TELECOM", "MIDCAP", "NSE", "BSE", "HIGH_BETA", "MOMENTUM"]
+    },
+"TATASTEEL": {
         "symbol": "TATASTEEL",
         "name": "Tata Steel Limited",
         "sector": "Basic Materials",

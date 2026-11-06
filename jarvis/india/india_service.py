@@ -585,6 +585,20 @@ class IndiaMarketsService:
                             "price": prof.get("base_price"),
                             "lot_size": prof.get("lot_size", 100)
                         })
+                if len(matches) < 5 and len(q) >= 2:
+                    try:
+                        from jarvis.data.dynamic_hydrator import DYNAMIC_HYDRATOR
+                        dyn_prof = DYNAMIC_HYDRATOR.get_profile(q.upper(), market="IN")
+                        if dyn_prof and dyn_prof.get("name") and dyn_prof.get("symbol") not in [m["symbol"] for m in matches]:
+                            matches.insert(0, {
+                                "symbol": dyn_prof.get("symbol"),
+                                "name": dyn_prof.get("name"),
+                                "sector": dyn_prof.get("sector", "Equities"),
+                                "price": dyn_prof.get("price") or dyn_prof.get("base_price", 100.0),
+                                "lot_size": dyn_prof.get("lot_size", 1)
+                            })
+                    except Exception:
+                        pass
                 self._send_json(handler, {"results": matches[:10]})
                 return True
 
