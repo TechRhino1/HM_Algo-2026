@@ -923,11 +923,11 @@ class DecisionEngine:
             (tentative_bias == "BUY" and getattr(context.structure, "choch_type", "") == "BEARISH")
         )
 
-        # Terminal Climax Anti-Exhaustion Gate: Never sell into oversold panic (RSI < 22) or buy into parabolic blowoff (RSI > 78)
+        # Terminal Climax Anti-Exhaustion Gate: Never sell into oversold panic (RSI < 25) or buy into parabolic blowoff (RSI > 75)
         is_exhausted = False
-        if tentative_bias == "SELL" and rsi_val < 22.0:
+        if tentative_bias == "SELL" and rsi_val < 25.0:
             is_exhausted = True
-        elif tentative_bias == "BUY" and rsi_val > 78.0:
+        elif tentative_bias == "BUY" and rsi_val > 75.0:
             is_exhausted = True
         elif tentative_bias == "BUY" and rsi_val > rsi_upper:
             if has_bear_div or has_counter_choch or not is_expansion_reg:
@@ -1744,10 +1744,17 @@ class DecisionEngine:
             # Strict Discount for BUY, Strict Premium for SELL. Reject Equilibrium entries unless confirmed CHOCH.
             has_bull_choch = getattr(st, "choch_type", "") == "BULLISH"
             has_bear_choch = getattr(st, "choch_type", "") == "BEARISH"
-            if tentative_bias == "BUY" and st.discount_premium_zone != "DISCOUNT" and not has_bull_choch:
-                premium_discount_valid = False
-            elif tentative_bias == "SELL" and st.discount_premium_zone != "PREMIUM" and not has_bear_choch:
-                premium_discount_valid = False
+            rsi_val_eval = getattr(context.momentum, "rsi", 50.0) if hasattr(context, "momentum") else 50.0
+            if tentative_bias == "BUY":
+                if st.discount_premium_zone != "DISCOUNT" and not has_bull_choch:
+                    premium_discount_valid = False
+                elif st.discount_premium_zone == "PREMIUM" or rsi_val_eval > 70.0:
+                    premium_discount_valid = False
+            elif tentative_bias == "SELL":
+                if st.discount_premium_zone != "PREMIUM" and not has_bear_choch:
+                    premium_discount_valid = False
+                elif st.discount_premium_zone == "DISCOUNT" and rsi_val_eval < 30.0:
+                    premium_discount_valid = False
         else:
             if tentative_bias == "BUY" and st.discount_premium_zone == "PREMIUM" and trend_score_val < 50:
                 if not bool(getattr(context.liquidity, "sweep_detected", False)):

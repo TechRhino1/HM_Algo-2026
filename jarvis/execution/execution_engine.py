@@ -920,7 +920,7 @@ class ExecutionEngine:
 
 
 
-        if is_fill or is_placed:
+        if is_fill:
 
             ticket = (res or {}).get("ticket")
 

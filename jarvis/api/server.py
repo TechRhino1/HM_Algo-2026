@@ -247,9 +247,14 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
 
         dg = getattr(self.orchestrator, "drawdown_guard", None) if hasattr(self, "orchestrator") else None
         if dg and equity > 0:
-            ok, reason = dg.check_limits(equity)
-            if not ok:
-                return f"Drawdown limit reached: {reason}"
+            if isinstance(acc, dict):
+                balance = float(acc.get("balance", equity) or equity)
+            else:
+                balance = float(getattr(acc, "balance", equity) or equity)
+            dd = dg.check_limits(equity, balance)
+            if not dd.get("passed", False):
+                breaches = dd.get("breaches") or ["drawdown limit reached"]
+                return f"Drawdown limit reached: {'; '.join(str(b) for b in breaches)}"
 
         from jarvis.risk.position_sizing import PositionSizer
         max_lot = PositionSizer.get_max_lot_cap(equity) if equity > 0 else 5.0

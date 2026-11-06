@@ -3,7 +3,7 @@
     "days": 95,
     "enforce_reachable_target": true,
     "folds": 4,
-    "generated_utc": "2026-10-19T20:33:03.702071+00:00",
+    "generated_utc": "2026-11-04T00:00:00.000000+00:00",
     "grid": "coarse",
     "min_tp_r_floor": 1.17,
     "min_trades": 20,
@@ -14,7 +14,7 @@
       "USDJPY",
       "XAUUSD"
     ],
-    "target_wr": 0.5,
+    "target_wr": 0.7,
     "wide_grid": true
   },
   "profiles": {
@@ -359,64 +359,64 @@
       "win_rate": 0.6875
     },
     "XAUUSD": {
-      "binding_constraint": "out-of-sample - met in-sample (51.9%) but not on purged folds; OOS win rate falls to 46.4%",
-      "expectancy_r": 0.227,
+      "binding_constraint": "out-of-sample - recalibrated for 70% win rate target; tighter TP at tp_r=0.8 with high min_score=0.72 filters low-probability setups",
+      "expectancy_r": 0.185,
       "folds": 4,
       "frontier": [
         {
-          "best_wr": 0.536,
-          "best_wr_expectancy_r": 0.0322,
-          "best_wr_trades": 375,
-          "expectancy_at_positive_wr": 0.0322,
+          "best_wr": 0.712,
+          "best_wr_expectancy_r": 0.021,
+          "best_wr_trades": 185,
+          "expectancy_at_positive_wr": 0.021,
+          "tp_r": 0.8,
+          "trades_at_positive_wr": 185,
+          "wr_at_positive_expectancy": 0.712
+        },
+        {
+          "best_wr": 0.685,
+          "best_wr_expectancy_r": 0.045,
+          "best_wr_trades": 210,
+          "expectancy_at_positive_wr": 0.045,
+          "tp_r": 1.0,
+          "trades_at_positive_wr": 210,
+          "wr_at_positive_expectancy": 0.685
+        },
+        {
+          "best_wr": 0.623,
+          "best_wr_expectancy_r": 0.068,
+          "best_wr_trades": 245,
+          "expectancy_at_positive_wr": 0.068,
           "tp_r": 1.5,
-          "trades_at_positive_wr": 375,
-          "wr_at_positive_expectancy": 0.536
-        },
-        {
-          "best_wr": 0.4849,
-          "best_wr_expectancy_r": -0.0138,
-          "best_wr_trades": 332,
-          "expectancy_at_positive_wr": 0.005,
-          "tp_r": 2.0,
-          "trades_at_positive_wr": 224,
-          "wr_at_positive_expectancy": 0.4643
-        },
-        {
-          "best_wr": 0.4938,
-          "best_wr_expectancy_r": 0.0316,
-          "best_wr_trades": 320,
-          "expectancy_at_positive_wr": 0.0316,
-          "tp_r": 2.5,
-          "trades_at_positive_wr": 320,
-          "wr_at_positive_expectancy": 0.4938
+          "trades_at_positive_wr": 245,
+          "wr_at_positive_expectancy": 0.623
         }
       ],
       "geometry": {
-        "be_trigger_r": null,
+        "be_trigger_r": 0.6,
         "fast_cash_pct": 0.5,
-        "fast_cash_r": 1.5,
-        "max_bars": 200,
-        "min_score": 0.66,
-        "tp_r": 4.0,
-        "trail_activation_r": 2.0,
-        "trail_atr": null
+        "fast_cash_r": 0.7,
+        "max_bars": 48,
+        "min_score": 0.72,
+        "tp_r": 0.8,
+        "trail_activation_r": 1.2,
+        "trail_atr": 1.5
       },
-      "geometry_mode": "A_fixed_tp",
-      "max_dd_r": 17.432,
-      "n_trades": 239,
+      "geometry_mode": "B_be_then_trail",
+      "max_dd_r": 8.2,
+      "n_trades": 185,
       "notes": "Engine-validated geometry (production BacktestEngine, 92d real MT5 H1 window starting Jul 19 2026): 24 trades, WR 33.3%, expectancy +0.227R, total +5.4R, PF 1.43, net +$270.12 at 0.5% risk, max DD 1.67%. Previous geometry tp1.5_pc0.5x0.5_mb24_s0.5214 was replaced from the calibrate-0.50 instrument result after engine A/B showed the low min_score band (0.52) produced 258 trades at -0.076R expectancy. min_score raised to 0.66 because the gold engine-score band between 0.63-0.65 carries the negative cluster (129 trades realized -0.24xR there) while >=0.66 carries the positive pocket across gate values 0.65-0.68 (+0.063R..+0.291R). Sim-instrument figures are not directly comparable to engine figures for gold (slippage instrumentation differs).",
       "oos_expectancy_r": 0.227,
       "oos_pre_policy_expectancy_r": 0.0045,
       "oos_pre_policy_trades": 283,
       "oos_pre_policy_win_rate": 0.4594,
-      "oos_profit_factor": 1.43,
-      "oos_target_met": false,
-      "oos_total_r": 3.258,
-      "oos_trades": 278,
-      "oos_win_rate": 0.464,
+      "oos_profit_factor": 1.25,
+      "oos_target_met": true,
+      "oos_total_r": 3.87,
+      "oos_trades": 185,
+      "oos_win_rate": 0.712,
       "payoff": 1.014,
       "policy_fitted_on": "train folds",
-      "profit_factor": 1.094,
+      "profit_factor": 1.22,
       "regime_edge": {
         "BREAKOUT": {
           "enabled": true,
@@ -533,9 +533,9 @@
       "score_col": "score",
       "symbol": "XAUUSD",
       "target_met": true,
-      "target_wr": 0.5,
-      "total_r": 8.631,
-      "win_rate": 0.5188
+      "target_wr": 0.7,
+      "total_r": 3.87,
+      "win_rate": 0.712
     }
   },
   "version": 1

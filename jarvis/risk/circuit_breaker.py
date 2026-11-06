@@ -85,7 +85,9 @@ class CircuitBreaker:
             self._init_db()
             self._load_state()
 
-        # If reset_on_boot requested explicitly or via env var JARVIS_RESET_CIRCUIT_BREAKER=1
+        # If reset_on_boot requested explicitly or via env var JARVIS_RESET_CIRCUIT_BREAKER=1.
+        # Default is OFF: a tripped breaker must survive a restart, otherwise the
+        # loss streak/lockout is erased by bouncing the process.
         _do_reset = reset_on_boot if reset_on_boot is not None else (
             os.environ.get("JARVIS_RESET_CIRCUIT_BREAKER", "0").lower() in ("1", "true", "yes")
         )

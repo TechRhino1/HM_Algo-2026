@@ -82,7 +82,7 @@ class StateManager:
             except Exception:
                 self.execution_mode = ExecutionMode.DEMO
         self.trade_style: str = "SWING"
-        self.is_safe_mode: bool = False
+        self.is_safe_mode: bool = False  # Disabled safe mode to allow automated execution
 
         self.is_running: bool = True
         self.is_orchestrator_running: bool = False

@@ -113,6 +113,9 @@ class JarvisOrchestrator:
         # so pause states, consecutive loss counts, and drawdown limits stay 100% in sync.
         self.circuit_breaker = self.risk_engine.circuit_breaker
         self.drawdown_guard = self.risk_engine.drawdown_guard
+        # A tripped breaker must survive a restart. Do NOT reset here: a process
+        # bounce would erase the loss-streak lockout. Use CircuitBreaker.reset()
+        # explicitly (or JARVIS_RESET_CIRCUIT_BREAKER=1) after operator review.
         self._pending_features = {}
 
         # ── In-process execution guard ─────────────────────────────────────
@@ -971,7 +974,7 @@ class JarvisOrchestrator:
         return DecisionObject(
             symbol=symbol,
             timestamp=datetime.now(timezone.utc),
-            regime=RegimeOutput(primary_regime=MarketRegime.RANGE, volatility_state="COMPRESSION", higher_timeframe_bias="NEUTRAL"),
+            regime=RegimeOutput(primary_regime=MarketRegime.RANGE, probabilities={}, confidence=0.0),
             bias="NEUTRAL",
             probabilities={"BUY": 0.33, "SELL": 0.33, "HOLD": 0.34},
             strategy=strategy,
@@ -987,7 +990,7 @@ class JarvisOrchestrator:
             bull_case=[],
             bear_case=[],
             risk_factors=[reason],
-            quality_gate=TradeQualityGateResult(passed=False, failing_reasons=[reason]),
+            quality_gate=TradeQualityGateResult(passed=False, checks={}, failing_reasons=[reason]),
             decision="HOLD",
             execution_authorized=False,
             rejection_reasons=[reason],
@@ -1201,7 +1204,7 @@ class JarvisOrchestrator:
         
         # 2. Synthesize Multi-Timeframe Market Context with dynamic MTF weighting
         context = self.context_engine.build_context(
-            symbol, 
+            symbol,
             mtf_data,
             current_spread_pips=_spec.typical_spread_pips,
             max_allowed_spread_pips=_spec.max_spread_pips,
@@ -1255,6 +1258,42 @@ class JarvisOrchestrator:
                 tentative_bias = "BUY" if st_bias == "BULLISH" else "SELL"
             else:
                 tentative_bias = "SELL" if ts_val < 0 else "BUY"
+
+        # ── Early-Exit Pipeline: Skip heavy DecisionEngine analysis for low-quality setups ──
+        # Run fast structural/momentum checks BEFORE the expensive full evaluation
+        mom_ts = float(getattr(context.momentum, "trend_score", 0.0) or 0.0) if hasattr(context, "momentum") else 0.0
+        adx_val = float(getattr(context.momentum, "adx", 20.0) or 20.0) if hasattr(context, "momentum") else 20.0
+        has_bos = bool(getattr(context.structure, "bos", False))
+        has_sweep = bool(getattr(context.liquidity, "sweep_detected", False))
+        mtf_align = getattr(context, "mtf_alignment", {}) or {}
+        d1_bias = mtf_align.get("D1", "NEUTRAL")
+        h4_bias = mtf_align.get("H4", "NEUTRAL")
+
+        # Quick structural alignment check
+        structural_aligned = (
+            (tentative_bias == "BUY" and (d1_bias in ("BULLISH", "NEUTRAL") or h4_bias in ("BULLISH", "NEUTRAL"))) or
+            (tentative_bias == "SELL" and (d1_bias in ("BEARISH", "NEUTRAL") or h4_bias in ("BEARISH", "NEUTRAL")))
+        )
+
+        # Minimum momentum/structure thresholds to justify full analysis
+        MIN_TREND_SCORE = 15.0 if "SCALP" in active_trade_style else 10.0
+        MIN_ADX = 18.0
+        if tentative_bias not in ("BUY", "SELL") or not structural_aligned or abs(mom_ts) < MIN_TREND_SCORE or adx_val < MIN_ADX:
+            auth_msg = f"EARLY_EXIT: No actionable setup (bias={tentative_bias}, trend={mom_ts:.1f}, ADX={adx_val:.1f}, struct={'✓' if structural_aligned else '✗'})"
+            DECISION_EVALUATIONS.inc(style=active_trade_style, outcome="early_exit")
+            hold_dec = self._make_hold_decision(symbol, auth_msg, strategy="EARLY_EXIT")
+            self.state_manager.record_decision(symbol, hold_dec)
+            return {
+                "symbol": symbol,
+                "trade_style": active_trade_style,
+                "decision": hold_dec,
+                "context": context,
+                "authorized": False,
+                "auth_reason": auth_msg,
+                "dry_run": bool(dry_run),
+                "execution": None,
+                "stale": False,
+            }
 
         analyst_reports, devil_report = self.analyst_cluster.run_all_parallel(context, regime, tentative_bias)
 
