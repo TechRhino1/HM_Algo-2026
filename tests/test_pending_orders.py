@@ -112,7 +112,9 @@ class TestPendingOrders(unittest.TestCase):
         regime = RegimeOutput(primary_regime=MarketRegime.TREND_BULL, probabilities={}, confidence=0.85)
         gate = TradeQualityGateResult(passed=True, checks={})
 
-        # Insane BUY_LIMIT: price (1.0900) >= bid (1.0849) -> should fall back to MARKET order fill
+        # Insane BUY_LIMIT: price (1.08495) >= bid (1.0849) -> should fall back to MARKET order fill.
+        # Kept within the anti-chase drift tolerance so the test exercises the
+        # direction-sanity fallback, not the separate drift veto.
         decision = DecisionObject(
             symbol="EURUSD",
             timestamp=datetime.now(timezone.utc),
@@ -121,9 +123,9 @@ class TestPendingOrders(unittest.TestCase):
             probabilities={"buy": 0.7, "sell": 0.1, "no_trade": 0.2},
             strategy="TREND_PULLBACK",
             order_type="LIMIT",
-            entry_price=1.0900,
-            stop_loss=1.0750,
-            take_profit=1.0950,
+            entry_price=1.08495,
+            stop_loss=1.0800,
+            take_profit=1.1000,
             risk_reward_ratio=3.0,
             calculated_risk_percent=0.5,
             expected_value=15.0,

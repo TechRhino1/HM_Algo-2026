@@ -459,6 +459,38 @@ class ExecutionEngine:
             return {"status": "BLOCKED", "reason": f"Final R:R {final_rr:.2f}:1 < 1.30"}
 
 
+        # ── Hard pre-dispatch monetary risk ceiling ──────────────────────
+        # The risk engine sizes to `max_risk_per_trade_pct`, but a caller-
+        # supplied lot, a broker minimum-lot floor, or a widened stop can still
+        # exceed it. Refuse here, before any broker call, instead of discovering
+        # the breach after the fill. On a small account this deliberately
+        # rejects instruments whose minimum lot cannot fit the budget (e.g.
+        # 0.01 lot of gold with a wide stop); that is the honest outcome, not a
+        # reason to raise the ceiling.
+        from jarvis.config.settings import SETTINGS as _RISK_SETTINGS
+
+        _acct = getattr(self.state_manager, "account", None)
+        _equity = float(getattr(_acct, "equity", 0.0) or 0.0) if _acct else 0.0
+        _max_pct = float(getattr(_RISK_SETTINGS.risk, "max_risk_per_trade_pct", 0.0) or 0.0)
+        if _equity > 0 and _max_pct > 0:
+            _risk_usd = executable_sl_dist * dollar_risk_per_price_unit * float(lots)
+            _budget_usd = _equity * (_max_pct / 100.0)
+            if _risk_usd > (_budget_usd * 1.01) + 0.01:
+                logger.error(
+                    f"🛑 REJECTED DISPATCH for {decision.symbol}: monetary risk "
+                    f"${_risk_usd:.2f} exceeds {_max_pct:.2f}% of equity "
+                    f"(${_budget_usd:.2f} on ${_equity:.2f}) at {lots} lots and "
+                    f"a {executable_sl_dist:.5f} stop."
+                )
+                return {
+                    "status": "BLOCKED",
+                    "reason": (
+                        f"Risk ${_risk_usd:.2f} exceeds {_max_pct:.2f}% equity "
+                        f"ceiling (${_budget_usd:.2f})"
+                    ),
+                }
+
+
 
         # Pre-quantize initial levels
 
@@ -920,7 +952,7 @@ class ExecutionEngine:
 
 
 
-        if is_fill:
+        if is_fill or is_placed:
 
             ticket = (res or {}).get("ticket")
 

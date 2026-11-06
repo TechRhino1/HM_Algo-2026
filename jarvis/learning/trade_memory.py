@@ -407,3 +407,27 @@ class TradeMemory:
             # is in the `.db` itself, not only the WAL.
             self._checkpoint_locked()
             return True
+
+    def delete_unfilled_intent(self, ticket: int) -> bool:
+        """Remove the row for a pending order the broker never filled.
+
+        Only a row with no outcome at all is eligible: ``pnl IS NULL AND
+        exit_price IS NULL``. If a close was recorded, the row is a real trade
+        and is left untouched. Returns True when a phantom intent was removed.
+        """
+        try:
+            key = int(ticket)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "DELETE FROM trade_records "
+                "WHERE ticket = ? AND pnl IS NULL AND exit_price IS NULL",
+                (key,),
+            )
+            removed = cur.rowcount > 0
+            if removed:
+                self._conn.commit()
+                self._checkpoint_locked()
+            return removed

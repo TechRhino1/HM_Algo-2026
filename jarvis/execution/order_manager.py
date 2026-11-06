@@ -65,14 +65,17 @@ class OrderManager:
             tp_price = float(o.get("tp", 0.0) or 0.0)
             comment = str(o.get("comment", "")).upper()
 
-            # Dynamic TTL: Scalp orders expire in 5 mins, Day Trading in 10 mins, Swing in 20 mins
+            # Dynamic TTL: Scalp orders expire in 5 mins, Day Trading in 10 mins, Swing in 20 mins.
+            # The execution engine stamps comments as HMA2_SCLP_/HMA2_SWNG_/HMA2_DAY_, so
+            # match the compact style codes as well as the full names. Matching only
+            # "SCALP"/"SWING" made every real order take the 30-minute default.
             allowed_age = max_age_sec
-            if "SCALP" in comment:
+            if "SCLP" in comment or "SCALP" in comment:
                 allowed_age = min(allowed_age, 300)
+            elif "SWNG" in comment or "SWING" in comment:
+                allowed_age = min(allowed_age, 1200)
             elif "DAY" in comment:
                 allowed_age = min(allowed_age, 600)
-            elif "SWING" in comment:
-                allowed_age = min(allowed_age, 1200)
 
             cancel_reason = None
             if age > allowed_age:

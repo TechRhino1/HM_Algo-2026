@@ -117,6 +117,11 @@ class JarvisOrchestrator:
         # bounce would erase the loss-streak lockout. Use CircuitBreaker.reset()
         # explicitly (or JARVIS_RESET_CIRCUIT_BREAKER=1) after operator review.
         self._pending_features = {}
+        # Pending limit/stop orders are NOT trades yet. Their journal payload is
+        # held here and only written to `trade_records` when POSITION_OPENED
+        # confirms a fill; otherwise a cancelled limit leaves a permanent
+        # NULL-PnL "trade" that pollutes win rate, learning and history.
+        self._pending_trade_memory: Dict[int, Dict[str, Any]] = {}
 
         # ── In-process execution guard ─────────────────────────────────────
         # Tracks symbols currently being executed to prevent race-condition
@@ -141,6 +146,7 @@ class JarvisOrchestrator:
         self._regime_state_lock = threading.Lock()
 
         self.event_bus.subscribe('trade_closed', self._on_trade_closed)
+        self.event_bus.subscribe('POSITION_OPENED', self._on_position_opened)
 
         # `auto_init=False`: connecting in the constructor is what stops the
         # platform from serving. Measured on `HM_start.py live` with the terminal
@@ -310,7 +316,12 @@ class JarvisOrchestrator:
 
                 # 4. Pending Order Staleness Cleanup (Task 2c)
                 if int(now) % 60 < 10:
-                    self.order_manager.cleanup_stale_pending_orders(max_age_sec=1800)
+                    cancelled = self.order_manager.cleanup_stale_pending_orders(
+                        max_age_sec=1800,
+                        context_map=getattr(self.state_manager, "market_contexts", None),
+                    )
+                    for order in cancelled or []:
+                        self._discard_pending_intent(order.get("ticket"))
 
                 # 5. Autonomous LLM Governor Dynamic Telemetry Refresh
                 if int(now) % 180 < 10:
@@ -430,7 +441,7 @@ class JarvisOrchestrator:
             "symbol": decision.symbol
         }
 
-        self.trade_memory.record_trade({
+        trade_payload = {
             "ticket": ticket,
             "symbol": decision.symbol,
             "type": decision.bias,
@@ -445,8 +456,19 @@ class JarvisOrchestrator:
             "adversarial_penalty": float(decision.adversarial_penalty) if isinstance(decision.adversarial_penalty, (int, float)) else 0.0,
             "expected_value": float(decision.expected_value) if isinstance(decision.expected_value, (int, float)) else 0.0,
             "ml_features": ml_feat.tolist() if hasattr(ml_feat, "tolist") else list(ml_feat)
-        })
-        logger.info(f"📝 Recorded open-time context for Trade #{ticket} ({decision.symbol} {decision.bias} {trade_style})")
+        }
+
+        if exec_res.get("status") == "FILLED":
+            self.trade_memory.record_trade(trade_payload)
+            logger.info(f"📝 Recorded open-time context for Trade #{ticket} ({decision.symbol} {decision.bias} {trade_style})")
+        else:
+            # A pending order is an INTENT, not a trade. Hold the payload until
+            # the broker confirms a position; `_on_position_opened` journals it.
+            self._pending_trade_memory[int(ticket)] = trade_payload
+            logger.info(
+                f"📝 Pending order #{ticket} ({decision.symbol} {decision.bias} {trade_style}): "
+                f"open-time context deferred until fill."
+            )
 
     def _recover_pending_features(self, ticket):
         """Rebuild the open-time context for `ticket` from the trade journal.
@@ -500,6 +522,54 @@ class JarvisOrchestrator:
         if features:
             out["features"] = features
         return out
+
+    def _discard_pending_intent(self, ticket) -> None:
+        """Drop an unfilled order's deferred journal payload and any legacy row.
+
+        Called when `cleanup_stale_pending_orders` reports a cancellation. A
+        cancelled limit is not a trade, so no NULL-PnL row may survive it.
+        """
+        if ticket is None:
+            return
+        try:
+            key = int(ticket)
+        except (TypeError, ValueError):
+            return
+        self._pending_features.pop(key, None)
+        self._pending_trade_memory.pop(key, None)
+        try:
+            if self.trade_memory.delete_unfilled_intent(key):
+                logger.info("🧹 Removed phantom journal intent for cancelled order #%s", key)
+        except Exception as e:
+            logger.debug("Could not remove phantom journal intent #%s: %s", key, e)
+
+    def _on_position_opened(self, data):
+        """Journal a pending order only once the broker confirms it filled.
+
+        `POSITION_OPENED` is published by MT5StateSynchronizer with the position
+        ticket. MT5 copies the opening order ticket into the position id, so the
+        payload deferred by `_record_open_trade_context` keys cleanly onto it.
+        """
+        ticket = (data or {}).get("ticket")
+        if ticket is None:
+            return
+        try:
+            key = int(ticket)
+        except (TypeError, ValueError):
+            return
+        payload = self._pending_trade_memory.pop(key, None)
+        if not payload:
+            return
+        try:
+            self.trade_memory.record_trade(payload)
+            logger.info(
+                "📝 Pending order #%s filled: journaled open-time context (%s %s)",
+                key, payload.get("symbol"), payload.get("type"),
+            )
+        except Exception as e:
+            # Put it back so `_on_trade_closed` can still write the closed row.
+            self._pending_trade_memory[key] = payload
+            logger.error("Failed to journal filled pending order #%s: %s", key, e)
 
     def _on_trade_closed(self, data):
         ticket = data.get("ticket")
@@ -570,6 +640,12 @@ class JarvisOrchestrator:
             )
 
         # 1. Update SQLite trade records (§17)
+        deferred_payload = None
+        if ticket is not None:
+            try:
+                deferred_payload = self._pending_trade_memory.pop(int(ticket), None)
+            except (TypeError, ValueError):
+                deferred_payload = None
         if ticket:
             # D19 — mfe/mae were hardcoded 0.0 here, so every row claimed to have
             # been measured and to have had no excursion at all. The monitor
@@ -582,7 +658,7 @@ class JarvisOrchestrator:
             # claim the trade exited at zero — the same reason the `executed_trades`
             # write below does it. `pnl` is a genuine 0.0 for a scratch trade and
             # is passed through.
-            self.trade_memory.update_closed_trade(
+            recorded = self.trade_memory.update_closed_trade(
                 ticket=ticket,
                 exit_price=exit_price if exit_price > 0 else None,
                 pnl=pnl,
@@ -590,6 +666,23 @@ class JarvisOrchestrator:
                 mfe=mfe,
                 mae=mae
             )
+            if not recorded and deferred_payload is not None:
+                # POSITION_OPENED was missed (restart or a dropped event), so the
+                # deferred intent was never journaled. The close is the last
+                # chance to persist it; write the complete row now rather than
+                # losing the trade and its label entirely.
+                deferred_payload.update({
+                    "exit": exit_price if exit_price > 0 else None,
+                    "pnl": pnl,
+                    "is_win": is_win,
+                    "mfe": mfe,
+                    "mae": mae,
+                })
+                self.trade_memory.record_trade(deferred_payload)
+                logger.info(
+                    "📝 Trade #%s closed before POSITION_OPENED was journaled; "
+                    "wrote the complete row at close instead.", ticket,
+                )
 
             # `executed_trades` is a DIFFERENT store from `trade_memory`, and it
             # is written at OPEN by `ExecutionEngine` — nothing wrote the outcome
@@ -1259,41 +1352,49 @@ class JarvisOrchestrator:
             else:
                 tentative_bias = "SELL" if ts_val < 0 else "BUY"
 
-        # ── Early-Exit Pipeline: Skip heavy DecisionEngine analysis for low-quality setups ──
-        # Run fast structural/momentum checks BEFORE the expensive full evaluation
-        mom_ts = float(getattr(context.momentum, "trend_score", 0.0) or 0.0) if hasattr(context, "momentum") else 0.0
-        adx_val = float(getattr(context.momentum, "adx", 20.0) or 20.0) if hasattr(context, "momentum") else 20.0
-        has_bos = bool(getattr(context.structure, "bos", False))
-        has_sweep = bool(getattr(context.liquidity, "sweep_detected", False))
-        mtf_align = getattr(context, "mtf_alignment", {}) or {}
-        d1_bias = mtf_align.get("D1", "NEUTRAL")
-        h4_bias = mtf_align.get("H4", "NEUTRAL")
+        # ── Early-Exit Pipeline (OPT-IN, default OFF) ──────────────────────
+        # This pre-filter uses provisional ADX/trend/MTF thresholds to skip the
+        # full DecisionEngine. Those thresholds have not been validated, and a
+        # pre-filter can only remove information the real gates would have used;
+        # silently running it changes live behaviour without evidence. Keep it
+        # available for benchmarking behind JARVIS_EARLY_EXIT_FILTER=1.
+        _early_exit_enabled = os.environ.get(
+            "JARVIS_EARLY_EXIT_FILTER", "0"
+        ).strip().lower() in ("1", "true", "yes", "on")
+        if _early_exit_enabled:
+            mom_ts = float(getattr(context.momentum, "trend_score", 0.0) or 0.0) if hasattr(context, "momentum") else 0.0
+            adx_val = float(getattr(context.momentum, "adx", 20.0) or 20.0) if hasattr(context, "momentum") else 20.0
+            has_bos = bool(getattr(context.structure, "bos", False))
+            has_sweep = bool(getattr(context.liquidity, "sweep_detected", False))
+            mtf_align = getattr(context, "mtf_alignment", {}) or {}
+            d1_bias = mtf_align.get("D1", "NEUTRAL")
+            h4_bias = mtf_align.get("H4", "NEUTRAL")
 
-        # Quick structural alignment check
-        structural_aligned = (
-            (tentative_bias == "BUY" and (d1_bias in ("BULLISH", "NEUTRAL") or h4_bias in ("BULLISH", "NEUTRAL"))) or
-            (tentative_bias == "SELL" and (d1_bias in ("BEARISH", "NEUTRAL") or h4_bias in ("BEARISH", "NEUTRAL")))
-        )
+            # Quick structural alignment check
+            structural_aligned = (
+                (tentative_bias == "BUY" and (d1_bias in ("BULLISH", "NEUTRAL") or h4_bias in ("BULLISH", "NEUTRAL"))) or
+                (tentative_bias == "SELL" and (d1_bias in ("BEARISH", "NEUTRAL") or h4_bias in ("BEARISH", "NEUTRAL")))
+            )
 
-        # Minimum momentum/structure thresholds to justify full analysis
-        MIN_TREND_SCORE = 15.0 if "SCALP" in active_trade_style else 10.0
-        MIN_ADX = 18.0
-        if tentative_bias not in ("BUY", "SELL") or not structural_aligned or abs(mom_ts) < MIN_TREND_SCORE or adx_val < MIN_ADX:
-            auth_msg = f"EARLY_EXIT: No actionable setup (bias={tentative_bias}, trend={mom_ts:.1f}, ADX={adx_val:.1f}, struct={'✓' if structural_aligned else '✗'})"
-            DECISION_EVALUATIONS.inc(style=active_trade_style, outcome="early_exit")
-            hold_dec = self._make_hold_decision(symbol, auth_msg, strategy="EARLY_EXIT")
-            self.state_manager.record_decision(symbol, hold_dec)
-            return {
-                "symbol": symbol,
-                "trade_style": active_trade_style,
-                "decision": hold_dec,
-                "context": context,
-                "authorized": False,
-                "auth_reason": auth_msg,
-                "dry_run": bool(dry_run),
-                "execution": None,
-                "stale": False,
-            }
+            # Minimum momentum/structure thresholds to justify full analysis
+            MIN_TREND_SCORE = 15.0 if "SCALP" in active_trade_style else 10.0
+            MIN_ADX = 18.0
+            if tentative_bias not in ("BUY", "SELL") or not structural_aligned or abs(mom_ts) < MIN_TREND_SCORE or adx_val < MIN_ADX:
+                auth_msg = f"EARLY_EXIT: No actionable setup (bias={tentative_bias}, trend={mom_ts:.1f}, ADX={adx_val:.1f}, struct={'✓' if structural_aligned else '✗'})"
+                DECISION_EVALUATIONS.inc(style=active_trade_style, outcome="early_exit")
+                hold_dec = self._make_hold_decision(symbol, auth_msg, strategy="EARLY_EXIT")
+                self.state_manager.record_decision(symbol, hold_dec)
+                return {
+                    "symbol": symbol,
+                    "trade_style": active_trade_style,
+                    "decision": hold_dec,
+                    "context": context,
+                    "authorized": False,
+                    "auth_reason": auth_msg,
+                    "dry_run": bool(dry_run),
+                    "execution": None,
+                    "stale": False,
+                }
 
         analyst_reports, devil_report = self.analyst_cluster.run_all_parallel(context, regime, tentative_bias)
 
@@ -1820,7 +1921,12 @@ class JarvisOrchestrator:
     def _orchestration_loop_single_pass(self, dry_run: bool = False) -> List[Dict[str, Any]]:
         """Executes a single multi-style radar sweep across SWING, DAY_TRADING, and SCALP with Universal Opportunity Arbitration."""
         try:
-            self.order_manager.cleanup_stale_pending_orders(max_age_sec=1800)
+            cancelled = self.order_manager.cleanup_stale_pending_orders(
+                max_age_sec=1800,
+                context_map=getattr(self.state_manager, "market_contexts", None),
+            )
+            for order in cancelled or []:
+                self._discard_pending_intent(order.get("ticket"))
         except Exception as e:
             logger.debug(f"Stale pending order cleanup pass error: {e}")
 
