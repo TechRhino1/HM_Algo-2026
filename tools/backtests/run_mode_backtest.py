@@ -27,11 +27,14 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Any, Dict
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(
+    0,
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+)
 
 logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(name)s: %(message)s")
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REAL_DIR = os.path.join(REPO, "data", "market", "real")
 OUT_DIR = os.path.join(REPO, "reports", "mode_backtest")
 PROFILE_PATH = os.path.join(REPO, "config", "winrate_profiles.json")

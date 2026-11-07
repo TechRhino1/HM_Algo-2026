@@ -232,13 +232,16 @@ class JarvisOrchestrator:
                 if start <= now <= end:
                     return True
         except Exception as exc:
-            # Never fail open silently again. The old body swallowed a
-            # NameError for months, so every gate call returned False while
-            # looking like it had checked the calendar.
-            logger.warning("News blackout check failed for %s (%s: %s); "
-                           "treating this check as no blackout.",
-                           symbol, type(exc).__name__, exc)
-        return False
+            # Fail CLOSED. The old body swallowed a NameError for months, so
+            # every gate call returned False while looking like it had checked
+            # the calendar. A broken calendar feed must not silently authorise
+            # entries into an unverified news window; an empty (but healthy)
+            # calendar is still treated as "no event", which is a legitimate
+            # state and does not halt trading.
+            logger.error("News blackout check failed for %s (%s: %s); "
+                         "failing CLOSED for this entry.",
+                         symbol, type(exc).__name__, exc)
+            return True
 
     def _get_same_symbol_cooldown(self, style: str = "SWING") -> float:
         st = str(style or "SWING").upper()
@@ -592,7 +595,12 @@ class JarvisOrchestrator:
         # 0.0 means "measured, broke even"; None means "not measured".
         raw_pnl = data.get("pnl", None)
         pnl = None if raw_pnl is None else float(raw_pnl)
-        is_win = None if pnl is None else (1 if pnl > 0 else 0)
+        # A measured P&L of exactly 0.0 is a scratch/break-even, not a loss.
+        # `1 if pnl > 0 else 0` filed every break-even as a LOSS, which fed the
+        # consecutive-loss breaker, the loss-velocity halt and the win-rate
+        # statistics. Neutral outcomes now propagate as None and are withheld
+        # from those counters (they are still written to the journal as PnL 0.0).
+        is_win = None if pnl is None else (1 if pnl > 0 else (0 if pnl < 0 else None))
         exit_price = float(data.get("exit_price", 0.0))
         new_equity = float(data.get("equity", 0.0))
 
@@ -2259,8 +2267,11 @@ class JarvisOrchestrator:
                 account = self.mt5_client.get_account_snapshot()
             eq = getattr(account, "equity", 0.0) or (self.state_manager.account.equity if self.state_manager and self.state_manager.account else 0.0)
             if eq > 0:
-                self.risk_engine.drawdown_guard.reset_baselines(eq)
-                logger.info(f"✅ DRAWDOWN BASELINES RE-ANCHORED to ${eq:,.2f}")
+                # Do NOT call reset_baselines() here: it would also move
+                # peak_equity down to today's equity, erasing the max-drawdown
+                # history and letting a resumed account trade through a breach.
+                self.risk_engine.drawdown_guard.resume_baselines(eq)
+                logger.info(f"✅ DAILY LOSS BASELINE RE-ANCHORED to ${eq:,.2f} (peak preserved)")
         logger.info("✅ TRADING RESUMED: Circuit breaker and drawdown baselines reset by operator.")
         return {
             "status": "SUCCESS",

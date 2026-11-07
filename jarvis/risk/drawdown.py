@@ -174,6 +174,23 @@ class DrawdownGuard:
         finally:
             conn.close()
 
+    def resume_baselines(self, current_equity: float) -> None:
+        """Restart the daily-loss budget on a resume, WITHOUT erasing the peak.
+
+        An operator "resume trading" clears the circuit breaker and lets the day
+        start again from the current equity. It must not touch ``peak_equity``:
+        that value is the only memory of how deep the account has fallen, and
+        re-anchoring it (as ``reset_baselines`` does) silently forgives a real
+        drawdown. If the max-drawdown limit is still breached, ``check_limits``
+        must keep refusing trades -- that is the intended behaviour.
+
+        Use ``reset_baselines`` only for a verified deposit/withdrawal/demo
+        reset, where the equity level itself legitimately changed.
+        """
+        self.daily_start_equity = float(current_equity)
+        self._last_seen_date = self._today()
+        self._save_state()
+
     def reset_baselines(self, current_equity: float) -> None:
         """Re-anchor both baselines to `current_equity` after a real deposit/withdrawal.
 

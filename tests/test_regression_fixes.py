@@ -211,11 +211,11 @@ class TestRegressionFixes(unittest.TestCase):
         """A1-P0: Verify PositionSizer rejects trades (returns 0.0) when min lot size forces risk above ceiling."""
         sym_gold = {"name": "XAUUSD", "trade_contract_size": 100.0, "trade_tick_value": 1.0, "trade_tick_size": 0.01, "volume_min": 0.01, "volume_max": 100.0, "volume_step": 0.01}
         
-        # Scenario 1: $50 account, 2-point gold stop distance -> 0.01 lots = $2 risk (4.00% risk) -> REJECTED (0.0)
-        lot_50 = PositionSizer.calculate_lot_size(
-            account_balance=50.0, entry_price=2400.0, sl_price=2398.0, risk_pct=1.0, symbol_info=sym_gold
+        # Scenario 1: $25 account, 2-point gold stop distance -> 0.01 lots = $2 risk (8.00% risk > 5.50% ceiling) -> REJECTED (0.0)
+        lot_25 = PositionSizer.calculate_lot_size(
+            account_balance=25.0, entry_price=2400.0, sl_price=2398.0, risk_pct=1.0, symbol_info=sym_gold
         )
-        self.assertEqual(lot_50, 0.0, "Micro account $50 with 2-point stop must be rejected (0.0 lots)")
+        self.assertEqual(lot_25, 0.0, "Micro account $25 with 2-point stop must be rejected (0.0 lots)")
 
         # Scenario 2: $10 account, 1-point gold stop distance -> 0.01 lots = $1 risk (10.00% risk) -> REJECTED (0.0)
         lot_10 = PositionSizer.calculate_lot_size(
@@ -578,6 +578,7 @@ class TestRegressionFixes(unittest.TestCase):
         ) as mock_dt:
             mock_dt.now.return_value = datetime(2026, 10, 15, 14, 0, 0, tzinfo=timezone.utc)
             mock_dt.fromtimestamp = datetime.fromtimestamp
+            mock_dt.fromisoformat = datetime.fromisoformat
             mock_dt.timezone = timezone
             res = orch.run_cycle_for_symbol("XAUUSD")
         self.assertEqual(res.get("execution", {}).get("status"), "FILLED")

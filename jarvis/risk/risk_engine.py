@@ -772,8 +772,17 @@ class RiskEngine:
             open_monetary_risk_usd=open_monetary_risk
         )
         is_gold = any(k in sym.upper() for k in ["XAU", "GOLD"])
-        lot_val = float(getattr(decision, "lot_size", 0.0) or 0.0)
-        is_min_lot = lot_val <= 0.011 or lot_val == 0.0
+        # The allowance is ONLY for an explicitly-sized minimum lot. `decision`
+        # frequently has no lot_size at all (it is computed downstream), and
+        # `getattr(..., 0.0)` then made `is_min_lot` unconditionally True for
+        # every gold entry -- i.e. the heat gate was effectively disabled for
+        # gold. Require the size to be actually known and at the broker floor.
+        lot_val = getattr(decision, "lot_size", None) if decision is not None else None
+        try:
+            lot_val = float(lot_val) if lot_val is not None else None
+        except (TypeError, ValueError):
+            lot_val = None
+        is_min_lot = lot_val is not None and 0.0 < lot_val <= 0.011
         passed = heat_res.allow_new_risk
         if not passed and is_gold and is_min_lot and heat_res.score < 92.0:
             passed = True
@@ -830,13 +839,17 @@ class RiskEngine:
             allow_risk = bool(heat_res.allow_new_risk)
             heat_components = heat_res.components
             heat_reasons = heat_res.reasons
-        except Exception:
-            heat_score = 0.0
-            heat_zone = "NORMAL"
-            heat_mult = 1.0
-            allow_risk = True
+        except Exception as heat_exc:
+            # Fail CLOSED. Reporting "heat 0 / allow_new_risk True" on an
+            # evaluation error told the cockpit and any caller that risk was
+            # fine precisely when the heat engine was broken.
+            heat_score = 100.0
+            heat_zone = "UNKNOWN"
+            heat_mult = 0.0
+            allow_risk = False
             heat_components = {}
-            heat_reasons = []
+            heat_reasons = [f"Portfolio heat unavailable: {heat_exc}"]
+            logger.error("Portfolio heat evaluation failed; failing closed: %s", heat_exc)
 
         margin_val = getattr(acc_obj, "margin", 0.0) or 0.0
         margin_util_pct = round((margin_val / account_equity * 100.0) if account_equity > 0 else 0.0, 1)

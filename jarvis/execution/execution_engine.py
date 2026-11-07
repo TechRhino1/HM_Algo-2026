@@ -836,7 +836,7 @@ class ExecutionEngine:
 
         # §2: Re-anchor SL/TP to actual fill price if slippage occurred & validate post-fill risk
 
-        is_fill = res and (res.get("status") == "FILLED" or _order_status == "FILLED")
+        is_fill = bool(res) and (res.get("status") in ("FILLED", "PARTIAL") or _order_status in ("FILLED", "PARTIAL"))
 
         is_placed = res and (res.get("status") == "PLACED" or _order_status == "ACCEPTED")
 
@@ -845,6 +845,9 @@ class ExecutionEngine:
         if is_fill:
 
             ticket = res.get("ticket")
+
+            # modify_position needs the POSITION ticket, not the order ticket.
+            position_ticket = res.get("position_id") or ticket
 
             fill_price = float(res.get("price", decision.entry_price))
 
@@ -880,7 +883,7 @@ class ExecutionEngine:
 
                 )
 
-                mod_res = self.mt5_client.modify_position(ticket=ticket, sl=actual_sl, tp=actual_tp)
+                mod_res = self.mt5_client.modify_position(ticket=position_ticket, sl=actual_sl, tp=actual_tp)
 
                 if mod_res and mod_res.get("status") == "MODIFIED":
 
@@ -889,6 +892,30 @@ class ExecutionEngine:
                     res["tp"] = actual_tp
 
                     res["real_fill_anchored"] = True
+
+                else:
+                    # A failed re-anchor leaves the position at the PLANNED stop
+                    # (possibly the pre-send clamped one) while the journal
+                    # believes the new level. That must not be swallowed: log it,
+                    # flag it for the position monitor, and alert.
+                    logger.error(
+                        f"🚨 SL/TP RE-ANCHOR FAILED for ticket #{position_ticket} "
+                        f"(order #{ticket}): {mod_res}. The live stop may not match the journal."
+                    )
+                    res["sl_reanchor_failed"] = True
+                    try:
+                        from jarvis.observability.alerting import AlertSeverity, dispatch_alert
+                        dispatch_alert(
+                            title="SL/TP Re-anchor Failed",
+                            message=f"Position #{position_ticket} ({decision.symbol}) kept its pre-fill stop after a failed modify.",
+                            severity=AlertSeverity.CRITICAL,
+                            source="ExecutionEngine",
+                            details={"ticket": position_ticket, "order": ticket, "response": str(mod_res)},
+                            event_key=f"reanchor_failed_{position_ticket}",
+                            debounce_seconds=60.0,
+                        )
+                    except Exception:
+                        pass
 
 
 

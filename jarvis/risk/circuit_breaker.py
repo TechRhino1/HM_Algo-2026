@@ -16,7 +16,7 @@ logger = logging.getLogger("JARVIS_CircuitBreaker")
 import json
 
 # Schema version with serialized pause maps
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _migration_1(conn: sqlite3.Connection) -> None:
@@ -32,7 +32,21 @@ def _migration_2(conn: sqlite3.Connection) -> None:
     except Exception:
         pass
 
-MIGRATIONS = {1: _migration_1, 2: _migration_2}
+def _migration_3(conn: sqlite3.Connection) -> None:
+    """Persist an operator-initiated halt separately from a cooldown trip.
+
+    A loss-streak trip is allowed to auto-expire after its adaptive cooldown.
+    An operator emergency stop must NOT: before this column existed, both used
+    the same ``is_tripped`` flag, so ``check_status()`` silently lifted a manual
+    kill-switch 30 minutes after it was pressed.
+    """
+    try:
+        conn.execute("ALTER TABLE circuit_state ADD COLUMN operator_halt INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
+
+MIGRATIONS = {1: _migration_1, 2: _migration_2, 3: _migration_3}
 
 
 class CircuitBreaker:
@@ -76,6 +90,8 @@ class CircuitBreaker:
         self.is_tripped = False
         self.tripped_timestamp = 0.0
         self.trip_reason = ""
+        # Operator latch: survives restarts and is never cleared by cooldown.
+        self.operator_halt = False
         self.symbol_losses: Dict[str, int] = {}
         self.regime_losses: Dict[str, int] = {}
         self.symbol_paused_until: Dict[str, float] = {}
@@ -122,7 +138,8 @@ class CircuitBreaker:
                         tripped_timestamp REAL,
                         trip_reason TEXT,
                         symbol_paused TEXT DEFAULT '{}',
-                        regime_paused TEXT DEFAULT '{}'
+                        regime_paused TEXT DEFAULT '{}',
+                        operator_halt INTEGER DEFAULT 0
                     )
                 ''')
                 # D3: record the shape of this file.
@@ -152,6 +169,13 @@ class CircuitBreaker:
                         self.regime_paused_until = json.loads(r2[1])
                 except Exception:
                     pass
+                try:
+                    c3 = conn.execute('SELECT operator_halt FROM circuit_state WHERE id = 1')
+                    r3 = c3.fetchone()
+                    if r3 is not None:
+                        self.operator_halt = bool(r3[0])
+                except Exception:
+                    pass
         finally:
             conn.close()
 
@@ -164,7 +188,7 @@ class CircuitBreaker:
                 conn.execute('''
                     UPDATE circuit_state
                     SET consecutive_losses = ?, is_tripped = ?, tripped_timestamp = ?, trip_reason = ?,
-                        symbol_paused = ?, regime_paused = ?
+                        symbol_paused = ?, regime_paused = ?, operator_halt = ?
                     WHERE id = 1
                 ''', (
                     self.consecutive_losses,
@@ -172,7 +196,8 @@ class CircuitBreaker:
                     self.tripped_timestamp,
                     self.trip_reason,
                     json.dumps(self.symbol_paused_until),
-                    json.dumps(self.regime_paused_until)
+                    json.dumps(self.regime_paused_until),
+                    int(self.operator_halt)
                 ))
         finally:
             conn.close()
@@ -266,9 +291,13 @@ class CircuitBreaker:
             return 0.00
 
     def trip(self, reason: str):
+        # Operator halts latch: they must never auto-expire via cooldown.
+        _latched = str(reason or "").strip().upper().startswith(("OPERATOR", "EMERGENCY_STOP", "MANUAL"))
         self.is_tripped = True
         self.tripped_timestamp = self._now()
         self.trip_reason = reason
+        if _latched:
+            self.operator_halt = True
         self._save_state()
         try:
             from jarvis.observability.alerting import AlertSeverity, dispatch_alert
@@ -286,6 +315,9 @@ class CircuitBreaker:
 
     def reset(self):
         self.is_tripped = False
+        # ``reset`` is the explicit operator override; it is the only path that
+        # clears a latched emergency stop.
+        self.operator_halt = False
         self.consecutive_losses = 0
         self._loss_timestamps.clear()
         self.symbol_losses.clear()
@@ -308,6 +340,15 @@ class CircuitBreaker:
             return {"active": False, "reason": ""}
             
         if self.is_tripped:
+            if self.operator_halt:
+                # A human pressed the kill switch. Only an explicit reset()
+                # (operator "resume trading") may release it.
+                return {
+                    "active": True,
+                    "reason": self.trip_reason or "OPERATOR_HALT",
+                    "operator_halt": True,
+                    "remaining_cooldown_sec": None,
+                }
             elapsed = self._now() - self.tripped_timestamp
             cooldown_seconds = self._get_adaptive_cooldown()
             

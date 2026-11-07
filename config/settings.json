@@ -16,14 +16,14 @@
       "USDCAD"
     ],
     "use_calibrated_entry_policy": true,
-    "max_daily_entries_per_symbol": 20
+    "max_daily_entries_per_symbol": 4
   },
   "risk": {
     "max_risk_per_trade_pct": 0.5,
-    "max_portfolio_risk_pct": 10.0,
-    "max_daily_loss_pct": 5.0,
-    "max_drawdown_pct": 15.0,
-    "max_open_positions": 4,
+    "max_portfolio_risk_pct": 2.5,
+    "max_daily_loss_pct": 4.0,
+    "max_drawdown_pct": 10.0,
+    "max_open_positions": 3,
     "max_symbol_exposure_count": 1,
     "min_rr_ratio": 2.0,
     "min_trade_score": 80.0,

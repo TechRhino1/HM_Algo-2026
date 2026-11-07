@@ -756,7 +756,51 @@ class MT5Client:
                     return {"status": "FAILED", "reason": err_msg}
 
 
-                logger.info(f"⚡ ULTRA-FAST ORDER FILLED: Ticket={result.order} {order_type} {volume} {resolved} @ {result.price}")
+                # ── Truthful fill reporting ────────────────────────────────
+                # Retcode 10008 is TRADE_RETCODE_PLACED ("order accepted"), NOT a
+                # fill. Reporting it as FILLED made the journal record a position
+                # that did not exist yet, and the caller skipped the reconciliation
+                # that a still-pending order needs. 10009 is the real fill.
+                _rc = int(getattr(result, "retcode", 0) or 0)
+                _done_rc = int(getattr(mt5, "TRADE_RETCODE_DONE", 10009))
+                _placed_rc = int(getattr(mt5, "TRADE_RETCODE_PLACED", 10008))
+                fill_status = "FILLED" if _rc == _done_rc else "PLACED"
+
+                # The broker may fill less than requested (IOC partial fill) and
+                # may clamp SL/TP to its stop level. Both were silently reported
+                # as if the request had been honoured, so the journal sized PnL
+                # off a volume that never existed and assumed a stop that was
+                # moved. Surface the truth and let the caller decide.
+                try:
+                    filled_volume = float(getattr(result, "volume", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    filled_volume = 0.0
+                if fill_status == "FILLED" and filled_volume <= 0:
+                    return {
+                        "status": "UNKNOWN",
+                        "reason": "Broker reported DONE with zero filled volume",
+                        "ticket": getattr(result, "order", 0),
+                    }
+                if fill_status == "FILLED" and final_volume > 0 and filled_volume < final_volume - 1e-9:
+                    fill_status = "PARTIAL"
+
+                requested_sl = float(sl_price or 0.0)
+                requested_tp = float(tp_price or 0.0)
+                # MqlTradeResult carries no SL/TP fields, so the authoritative
+                # comparison is requested -> what we actually SENT (the pre-send
+                # min-stop clamp below), refined from the opened position when
+                # the broker exposes it.
+                applied_sl = float(final_sl or 0.0)
+                applied_tp = float(final_tp or 0.0)
+                sl_adjusted = bool(requested_sl > 0) and abs(applied_sl - requested_sl) > (point * 0.5)
+                tp_adjusted = bool(requested_tp > 0) and abs(applied_tp - requested_tp) > (point * 0.5)
+                if sl_adjusted or tp_adjusted:
+                    logger.warning(
+                        "Broker adjusted brackets for %s: SL %s->%s TP %s->%s",
+                        resolved, requested_sl, applied_sl, requested_tp, applied_tp,
+                    )
+
+                logger.info(f"⚡ ORDER {fill_status}: Ticket={result.order} {order_type} {filled_volume or volume} {resolved} @ {result.price}")
                 # `result.order` is the ORDER ticket. The position it opened has a
                 # DIFFERENT identifier, and that identifier — `deal.position_id` —
                 # is the only key the exit deal will later be reported under.
@@ -770,7 +814,7 @@ class MT5Client:
                         deals = mt5.history_deals_get(ticket=deal_ticket)
                         if deals:
                             position_id = int(getattr(deals[0], "position_id", 0)) or None
-                    if position_id is None:
+                    if position_id is None and fill_status in ("FILLED", "PARTIAL"):
                         # Netting accounts and some brokers report no deal on the
                         # result; the position itself is the fallback.
                         opened = mt5.positions_get(ticket=int(getattr(result, "order", 0) or 0))
@@ -783,11 +827,17 @@ class MT5Client:
                         getattr(result, "order", "?"), e,
                     )
                 return {
-                    "status": "FILLED",
+                    "status": fill_status,
                     "ticket": result.order,
                     "position_id": position_id,
-                    "volume": result.volume,
+                    "volume": filled_volume if filled_volume > 0 else final_volume,
+                    "requested_volume": volume,
+                    "sent_volume": final_volume,
                     "price": result.price,
+                    "sl": applied_sl,
+                    "tp": applied_tp,
+                    "sl_adjusted": sl_adjusted,
+                    "tp_adjusted": tp_adjusted,
                     # Spelled out rather than left absent: a reader that does
                     # `res.get("is_fallback")` cannot tell "False" from "never
                     # sent", and an absent key is how a frontend renders the
