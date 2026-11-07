@@ -231,8 +231,21 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
             return False, None
         return True, user
 
-    def _validate_trade_risk(self, lots: float) -> Optional[str]:
-        """Verify circuit breaker, drawdown limits, and max lot cap before placing manual or pending orders."""
+    def _validate_trade_risk(
+        self,
+        lots: float,
+        symbol: Optional[str] = None,
+        price: Optional[float] = None,
+        sl: Optional[float] = None,
+    ) -> Optional[str]:
+        """Pre-trade gate for manual/pending orders.
+
+        Manual desk orders used to be checked only for breaker state, drawdown and
+        a lot cap: no stop-distance monetary ceiling, no open-position cap. That
+        let a 0.01 lot on gold with a 300-point stop risk several percent of a
+        micro account while the bot's own orders were capped at 0.5%. The same
+        ceiling now applies to every route.
+        """
         cb = getattr(self.orchestrator, "circuit_breaker", None) if hasattr(self, "orchestrator") else None
         if cb and getattr(cb, "is_tripped", False):
             return f"Circuit breaker tripped: {getattr(cb, 'trip_reason', 'Active circuit breaker halt')}"
@@ -260,6 +273,40 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
         max_lot = PositionSizer.get_max_lot_cap(equity) if equity > 0 else 5.0
         if lots > max_lot:
             return f"Volume {lots} exceeds safety cap of {max_lot} lots for equity ${equity:.2f}"
+
+        # Open-position cap, measured from the broker rather than assumed.
+        try:
+            from jarvis.config.settings import SETTINGS
+            max_positions = int(getattr(SETTINGS.risk, "max_open_positions", 3) or 3)
+            if hasattr(self, "mt5_client") and self.mt5_client:
+                live_positions = self.mt5_client.get_open_positions() or []
+                if len(live_positions) >= max_positions:
+                    return (
+                        f"Max open positions reached ({len(live_positions)}/{max_positions}); "
+                        "close a position before opening another."
+                    )
+        except Exception as exc:
+            # Unknown position count must not authorise an unbounded add.
+            logger.warning("Manual-order position-count check unavailable: %s", exc)
+            return "Cannot verify open-position count; manual order blocked until the broker state is readable."
+
+        # Stop-distance monetary ceiling, identical to the dispatch ceiling.
+        if symbol and price and sl and equity > 0:
+            try:
+                from jarvis.config.settings import SETTINGS
+                from jarvis.data.symbol_registry import get_dollar_risk_per_price_unit
+                pct = float(getattr(SETTINGS.risk, "max_risk_per_trade_pct", 0.5) or 0.5)
+                mpu = float(get_dollar_risk_per_price_unit(symbol) or 0.0)
+                risk_usd = abs(float(price) - float(sl)) * mpu * float(lots)
+                ceiling = equity * pct / 100.0
+                if mpu <= 0 or risk_usd > ceiling + 1e-9:
+                    return (
+                        f"Trade risk ${risk_usd:.2f} ({pct:.2f}% ceiling is ${ceiling:.2f}) "
+                        f"for {lots} lots on {symbol}; tighten the stop or reduce size."
+                    )
+            except Exception as exc:
+                logger.warning("Manual-order risk-ceiling check unavailable: %s", exc)
+                return "Cannot verify trade risk; manual order blocked until pricing is readable."
         return None
 
 
@@ -1414,6 +1461,13 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                         return
                 try:
                     mode = ExecutionMode(mode_str)
+                    if hasattr(self, "orchestrator") and self.orchestrator:
+                        res = self.orchestrator.apply_execution_mode(mode_str)
+                        self._send_json(
+                            res,
+                            status_code=200 if res.get("status") == "SUCCESS" else 409,
+                        )
+                        return
                     self.state_manager.set_execution_mode(mode)
                     self.mt5_client.mode = mode.value.lower()
                     self._send_json({"status": "SUCCESS", "mode": mode.value})
@@ -1491,15 +1545,22 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 if not math.isfinite(lots) or lots <= 0:
                     self._send_json({"status": "FAILED", "error": "volume must be a positive finite number"}, status_code=400)
                     return
-                risk_err = self._validate_trade_risk(lots)
+                # A pending entry is a market order that fires later, so it must
+                # carry a protective stop for the same reason a market order does.
+                # Leaving it blank meant the eventual position had unbounded risk
+                # that no gate had measured.
+                sl = float(data.get("sl", data.get("sl_price", 0.0)) or 0.0)
+                tp = float(data.get("tp", data.get("tp_price", 0.0)) or 0.0)
+                if not (math.isfinite(sl) and sl > 0):
+                    self._send_json({
+                        "status": "FAILED",
+                        "error": "a pending entry requires a positive stop-loss (sl)",
+                    }, status_code=400)
+                    return
+                risk_err = self._validate_trade_risk(lots, symbol=sym, price=price, sl=sl)
                 if risk_err:
                     self._send_json({"status": "FAILED", "reason": risk_err, "error": risk_err}, status_code=200)
                     return
-                # A pending order without a stop is legal — unlike a market
-                # order, which the desk requires to carry one — so 0 here means
-                # "none" rather than "invalid".
-                sl = float(data.get("sl", data.get("sl_price", 0.0)) or 0.0)
-                tp = float(data.get("tp", data.get("tp_price", 0.0)) or 0.0)
                 res = self.mt5_client.place_pending_order(
                     symbol=sym,
                     order_type=otype,
@@ -1549,10 +1610,6 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 if not math.isfinite(lots) or lots <= 0:
                     self._send_json({"status": "FAILED", "error": "lots must be a positive finite number"}, status_code=400)
                     return
-                risk_err = self._validate_trade_risk(lots)
-                if risk_err:
-                    self._send_json({"status": "FAILED", "reason": risk_err, "error": risk_err}, status_code=200)
-                    return
 
                 # If sl <= 0 or tp <= 0, compute AI structural levels
                 if sl <= 0 or tp <= 0:
@@ -1573,6 +1630,16 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     self._send_json({"status": "FAILED", "error": "Valid stop-loss and take-profit are required"}, status_code=400)
                     return
 
+                risk_err = self._validate_trade_risk(
+                    lots,
+                    symbol=sym,
+                    price=current_price if current_price > 0 else None,
+                    sl=sl,
+                )
+                if risk_err:
+                    self._send_json({"status": "FAILED", "reason": risk_err, "error": risk_err}, status_code=200)
+                    return
+
                 res = self.mt5_client.send_market_order(
                     symbol=sym,
                     order_type=action,
@@ -1582,7 +1649,7 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                     comment=comment,
                     reference_price=current_price
                 )
-                if res and res.get("status") == "FILLED":
+                if res and res.get("status") in ("FILLED", "PARTIAL"):
                     try:
                         from jarvis.data.database import TRADE_DB
                         TRADE_DB.log_trade(
@@ -1590,9 +1657,9 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                             symbol=sym,
                             action=action,
                             entry=float(res.get("price", 0.0)),
-                            sl=sl,
-                            tp=tp,
-                            volume=lots,
+                            sl=float(res.get("sl", sl) or sl),
+                            tp=float(res.get("tp", tp) or tp),
+                            volume=float(res.get("volume", lots) or lots),
                             score=100.0,
                             regime="MANUAL_EXECUTION",
                             ev=0.0,

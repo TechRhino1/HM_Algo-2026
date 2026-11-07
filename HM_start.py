@@ -335,7 +335,10 @@ def hm_start(mode: str = "live", port: int = 8501, host: str = "127.0.0.1", trad
     try:
         from jarvis.data.broker_symbols import ensure_mt5_terminal
 
-        if ensure_mt5_terminal(allow_launch=False):
+        # `allow_launch=True`: this IS the boot call site the comment above
+        # describes. It was left at False, so a cold start could never bring the
+        # terminal up and the platform silently served synthetic bars.
+        if ensure_mt5_terminal(allow_launch=True):
             logger.info("MetaTrader 5 terminal attached; live bars and execution are available.")
         else:
             logger.warning(
@@ -396,6 +399,7 @@ def hm_start(mode: str = "live", port: int = 8501, host: str = "127.0.0.1", trad
 def main():
     # Execution mode resolution with broker account auto-detection and port selection
     mode = "live"
+    mode_explicit = False
     port = int(os.environ.get("JARVIS_PORT", os.environ.get("PORT", 8501)))
 
     for arg in sys.argv[1:]:
@@ -410,12 +414,18 @@ def main():
             raw = arg.lower()
             if raw in {"paper", "test", "sim", "backtest"}:
                 mode = "paper"
+                mode_explicit = True
             elif raw in {"demo", "broker_demo"}:
                 mode = "demo"
-            else:
+                mode_explicit = True
+            elif raw in {"live", "real"}:
                 mode = "live"
+                mode_explicit = True
 
-    if mode == "live" and len(sys.argv) <= 1:
+    # Detect whenever the mode was NOT explicitly chosen. The old guard required
+    # `len(sys.argv) <= 1`, so `HM_start.py 8502` (a port-only invocation) skipped
+    # detection entirely, stayed on mode='live', and never looked at the account.
+    if mode == "live" and not mode_explicit:
         # Auto-detect connected MT5 terminal trade_mode to prevent safety lockout
         try:
             import MetaTrader5 as mt5

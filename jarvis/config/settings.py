@@ -72,6 +72,7 @@ class TradingSettings:
     magic_number: int = 888999
     primary_timeframe: str = "H1"
     macro_timeframe: str = "D1"
+    default_trade_style: str = "ALL"
     symbols: List[str] = field(default_factory=lambda: ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD"])
     same_symbol_cooldown_sec: int = 600
     # Entry selection authority. False (the default) keeps the legacy 29-check
@@ -155,6 +156,12 @@ class JarvisConfig:
                     ("recovery_risk_pct", "recovery_risk_pct", float),
                     ("recovery_max_daily_loss_pct", "recovery_max_daily_loss_pct", float),
                     ("recovery_max_attempts_per_day", "recovery_max_attempts_per_day", int),
+                    ("max_sector_exposure_count", "max_sector_exposure_count", int),
+                    ("correlation_scaling_enabled", "correlation_scaling_enabled", lambda v: str(v).strip().lower() in {"1", "true", "yes", "on"}),
+                    ("correlation_scaling_floor", "correlation_scaling_floor", float),
+                    ("breakeven_clears_correlation", "breakeven_clears_correlation", lambda v: str(v).strip().lower() in {"1", "true", "yes", "on"}),
+                    ("terminal_rsi_sell_floor", "terminal_rsi_sell_floor", float),
+                    ("terminal_rsi_buy_ceiling", "terminal_rsi_buy_ceiling", float),
                 )
                 for json_key, attr, caster in risk_keys:
                     if json_key in r_data and r_data[json_key] is not None:
@@ -185,6 +192,10 @@ class JarvisConfig:
                     cfg.trading.same_symbol_cooldown_sec = int(t_data["same_symbol_cooldown_sec"])
                 if "primary_timeframe" in t_data:
                     cfg.trading.primary_timeframe = str(t_data["primary_timeframe"])
+                if "macro_timeframe" in t_data:
+                    cfg.trading.macro_timeframe = str(t_data["macro_timeframe"])
+                if "default_trade_style" in t_data:
+                    cfg.trading.default_trade_style = str(t_data["default_trade_style"]).upper()
                 if "use_calibrated_entry_policy" in t_data:
                     raw = t_data["use_calibrated_entry_policy"]
                     if isinstance(raw, bool):

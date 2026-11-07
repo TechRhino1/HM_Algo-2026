@@ -86,6 +86,27 @@ def run_one(args: Dict[str, Any]) -> Dict[str, Any]:
         if not frames:
             return {"symbol": symbol, "style": style, "error": "no cached frames"}
 
+        # Optional disjoint evaluation window. Filtering BEFORE ``style_window``
+        # is essential: that helper takes the intersection of every timeframe the
+        # style needs, so slicing afterwards would silently move the OOS boundary.
+        _start = args.get("start")
+        _end = args.get("end")
+        if _start or _end:
+            import pandas as _pd
+            lo = _pd.Timestamp(_start) if _start else None
+            hi = _pd.Timestamp(_end) if _end else None
+            frames = {
+                tf: f[(f["time"] >= lo) if lo is not None else True]
+                for tf, f in frames.items()
+            }
+            frames = {
+                tf: f[(f["time"] <= hi) if hi is not None else True]
+                for tf, f in frames.items()
+            }
+            frames = {tf: f.reset_index(drop=True) for tf, f in frames.items() if len(f) > 0}
+            if not frames:
+                return {"symbol": symbol, "style": style, "error": "no bars in requested window"}
+
         start, end, missing = style_window(frames, style)
         if start is None:
             return {"symbol": symbol, "style": style,
@@ -180,6 +201,8 @@ def main() -> int:
     ap.add_argument("--profile", action="store_true",
                     help="use the deployed per-symbol calibrated profile")
     ap.add_argument("--out", default=OUT_DIR)
+    ap.add_argument("--start", default="", help="ISO start for an explicit evaluation window")
+    ap.add_argument("--end", default="", help="ISO end for an explicit evaluation window")
     args = ap.parse_args()
 
     from jarvis.data.symbol_registry import all_symbols
@@ -190,7 +213,8 @@ def main() -> int:
     styles = [s.strip() for s in args.styles.split(",") if s.strip()]
 
     os.makedirs(args.out, exist_ok=True)
-    jobs = [{"symbol": s, "style": st, "days": args.days, "profile": args.profile}
+    jobs = [{"symbol": s, "style": st, "days": args.days, "profile": args.profile,
+             "start": args.start, "end": args.end}
             for st in styles for s in symbols]
     print(f"{len(jobs)} jobs ({len(symbols)} symbols x {len(styles)} styles), "
           f"{args.workers} workers", flush=True)

@@ -188,6 +188,58 @@ class JarvisOrchestrator:
         self._watchdog_thread: Optional[threading.Thread] = None
         self._last_heartbeat: float = time.time()
 
+    def apply_execution_mode(self, new_mode: str) -> Dict[str, Any]:
+        """Switch execution mode AND rebuild all mode-scoped risk state.
+
+        The API used to flip ``state_manager`` and ``mt5_client.mode`` only. The
+        circuit breaker and drawdown guard had already been constructed against
+        the OLD mode's database, so a runtime switch kept enforcing the wrong
+        baselines (and persisted the new mode's events into the old mode's file).
+        A mode change now rebuilds the risk engine or is refused.
+        """
+        from jarvis.config.settings import verify_execution_mode
+        target = verify_execution_mode(new_mode)
+        if target == self.mode:
+            self.mt5_client.mode = target
+            self.state_manager.set_execution_mode(ExecutionMode(target.upper()))
+            return {"status": "SUCCESS", "mode": target, "changed": False}
+
+        # Switching risk state under live exposure would leave open positions
+        # monitored by limits from a different mode's file.
+        try:
+            open_positions = self.mt5_client.get_open_positions() or []
+        except Exception as exc:
+            return {
+                "status": "FAILED",
+                "error": f"Cannot verify open positions before a mode switch: {exc}",
+            }
+        if open_positions:
+            return {
+                "status": "FAILED",
+                "error": (
+                    f"Cannot change execution mode with {len(open_positions)} open "
+                    "position(s); close them first."
+                ),
+            }
+
+        previous = self.mode
+        self.mode = target
+        self.mt5_client.mode = target
+        self.risk_engine = RiskEngine(mode=target)
+        self.circuit_breaker = self.risk_engine.circuit_breaker
+        self.drawdown_guard = self.risk_engine.drawdown_guard
+        self.state_manager.set_execution_mode(ExecutionMode(target.upper()))
+        logger.warning(
+            "Execution mode changed %s -> %s; risk state rebuilt for the new mode.",
+            previous.upper(), target.upper(),
+        )
+        return {
+            "status": "SUCCESS",
+            "mode": target,
+            "previous_mode": previous,
+            "changed": True,
+        }
+
     def _is_news_blackout(self, symbol: str, now: datetime) -> bool:
         """Institutional Mandate 4: Reject new entries inside major high-impact news windows.
 
@@ -251,11 +303,148 @@ class JarvisOrchestrator:
             return 240.0   # 4 minutes for day trades
         return 600.0       # 10 minutes for swing trades
 
+    def _reconcile_positions_closed_while_down(self) -> None:
+        """Close out journal positions that the broker closed while we were off.
+
+        The synchronizer only detects a close by DIFFING two in-memory snapshots,
+        and both are empty at boot. A trade that hit its stop during a restart
+        therefore never emitted ``POSITION_CLOSED``: the journal row stayed open
+        forever, the learning loop never saw the outcome, and the circuit breaker
+        never counted the loss. On startup we seed the synchronizer from the live
+        book and close any remaining open journal row from its deal history.
+
+        Only the broker's own deals are used to measure P&L. If the history is
+        unavailable the row is left open and logged — inventing a number here
+        would be worse than an unresolved row.
+        """
+        if getattr(self, "mode", "paper") == "paper":
+            # Paper positions live in memory and do not survive a restart; there
+            # is no broker history to reconcile them against.
+            return
+        client = getattr(self, "mt5_client", None)
+        if client is None or not hasattr(client, "get_open_positions"):
+            return
+        try:
+            positions = client.get_open_positions() or []
+        except Exception as exc:
+            logger.error("Startup reconciliation could not read broker positions: %s", exc)
+            return
+
+        open_tickets = set()
+        volumes = {}
+        for p in positions:
+            try:
+                open_tickets.add(int(p.ticket))
+                volumes[int(p.ticket)] = float(getattr(p, "volume", 0.0) or 0.0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+
+        # Seed the diff baseline so the first sync pass does not report every
+        # existing position as newly opened.
+        sync = getattr(self, "state_synchronizer", None)
+        if sync is not None:
+            try:
+                sync._last_position_tickets = set(open_tickets)
+                sync._last_position_volumes = dict(volumes)
+            except Exception:
+                pass
+
+        memory = getattr(self, "trade_memory", None)
+        if memory is None:
+            return
+        try:
+            rows = memory.fetch_all_trades() or []
+        except Exception as exc:
+            logger.error("Startup reconciliation could not read the trade journal: %s", exc)
+            return
+
+        stale = []
+        for row in rows:
+            if row.get("exit_price") is not None or row.get("pnl") is not None:
+                continue
+            try:
+                ticket = int(row.get("ticket"))
+            except (TypeError, ValueError):
+                continue
+            if ticket not in open_tickets:
+                stale.append((ticket, row))
+        if not stale:
+            return
+
+        try:
+            import MetaTrader5 as mt5
+        except Exception as exc:
+            logger.warning(
+                "Startup reconciliation: %d journal row(s) look closed at the broker "
+                "but MetaTrader5 is unavailable (%s); leaving them open.",
+                len(stale), exc,
+            )
+            return
+
+        account = None
+        try:
+            account = client.get_account_snapshot()
+        except Exception:
+            account = None
+        equity = float(getattr(account, "equity", 0.0) or 0.0)
+        balance = float(getattr(account, "balance", equity) or equity)
+
+        reconciled = 0
+        for ticket, row in stale:
+            try:
+                lock = getattr(client, "_shared_lock", None)
+                if lock is not None:
+                    with lock:
+                        deals = mt5.history_deals_get(position=ticket) or []
+                else:
+                    deals = mt5.history_deals_get(position=ticket) or []
+                if not deals:
+                    logger.warning(
+                        "Startup reconciliation: journal row #%s is not open at the "
+                        "broker and has no deal history; leaving it unresolved.", ticket,
+                    )
+                    continue
+                total_pnl = sum(
+                    float(getattr(d, "profit", 0.0) or 0.0)
+                    + float(getattr(d, "swap", 0.0) or 0.0)
+                    + float(getattr(d, "commission", 0.0) or 0.0)
+                    for d in deals
+                )
+                exit_deals = [d for d in deals if int(getattr(d, "entry", 0) or 0) in (1, 3)]
+                exit_price = float(getattr((exit_deals or deals)[-1], "price", 0.0) or 0.0)
+                self._on_trade_closed({
+                    "ticket": ticket,
+                    "symbol": row.get("symbol") or getattr(deals[0], "symbol", ""),
+                    "type": row.get("type") or row.get("action") or "BUY",
+                    "pnl": total_pnl,
+                    "exit_price": exit_price,
+                    "equity": equity,
+                    "balance": balance,
+                    "source": "startup_reconciliation",
+                })
+                reconciled += 1
+                logger.warning(
+                    "Startup reconciliation: journal row #%s closed at the broker while "
+                    "we were down; recorded PnL $%.2f at %.5f.", ticket, total_pnl, exit_price,
+                )
+            except Exception as exc:
+                logger.error("Startup reconciliation failed for ticket #%s: %s", ticket, exc)
+
+        if reconciled:
+            logger.warning("Startup reconciliation recovered %d trade(s) closed during downtime.", reconciled)
+
     def start(self):
         """Starts the full HM Algo 2.0 engine, background workers, and watchdog supervisor."""
         if not self._running:
             self._running = True
             self.state_manager.set_orchestrator_running(True)
+            # Reconcile BEFORE the synchronizer thread starts: its in-memory
+            # "last seen" set is empty at boot, so on the first pass every open
+            # position looks newly opened and every position that closed while
+            # the process was down is invisible (absent from both sets) and its
+            # journal row stays open forever. Seeding it from the broker plus a
+            # deal-history pass fixes both.
+            self._reconcile_positions_closed_while_down()
             self.state_synchronizer.start()
             self.position_monitor.start()
             self._main_thread = threading.Thread(target=self._orchestration_loop, daemon=True, name="jarvis_orchestrator")
