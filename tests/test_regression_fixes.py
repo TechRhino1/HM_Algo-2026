@@ -330,15 +330,22 @@ class TestRegressionFixes(unittest.TestCase):
     def test_a9_hm_start_smoke_error_handling(self):
         """A9/A12: Verify HM_start orchestrator startup and error handling without crash."""
         import HM_start
+        # `start_server` is real and binds a socket. `threading.Thread` is mocked
+        # below, so the secondary server never enters `serve_forever()` — and
+        # `BaseServer.shutdown()` blocks forever waiting for a loop that never
+        # started. Stub both the listener and the terminal probe so this stays a
+        # smoke test of `hm_start`'s control flow, not a live server boot.
         with patch('HM_start.JarvisOrchestrator') as mock_orch, \
              patch('HM_start.threading.Thread') as mock_thread, \
-             patch('HM_start.run_web_server', side_effect=KeyboardInterrupt):
-            
+             patch('HM_start.run_web_server', side_effect=KeyboardInterrupt), \
+             patch('HM_start.start_server', return_value=MagicMock()), \
+             patch('jarvis.data.broker_symbols.ensure_mt5_terminal', return_value=True):
+
             mock_inst = MagicMock()
             mock_orch.return_value = mock_inst
-            
+
             HM_start.hm_start(mode="paper")
-            
+
             self.assertTrue(mock_orch.called)
             self.assertTrue(mock_thread.called)
             self.assertTrue(mock_inst.stop.called)
