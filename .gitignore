@@ -111,3 +111,4 @@ reports/optimizer/
 
 # Local scratch space for one-off probes and diagnostics.
 .scratch/
+Python315Libsite-packages/

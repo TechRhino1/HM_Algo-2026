@@ -12,7 +12,7 @@ class LossCooldownManager:
     - Dynamic drawdown deleveraging prevents catastrophic failure
     """
 
-    def __init__(self):
+    def __init__(self, drawdown_guard=None):
         self.consecutive_losses = 0
         self.consecutive_wins = 0
         self.consecutive_losses_by_symbol: Dict[str, int] = {}
@@ -29,6 +29,15 @@ class LossCooldownManager:
         self.max_trades_per_day_per_symbol: int = 8
         self.peak_equity = 0.0
         self.current_date = None
+        # The daily-loss check divides daily PnL by peak_equity. That peak is
+        # owned by DrawdownGuard (it is persisted and only moves up), but it is
+        # only updated when get_position_size_multiplier() is called — which the
+        # standard authorization path does not always reach. Without a live
+        # reference the check was silently skipped on every trade, so a 4%
+        # daily loss never halted anything. RiskEngine passes its own guard.
+        self.drawdown_guard = drawdown_guard
+        # Injectable clock for backtest (bar time) vs live (wall time)
+        self._clock = None
 
     def record_trade_result(self, pnl: float, is_win: bool, symbol: str = "", current_date=None) -> None:
         """Record trade outcome and update streak tracking."""
@@ -127,8 +136,12 @@ class LossCooldownManager:
                     return True, f"Symbol {sym_key} loss cooldown active ({remaining_sec}s remaining)."
         
         # 2. Daily Drawdown safe guard (Max 4% daily drawdown)
-        if self.peak_equity > 0:
-            daily_dd = self.daily_pnl / self.peak_equity
+        peak = self.peak_equity
+        if peak <= 0 and self.drawdown_guard is not None:
+            peak = float(getattr(self.drawdown_guard, "peak_equity", 0.0) or 0.0)
+            self.peak_equity = peak
+        if peak > 0:
+            daily_dd = self.daily_pnl / peak
             if daily_dd <= -0.04:
                 return True, "Max daily drawdown (4%) reached."
                 
@@ -204,6 +217,13 @@ class LossCooldownManager:
             multiplier = min(multiplier, 0.5)
             
         return max(0.0, min(1.0, multiplier))
+
+    def set_clock(self, clock) -> None:
+        """Inject the time source used for cooldown expiry.
+
+        Backtests pass bar time; live trading uses wall clock.
+        """
+        self._clock = clock
 
     def tick_bar(self, symbol: str = "") -> None:
         """Called each bar to decrement cooldown timer."""

@@ -912,11 +912,11 @@ class WRTargetCalibrator:
         # configurations the folds already voted for. Keyed by (geometry, threshold)
         # so each configuration is averaged over its OWN train results.
         train_summaries: Dict[Tuple[str, float], List[Dict[str, float]]] = {}
-        oos_outcomes: List[TradeOutcome] = []
         # Trades the fold-selected configuration would have taken *inside its
-        # training windows*. The regime policy is fitted on these, so it never
-        # sees the out-of-sample bars it is about to filter.
-        train_selected: List[TradeOutcome] = []
+        # training windows*. The regime policy is fitted on these PER FOLD, so
+        # it never sees the out-of-sample bars it is about to filter.
+        # Stored as list of (train_selected_list, test_window) per fold.
+        fold_train_selected: List[Tuple[List[TradeOutcome], Tuple[int, int]]] = []
         # Per-fold plan (cache key, threshold, test window) so the out-of-sample
         # selection can be replayed *after* the regime policy is learned. The
         # engine applies that policy, so reporting pre-policy numbers here would
@@ -939,15 +939,17 @@ class WRTargetCalibrator:
             g, thr = f_choice
             te_lo, te_hi = test_window
             fold_plans.append((g.key(), float(thr), int(te_lo), int(te_hi)))
+            # Accumulate training trades for THIS fold's regime policy (no lookahead)
+            this_fold_train: List[TradeOutcome] = []
             for tr_lo, tr_hi in train_windows:
-                train_selected.extend(
+                this_fold_train.extend(
                     select_sequential(
                         sim_cache[g.key()], min_score=thr, entry_lo=tr_lo, entry_hi=tr_hi
                     )
                 )
-            oos_outcomes.extend(
-                select_sequential(sim_cache[g.key()], min_score=thr, entry_lo=te_lo, entry_hi=te_hi)
-            )
+            fold_train_selected.append((this_fold_train, test_window))
+            # Note: we DO NOT accumulate oos_outcomes here; we will evaluate the
+            # single deployed geometry across all test windows after voting.
 
         best: Optional[Tuple[Geometry, float, Dict[str, float]]] = None
         if per_fold_choice:
@@ -998,8 +1000,17 @@ class WRTargetCalibrator:
         # ``Geometry.key()`` includes min_score and would otherwise miss.
         best_cache_key = best_geom.key()
         best_geom = Geometry(**{**best_geom.to_dict(), "min_score": float(best_thr)})
-        oos_stats = summarise(oos_outcomes)
-        pre_policy_oos = dict(oos_stats)
+
+        # Evaluate the SINGLE deployed geometry across ALL test windows
+        # (true out-of-sample for the chosen configuration)
+        deployed_oos: List[TradeOutcome] = []
+        for gkey, thr, lo, hi in fold_plans:
+            if gkey == best_cache_key and abs(thr - best_thr) < 1e-12:
+                deployed_oos.extend(
+                    select_sequential(sim_cache[gkey], min_score=thr, entry_lo=lo, entry_hi=hi)
+                )
+        deployed_oos_stats = summarise(deployed_oos)
+        pre_policy_oos = dict(deployed_oos_stats)
 
         # ── Phase 4: AI artefacts ──────────────────────────────────────────
         full_outs = select_sequential(sim_cache[best_cache_key], min_score=best_thr)
@@ -1007,47 +1018,42 @@ class WRTargetCalibrator:
         # monotone rescaling of the score, and the deployed distribution is the
         # one that matters. Fall back to the full sample only when OOS coverage
         # is too thin to bin.
-        calib_source = oos_outcomes if len(oos_outcomes) >= 10 else full_outs
+        calib_source = deployed_oos if len(deployed_oos) >= 10 else full_outs
         score_cal = isotonic_calibrate(
             [o.ai_score for o in calib_source], [1 if o.is_win else 0 for o in calib_source]
         )
         # The regime policy, by contrast, makes a hard include/exclude decision,
-        # so it is fitted on TRAIN-selected trades only. Fitting it on the same
-        # out-of-sample trades it then filters would let it delete exactly the
-        # losers it has already seen — a filter tuned to the test set. Measured
-        # on this data that inflated the aggregate out-of-sample result from
-        # roughly break-even to +52R, which is the size of the artefact.
-        policy_source = train_selected if len(train_selected) >= self.min_trades else calib_source
-        policy_fitted_on = "train folds" if policy_source is train_selected else "full sample (thin train pool)"
+        # so it is fitted on TRAIN-selected trades only (per fold, no lookahead).
+        # We combine all per-fold training selections to fit the regime policy.
+        all_train_selected: List[TradeOutcome] = []
+        for fold_train, _ in fold_train_selected:
+            all_train_selected.extend(fold_train)
+        policy_source = all_train_selected if len(all_train_selected) >= self.min_trades else calib_source
+        policy_fitted_on = "train folds" if policy_source is all_train_selected else "full sample (thin train pool)"
         edge = regime_edge_table(policy_source, min_trades=max(3, self.min_trades // 3)) \
             if self.enable_regime_policy else {}
 
         # ── Apply the learned policy before reporting ──────────────────────
-        # The regime policy is fitted on the OOS sample, but it is the ENGINE
-        # that has to live with it: at run time ``entry_policy`` refuses any
-        # candidate whose regime the table disables. Reporting the pre-policy
-        # sample here would describe a system that is not the one being shipped
-        # (EURUSD read 192 OOS trades at 70.3% while the engine produced 7).
-        # Replaying the identical per-fold selection with the disabled regimes
-        # removed — before the one-position-at-a-time walk, so a blocked trade
-        # frees its slot — makes the reported numbers the engine's numbers.
+        # The regime policy is fitted on the train folds, and we replay the
+        # deployed geometry across test windows with the policy applied.
         enabled_regimes: Optional[Set[str]] = None
         if edge:
             enabled_regimes = {r for r, e in edge.items() if e.enabled}
             replayed: List[TradeOutcome] = []
             for gkey, thr, lo, hi in fold_plans:
-                replayed.extend(
-                    select_sequential(
-                        sim_cache[gkey], min_score=thr,
-                        entry_lo=lo, entry_hi=hi, regimes=enabled_regimes,
+                if gkey == best_cache_key and abs(thr - best_thr) < 1e-12:
+                    replayed.extend(
+                        select_sequential(
+                            sim_cache[gkey], min_score=thr,
+                            entry_lo=lo, entry_hi=hi, regimes=enabled_regimes,
+                        )
                     )
-                )
-            oos_outcomes = replayed
+            deployed_oos = replayed
             full_outs = select_sequential(
                 sim_cache[best_cache_key], min_score=best_thr, regimes=enabled_regimes
             )
             best_stats = summarise(full_outs)
-            oos_stats = summarise(oos_outcomes)
+            oos_stats = summarise(deployed_oos)
 
         # Regime-conditional geometry: refit the target distance inside each
         # regime that has enough trades to justify its own answer.

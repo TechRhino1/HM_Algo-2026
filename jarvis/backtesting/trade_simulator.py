@@ -351,13 +351,14 @@ def simulate_trade(
 
         # Time stop: a position that has not produced meaningful progress is
         # capital tied up for no reason.
-        if (j - entry_idx + 1) >= max_bars:
-            exit_price = close_arr[j]
+        # Match Engine behavior: require mfe < 0.25R AND charge slippage
+        if (j - entry_idx) >= max_bars and mfe < (risk_dist * 0.25):
+            exit_price = close_arr[j] - direction * slippage_price_equiv
             return _finalise(
                 symbol=symbol, side=side, bars=bars, entry_idx=entry_idx,
                 exit_idx=j, entry_time=entry_time, fill=fill, exit_price=exit_price,
                 sl_initial=sl, sl_final=current_sl, tp=tp_price, risk_dist=risk_dist,
-                result=f"TIME_STOP_{max_bars}B", mfe=mfe, mae=mae,
+                result=f"STAGNATION_TIME_STOP_{max_bars}B", mfe=mfe, mae=mae,
                 partial_pct=partial_pct, partial_price=partial_price, partial_r_gross=partial_r_gross,
                 remaining_r_gross=(exit_price - fill) * direction * inv_risk,
                 cost_price_equiv=cost_price_equiv, money_per_unit=money_per_unit,
@@ -366,6 +367,11 @@ def simulate_trade(
                 partial_taken=partial_taken, be_locked=be_locked,
             )
 
+        # Evaluate exit policy (ratchets SL/TP)
+        # Engine snapshots bar_start_sl BEFORE ratchet; we snapshot current_sl
+        # before calling evaluate_exit, then test the NEW (ratcheted) stop
+        # on the NEXT bar, matching Engine's close-based fallback logic.
+        bar_start_sl = current_sl
         dec = evaluate_exit(
             side=exit_side,
             entry=fill,

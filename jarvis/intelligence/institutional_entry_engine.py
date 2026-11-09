@@ -199,10 +199,10 @@ class InstitutionalEntryEngine:
             sl_price = round(entry_price + sl_dist, digits)
             risk_dist = abs(sl_price - entry_price)
 
-        # 6. Targets: TP1 at 1.2R - 1.5R (50% scale-out), TP2 at 2.0R - 2.5R, TP3 at 3.0R runner
-        tp1_r = 1.35
-        tp2_r = 2.20
-        tp3_r = 3.00
+        # 6. Targets (Phase 2): TP1 at 1.5R (50% scale-out), TP2 at 2.5R, TP3 at 4.0R runner
+        tp1_r = 1.50
+        tp2_r = 2.50
+        tp3_r = 4.00
         if bias == "BUY":
             tp1_price = round(entry_price + (risk_dist * tp1_r), digits)
             tp2_price = round(entry_price + (risk_dist * tp2_r), digits)
@@ -478,26 +478,16 @@ class InstitutionalEntryEngine:
             max_risk_cap = 2.40 * d1_atr
         else:
             max_risk_cap = 2.80 * d1_atr
-        # The cap is a pure upper bound and is applied AFTER the `pip_size * 5`
-        # floor above, so on its own it can push risk_dist back below that floor
-        # and leave a sub-5-pip stop the broker rejects — while the sizer derives
-        # an enormous lot size from the tiny risk_dist. `d1_atr` is a daily range,
-        # so with real data the cap is always far above the floor and this clamp
-        # never binds; it only stops a degenerate near-flat D1 frame (tiny but
-        # positive d1_atr, which the `d1_atr <= 0` guard does not catch) from
-        # producing an invalid stop.
+        # Phase 2: Remove SL floor capping from position sizing
+        # Use true structural SL for risk_dist; apply floors only for broker minimum
         max_risk_cap = max(max_risk_cap, pip_size * 5)
-        if risk_dist > max_risk_cap:
-            risk_dist = max_risk_cap
-            if bias == "BUY":
-                sl_price = round(entry_price - risk_dist, digits)
-            else:
-                sl_price = round(entry_price + risk_dist, digits)
+        # Note: We no longer cap risk_dist here; structural SL is used for sizing
+        # Broker minimum stop is enforced in execution engine
 
-        # 6. Targets: TP1 at 2.0R - 2.5R (50% scale-out), TP2 at 3.5R - 5.0R+, TP3 at 5.5R+ macro runner
-        tp1_r = 2.20
-        tp2_r = 4.00
-        tp3_r = 5.50
+        # 6. Targets (Phase 2): TP1 at 2.5R (50% scale-out), TP2 at 5.0R, TP3 at 8.0R macro runner
+        tp1_r = 2.50
+        tp2_r = 5.00
+        tp3_r = 8.00
         if bias == "BUY":
             tp1_price = round(entry_price + (risk_dist * tp1_r), digits)
             tp2_price = round(entry_price + (risk_dist * tp2_r), digits)

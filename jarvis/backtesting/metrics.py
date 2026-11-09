@@ -4,6 +4,7 @@ Calculates institutional performance metrics: Sharpe, Sortino, Calmar, Expectanc
 """
 from typing import List, Dict, Any
 import numpy as np
+import pandas as pd
 
 class PerformanceMetricsCalculator:
     @staticmethod
@@ -58,25 +59,52 @@ class PerformanceMetricsCalculator:
             if dd_pct > max_dd_pct:
                 max_dd_pct = dd_pct
 
-        # Sharpe & Sortino (per trade)
-        returns = np.array(pnls) / initial_balance
-        mean_ret = float(np.mean(returns))
-        if len(returns) >= 2:
-            std_ret = float(np.std(returns, ddof=1))
+        # Sharpe & Sortino: resample trade results into daily returns for proper annualization
+        # Extract trade dates and daily PnL
+        trade_dates = []
+        for t in trades:
+            exit_time = t.get("exit_time") or t.get("close_time") or t.get("time")
+            if exit_time:
+                trade_dates.append(pd.to_datetime(exit_time).tz_localize(None).date())
+            else:
+                trade_dates.append(None)
+
+        # Group PnL by date
+        daily_pnl = {}
+        for date, pnl in zip(trade_dates, pnls):
+            if date is not None:
+                daily_pnl.setdefault(date, 0.0)
+                daily_pnl[date] += pnl
+
+        # Create daily returns series (including zero-return days)
+        if daily_pnl:
+            all_dates = pd.date_range(
+                start=min(daily_pnl.keys()),
+                end=max(daily_pnl.keys()),
+                freq="D"
+            ).date
+            daily_returns = np.array([
+                daily_pnl.get(d, 0.0) / initial_balance for d in all_dates
+            ])
+        else:
+            daily_returns = np.array(returns)
+
+        mean_ret = float(np.mean(daily_returns))
+        if len(daily_returns) >= 2:
+            std_ret = float(np.std(daily_returns, ddof=1))
             if std_ret > 1e-6:
-                sharpe = float((mean_ret / std_ret) * np.sqrt(min(252, max(12, total_trades))))
+                # Annualize using sqrt(252) for daily returns
+                sharpe = float((mean_ret / std_ret) * np.sqrt(252))
                 sharpe = float(np.clip(sharpe, -15.0, 15.0))
             else:
                 sharpe = 0.0
 
-            neg_returns = returns[returns < 0]
-            if len(neg_returns) >= 1:
-                downside_std = float(np.std(neg_returns, ddof=1)) if len(neg_returns) > 1 else float(abs(neg_returns[0]))
-                if downside_std > 1e-6:
-                    sortino = float((mean_ret / downside_std) * np.sqrt(min(252, max(12, total_trades))))
-                    sortino = float(np.clip(sortino, -25.0, 25.0))
-                else:
-                    sortino = sharpe
+            # Correct Sortino downside risk: root mean square of negative returns relative to 0
+            downside_sq = np.minimum(0.0, daily_returns) ** 2
+            downside_std = float(np.sqrt(np.mean(downside_sq)))
+            if downside_std > 1e-6:
+                sortino = float((mean_ret / downside_std) * np.sqrt(252))
+                sortino = float(np.clip(sortino, -25.0, 25.0))
             else:
                 sortino = float(np.clip(sharpe * 1.5, -25.0, 25.0)) if mean_ret > 0 else 0.0
         else:
@@ -86,9 +114,10 @@ class PerformanceMetricsCalculator:
         calmar = (net_profit / (max_dd_dollars + 1e-9)) if max_dd_dollars > 0 else (10.0 if net_profit > 0 else 0.0)
         calmar = float(np.clip(calmar, -25.0, 25.0))
 
-        # Multi-Objective Fitness Score (Section 12 Optimization Rule)
+        # Scale-Independent Multi-Objective Fitness Score
+        expectancy_pct = (expectancy / (initial_balance + 1e-9)) * 100.0
         multi_objective_fitness = (
-            (expectancy / 10.0) +
+            (expectancy_pct * 10.0) +
             (2.0 * min(10.0, profit_factor)) +
             min(15.0, max(-15.0, sharpe)) +
             min(25.0, max(-25.0, sortino / 10.0)) -

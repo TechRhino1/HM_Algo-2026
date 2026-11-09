@@ -106,7 +106,7 @@ class RiskEngine:
         self._now = time.time
         self.position_sizer = PositionSizer()
         self.trade_guard = TradeGuard()
-        self.loss_cooldown = LossCooldownManager()
+        self.loss_cooldown = LossCooldownManager(drawdown_guard=self.drawdown_guard)
         self.correlation_engine = DynamicCorrelationEngine()
 
         # Atomic Risk Reservation table: {symbol: (reserved_usd, expiry_time)}

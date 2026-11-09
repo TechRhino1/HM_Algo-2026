@@ -27,8 +27,9 @@ class OrderManager:
     MICRO_VOLUME_THRESHOLD = 0.03
     SPREAD_ALERT_THRESHOLD = 4.0
 
-    def __init__(self, mt5_client: MT5Client):
+    def __init__(self, mt5_client: MT5Client, clock=None):
         self.mt5_client = mt5_client
+        self._now = clock if clock is not None else time.time
         # Per-ticket immutable 1R reference and policy (frozen at first sight).
         # Guarded by `_state_lock`: the sweep calls in from a 32-thread pool.
         self._state_lock = threading.RLock()
@@ -36,6 +37,13 @@ class OrderManager:
         self._initial_volume: Dict[int, float] = {}
         self._exit_policy: Dict[int, ExitPolicy] = {}
         self._be_locked: set = set()
+
+    def set_clock(self, clock) -> None:
+        """Inject the time source used for pending order TTL calculations.
+
+        Backtests pass bar time; live trading defaults to real wall clock.
+        """
+        self._now = clock if clock is not None else time.time
 
     def cleanup_stale_pending_orders(
         self,
@@ -48,7 +56,7 @@ class OrderManager:
         if not pending:
             return []
         
-        now = time.time()
+        now = self._now()
         cancelled = []
         for o in pending:
             ticket = o.get("ticket")

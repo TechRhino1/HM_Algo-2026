@@ -20,6 +20,8 @@ class CandlestickPriceActionEngine:
     def __init__(self, atr_period: int = 14, vol_period: int = 14):
         self.atr_period = atr_period
         self.vol_period = vol_period
+        # Phase 4: Pattern performance registry
+        self.pattern_performance = {}  # {symbol: {pattern: {wins, losses, total, expectancy_r}}}
 
     def analyze(self, df: pd.DataFrame, symbol: str = "") -> Dict[str, Any]:
         """
@@ -291,8 +293,39 @@ class CandlestickPriceActionEngine:
             "wyckoff_vsa_signal": wyckoff_signal,
             "bars_ago": primary_pattern["bars_ago"] if primary_pattern else 0,
             "sr_levels": sr_levels[:6],
-            "patterns_found": patterns_found
+            "patterns_found": patterns_found,
+            # Phase 4: Pattern performance registry
+            "pattern_performance": self._get_pattern_performance(symbol, primary_pattern["name"] if primary_pattern else "NONE")
         }
+
+    def _get_pattern_performance(self, symbol: str, pattern_name: str) -> Dict[str, Any]:
+        """Get historical performance stats for a pattern on a symbol."""
+        sym_key = symbol.upper()
+        if sym_key not in self.pattern_performance:
+            return {"n": 0, "win_rate": 0.0, "expectancy_r": 0.0}
+        pattern_data = self.pattern_performance[sym_key].get(pattern_name, {})
+        return {
+            "n": pattern_data.get("total", 0),
+            "win_rate": pattern_data.get("win_rate", 0.0),
+            "expectancy_r": pattern_data.get("expectancy_r", 0.0)
+        }
+
+    def update_pattern_performance(self, symbol: str, pattern_name: str, outcome_r: float) -> None:
+        """Update pattern performance with a new trade outcome."""
+        sym_key = symbol.upper()
+        if sym_key not in self.pattern_performance:
+            self.pattern_performance[sym_key] = {}
+        if pattern_name not in self.pattern_performance[sym_key]:
+            self.pattern_performance[sym_key][pattern_name] = {"wins": 0, "losses": 0, "total": 0, "total_r": 0.0}
+        perf = self.pattern_performance[sym_key][pattern_name]
+        perf["total"] += 1
+        perf["total_r"] += outcome_r
+        if outcome_r > 0:
+            perf["wins"] += 1
+        else:
+            perf["losses"] += 1
+        perf["win_rate"] = perf["wins"] / perf["total"] if perf["total"] > 0 else 0.0
+        perf["expectancy_r"] = perf["total_r"] / perf["total"] if perf["total"] > 0 else 0.0
 
     def _calculate_sr_levels(self, df: pd.DataFrame, curr_price: float, symbol: str) -> List[Dict[str, Any]]:
         """

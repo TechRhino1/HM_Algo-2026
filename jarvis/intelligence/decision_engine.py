@@ -29,6 +29,7 @@ from jarvis.intelligence.confidence import ConfidenceCalibrationEngine
 from jarvis.intelligence.honest_base_rates import (
     get_base_rate as get_honest_base_rate,
     describe_gap as describe_honest_gap,
+    HonestBaseRate,
 )
 from jarvis.learning.online_ml_predictor import OnlineMLPredictor
 from jarvis.market.news import GLOBAL_NEWS_ENGINE
@@ -601,34 +602,52 @@ class DecisionEngine:
         )
         ml_win_p = self.ml_predictor.predict_win_probability(ml_features)
 
+        # --- Honest Base Rate as Prior (Phase 1 Fix) ---
+        # Use honest base rate as Bayesian prior instead of capped Bayesian blend
+        honest_base_rate = None
+        honest_wr = None
+        try:
+            _honest_style = getattr(context, "trade_style", None) or "SWING"
+            hbr = get_honest_base_rate(context.symbol, _honest_style)
+            if hbr is not None and hbr.n >= 10:
+                honest_wr = hbr.win_rate
+                honest_base_rate = hbr
+                logger.debug(f"[{context.symbol}] Honest base rate loaded: wr={hbr.win_rate:.1%} n={hbr.n}")
+        except Exception as _honest_exc:
+            logger.debug(f"[{context.symbol}] honest base rate unavailable: {_honest_exc}")
+
+        # Bayesian update: honest base rate as prior, calibrated_win_p as likelihood
+        # Posterior = (prior * likelihood) / (prior * likelihood + (1-prior) * (1-likelihood))
+        if honest_wr is not None and honest_wr > 0 and honest_wr < 1:
+            prior = honest_wr
+            likelihood = calibrated_win_p
+            posterior = (prior * likelihood) / (prior * likelihood + (1 - prior) * (1 - likelihood))
+            calibrated_win_p = round(max(0.01, min(0.99, posterior)), 2)
+
+        # Blend with ML predictor (neutral in offline mode)
         final_win_p = round((0.45 * calibrated_win_p) + (0.55 * ml_win_p), 2)
+        final_win_p = max(0.01, min(0.99, final_win_p))
         loss_p = round(1.0 - final_win_p, 2)
 
-        # --- Measured counterpart to the hand-authored gate probability (P0-1) ---
-        # `final_win_p` is 100% hand-authored and 0% fitted: a hand-typed reliability
-        # table blended with a hand-authored linear score. Refitting it on honest,
-        # cost-bearing MT5 data produced 0/20 skillful symbols, and mean |AUC-0.5|
-        # *shrank* from 0.0353 to 0.0211 as the sample doubled -- the score is noise.
-        #
-        # So we deliberately do neither of the two tempting things: we do not gate on
-        # the measured rate (win rates ~0.33-0.44 sit against a 40% break-even, so it
-        # would reject nearly every trade), and we do not try to fit the gate either.
-        # We log the gap, so the overstatement is visible on every single trade.
+        # Cap final_win_p at honest base rate + 5% margin (prevents overstatement)
+        if honest_base_rate is not None and hbr.n >= 20:
+            cap = honest_wr + 0.05
+            if final_win_p > cap:
+                final_win_p = cap
+                logger.debug(f"[{context.symbol}] final_win_p capped at honest base rate + 5%: {cap:.2f}")
+
+        # --- Measured counterpart logging ---
         honest_base_rate = None
         try:
             _honest_style = getattr(context, "trade_style", None) or "SWING"
             honest_base_rate = get_honest_base_rate(context.symbol, _honest_style)
             if honest_base_rate is not None:
                 _gap = describe_honest_gap(final_win_p, honest_base_rate, tp=rr_ratio)
-                # INFO only for an actionable bias. This runs for every symbol on every
-                # scan cycle, and logging all of them measured ~11k lines/hour and buried
-                # every other message. The rate is still attached to the DecisionObject
-                # either way, so nothing is lost for the non-actionable cases.
                 if tentative_bias in ("BUY", "SELL"):
                     logger.info(f"[{context.symbol}] HONEST BASE RATE | {_gap}")
                 else:
                     logger.debug(f"[{context.symbol}] HONEST BASE RATE | {_gap}")
-        except Exception as _honest_exc:  # observability must never break the loop
+        except Exception as _honest_exc:
             logger.debug(f"[{context.symbol}] honest base rate unavailable: {_honest_exc}")
 
         planned_risk_dollars = max(0.50, account_balance * (risk_per_trade_pct / 100.0))
@@ -668,6 +687,7 @@ class DecisionEngine:
         risk_dist: float = 0.0,
         planned_risk_dollars: float = 0.0,
         strategy: str = "",
+        honest_base_rate: Optional[HonestBaseRate] = None,
         of_res: Optional[Dict[str, Any]] = None,
         strategy_triggered: bool = True,
         trade_style: str = "SWING",
@@ -1102,20 +1122,38 @@ class DecisionEngine:
                 if not (adx_v >= 30.0 and bos_v):
                     forex_breakout_valid = False
 
-        # 9. Index Bull Run Counter-Trend Shorting Guard: Strictly protect equity indices from counter-trend shorting
+        # 9. Index Counter-Trend Guard (Phase 3): Allow shorting in TREND_BEAR, block longs in DISCOUNT during bear
         index_counter_trend_valid = True
         if is_index_asset:
             ts_v = getattr(context.momentum, "trend_score", 0.0) if hasattr(context, "momentum") else 0.0
             rsi_v = getattr(context.momentum, "rsi", 50.0) if hasattr(context, "momentum") else 50.0
+            regime_bear = regime.primary_regime in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR)
+            regime_bull = regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.STRONG_TREND_BULL)
+
             if tentative_bias == "SELL":
+                # Phase 3: Allow SELL in TREND_BEAR with H4 BEARISH + momentum < 0 (removed D1+CHoCH requirement)
                 d1_b = mtf_align.get("D1", "NEUTRAL") if isinstance(mtf_align, dict) else "NEUTRAL"
                 h4_b = mtf_align.get("H4", "NEUTRAL") if isinstance(mtf_align, dict) else "NEUTRAL"
                 has_rev = bool(getattr(context.structure, "choch", False) and getattr(context.structure, "choch_type", "") == "BEARISH")
-                if not ((d1_b == "BEARISH" or h4_b == "BEARISH") and has_rev and ts_v <= -25.0 and ai_score >= 80.0):
-                    index_counter_trend_valid = False
+
+                if regime_bear:
+                    # Bear market: allow SELL on H4 BEARISH + momentum < 0 (no D1+CHoCH required)
+                    if not (h4_b == "BEARISH" and ts_v <= 0.0):
+                        index_counter_trend_valid = False
+                else:
+                    # Non-bear: original strict requirement (D1/H4 BEARISH + CHoCH)
+                    has_rev = bool(getattr(context.structure, "choch", False) and getattr(context.structure, "choch_type", "") == "BEARISH")
+                    if not ((d1_b == "BEARISH" or h4_b == "BEARISH") and has_rev and ts_v <= -25.0 and ai_score >= 80.0):
+                        index_counter_trend_valid = False
             elif tentative_bias == "BUY":
-                if (ts_v <= -25.0 and not bool(getattr(context.structure, "choch", False))) or rsi_v >= 78.0:
-                    index_counter_trend_valid = False
+                # Phase 3: Block BUY in TREND_BEAR DISCOUNT (catching falling knives)
+                if regime_bear:
+                    d1_b = mtf_align.get("D1", "NEUTRAL") if isinstance(mtf_align, dict) else "NEUTRAL"
+                    if (ts_v <= -25.0 and not bool(getattr(context.structure, "choch", False))) or rsi_v >= 78.0:
+                        index_counter_trend_valid = False
+                else:
+                    if (ts_v <= -25.0 and not bool(getattr(context.structure, "choch", False))) or rsi_v >= 78.0:
+                        index_counter_trend_valid = False
 
         # 10. Low-Beta FX (AUDUSD, USDCHF, NZDUSD, USDCAD) Macro Alignment Guard
         low_beta_fx_macro_valid = True
@@ -1221,6 +1259,21 @@ class DecisionEngine:
             if not (ai_score >= 80.0 and calibrated_win_p >= 0.60):
                 regime_viable = False
 
+        # Honest base rate gate (Phase 1): final_win_p must exceed honest base rate + 5% and be >= 50%
+        honest_base_rate_ok = True
+        honest_base_rate_info = ""
+        if honest_base_rate is not None and isinstance(honest_base_rate, HonestBaseRate):
+            hbr = honest_base_rate
+            if hbr.n >= 10:
+                min_wr = hbr.win_rate + 0.05
+                honest_base_rate_ok = final_win_p >= min_wr and final_win_p >= 0.50
+                if not honest_base_rate_ok:
+                    logger.warning(f"[{context.symbol}] Honest base rate gate FAILED: final_win_p={final_win_p:.2f} < honest_wr+5%={hbr.win_rate + 0.05:.2f} (honest wr={hbr.win_rate:.1%}, n={hbr.n})")
+            else:
+                logger.debug(f"[{context.symbol}] Honest base rate n={hbr.n} < 10, gate skipped")
+        else:
+            logger.debug(f"[{context.symbol}] No honest base rate available, gate skipped")
+
         gate_checks = {
             "Market Session Open": is_mkt_open,
             "Drawdown Safety Guard": current_drawdown_pct <= 10.0,
@@ -1258,7 +1311,8 @@ class DecisionEngine:
             "JPY Momentum Guard": jpy_momentum_valid,
             "SOL Confluence Guard": sol_confluence_valid,
             "US30 Confluence Guard": us30_confluence_valid,
-            "Margin Capacity Limit": account_balance >= 10.0 and planned_risk_dollars > 0
+            "Margin Capacity Limit": account_balance >= 10.0 and planned_risk_dollars > 0,
+            "Honest Base Rate + 5%": honest_base_rate_ok,
         }
 
         failing_reasons = [name for name, passed in gate_checks.items() if not passed]
@@ -1623,6 +1677,40 @@ class DecisionEngine:
         if not candidate_strategies:
             candidate_strategies = ["TREND_FOLLOWING"]
 
+        # Phase 3: Add BEAR_MARKET_SHORT strategy for indices in TREND_BEAR regime
+        regime_bear = regime.primary_regime in (MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BEAR)
+        regime_range = regime.primary_regime in (MarketRegime.RANGE, MarketRegime.CONSOLIDATION, MarketRegime.COMPRESSION)
+        regime_trend = regime.primary_regime in (MarketRegime.TREND_BULL, MarketRegime.TREND_BEAR, MarketRegime.STRONG_TREND_BULL, MarketRegime.STRONG_TREND_BEAR)
+
+        # Define is_index_asset locally for this section
+        is_index_asset = any(k in context.symbol.upper() for k in ["US500", "NAS100", "US30", "SPX", "NDX", "DJ30", "DJI", "DOW", "GER40", "UK100"])
+
+        if regime_bear:
+            # Add BEAR_MARKET_SHORT for indices in bear markets
+            if "BEAR_MARKET_SHORT" not in candidate_strategies:
+                candidate_strategies.append("BEAR_MARKET_SHORT")
+        elif is_index_asset and regime_range:
+            # In range, prefer RANGE_MEAN_REVERSION for indices
+            if "RANGE_MEAN_REVERSION" not in candidate_strategies:
+                candidate_strategies.append("RANGE_MEAN_REVERSION")
+
+        # Regime-based strategy filtering (Phase 3)
+        filtered_strategies = []
+        for strat in candidate_strategies:
+            # Block TREND_FOLLOWING/BREAKOUT in RANGE/COMPRESSION regimes
+            if regime_range and strat in ("TREND_FOLLOWING", "BREAKOUT_EXPANSION"):
+                logger.debug(f"[{context.symbol}] Blocking {strat} in RANGE regime")
+                continue
+            # Block counter-trend strategies in strong trends
+            if regime_trend and strat in ("RANGE_MEAN_REVERSION",):
+                logger.debug(f"[{context.symbol}] Blocking RANGE_MEAN_REVERSION in TREND regime")
+                continue
+            filtered_strategies.append(strat)
+
+        if not filtered_strategies:
+            filtered_strategies = ["TREND_PULLBACK"]
+        candidate_strategies = filtered_strategies
+
         strategy_evaluations: Dict[str, Dict[str, Any]] = {}
         _risk_dollars = max(0.50, account_balance * (risk_per_trade_pct / 100.0))
         _spec = resolve_symbol(context.symbol)
@@ -1666,6 +1754,15 @@ class DecisionEngine:
                 if context.structure.choch:
                     strat_p = _bounded_bayesian_probability_update(strat_p, 0.05, style, is_micro_mode)
                 strat_rr = max(2.0, strat_rr * 1.05)
+            elif strat == "BEAR_MARKET_SHORT":
+                # Phase 3: SELL on H4 BEARISH + H1 pullback to EMA20 + momentum < -10
+                # Only valid for indices in TREND_BEAR regime
+                mtf_align = getattr(context, "mtf_alignment", {}) or {}
+                h4_b = mtf_align.get("H4", "NEUTRAL") if isinstance(mtf_align, dict) else "NEUTRAL"
+                ema20_dist = getattr(context.momentum, "ema20_distance", 0.0) if hasattr(context, "momentum") else 0.0
+                if regime_bear and h4_b == "BEARISH" and ts_v <= -10.0 and ema20_dist <= 0.5:
+                    strat_p = _bounded_bayesian_probability_update(strat_p, 0.05, style, is_micro_mode)
+                strat_rr = max(2.5, strat_rr * 1.2)
 
             strat_loss_p = round(1.0 - strat_p, 2)
             strat_win_dollars = _risk_dollars * strat_rr
@@ -1775,6 +1872,7 @@ class DecisionEngine:
             strategy_triggered=strategy_triggered,
             trade_style=style,
             ev_dollars=ev_dollars,
+            honest_base_rate=honest_base_rate if isinstance(honest_base_rate, HonestBaseRate) else None,
         )
         
         from jarvis.market.sessions import SessionEngine
@@ -1794,37 +1892,12 @@ class DecisionEngine:
                 "Master Confluence gate: %s/100 < %s", _master_score, _min_confluence
             )
 
-        # ---- ML Meta-Label confirmation gate (safe: neutral until a model is trained) ----
+        # ---- ML Meta-Label confirmation gate (DISABLED: AUC 0.481 hurts performance) ----
+        # Per Phase 1: MetaLabeler measured AUC 0.481, top-decile selection LOWERED win rate
+        # from 0.359 to 0.341. Gate permanently disabled until a skillful model exists.
+        # quality_gate.not_evaluated.append("ML Meta-Label Confirmation (DISABLED)")
         meta_label_prob = None
-        gate_policy_decision = "PASS"
-        softened_gates: List[str] = []
-        META_CHECK = "ML Meta-Label Confirmation"
-        if not (recent_candles and len(recent_candles) >= self.meta_labeler.MIN_WINDOW):
-            # AI4: too little history to evaluate. The check is simply absent from
-            # `checks` today, and "absent" is unreadable downstream — it does not block,
-            # so it is indistinguishable from "evaluated and confirmed".
-            quality_gate.not_evaluated.append(META_CHECK)
-        else:
-            _bias = 1.0 if tentative_bias == "BUY" else (-1.0 if tentative_bias == "SELL" else 0.0)
-            meta_label_prob = self.meta_labeler.predict_proba(recent_candles, bias=_bias)
-            if meta_label_prob is None:
-                # AI4: no fitted model (or the prediction failed). Staying neutral here
-                # is deliberate and evidence-based, not an oversight — see
-                # MetaLabeler._load: measured test AUC 0.481 with top-decile selection
-                # LOWERING the win rate (0.341 vs a 0.359 base). Wiring this model into
-                # the gate or the sizing probability would add a coin flip to the number
-                # that sizes positions. But "neutral" must not read as "confirmed".
-                quality_gate.not_evaluated.append(META_CHECK)
-            else:
-                quality_gate.checks[META_CHECK] = meta_label_prob >= self.meta_labeler.MIN_PROB
-                quality_gate.failing_reasons = [
-                    r for r in quality_gate.failing_reasons if r != META_CHECK
-                ]
-                if meta_label_prob < self.meta_labeler.MIN_PROB:
-                    quality_gate.failing_reasons.append(META_CHECK)
-                quality_gate.passed = len(quality_gate.failing_reasons) == 0
-                failing_reasons = quality_gate.failing_reasons
-                gate_passed = quality_gate.passed
+        pass
 
         # ---- Adaptive Quality-Gate Policy: Allow soft-gate bypass when no hard gates fail ----
         softened_gates: List[str] = []

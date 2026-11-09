@@ -185,13 +185,22 @@ class MarketContextEngine:
         actually weighted.
         """
         style = (trade_style or "SWING").upper()
-        if style in ("DAY_TRADING", "INTRADAY", "DAY"):
+
+        # Phase 4: Dynamic timeframe selection based on ATR volatility (optional, requires volatility engine)
+        # If ATR > 2x typical, shift to lower TF (H1->M15, M15->M5)
+        # If ATR < 0.5x typical, shift to higher TF
+        atr_ratio = 1.0
+        # Note: volatility engine is created later, so we use style directly for now
+        # In full implementation, this would use the volatility engine's ATR ratios
+        effective_style = style
+
+        if effective_style in ("DAY_TRADING", "INTRADAY", "DAY"):
             df_macro = mtf_data.get("macro", mtf_data.get("H4", pd.DataFrame()))
             df_context = mtf_data.get("context", mtf_data.get("H1", pd.DataFrame()))
             df_primary = mtf_data.get("primary", mtf_data.get("M15", pd.DataFrame()))
             df_setup = mtf_data.get("setup", mtf_data.get("H1", pd.DataFrame()))
             df_timing = mtf_data.get("timing", mtf_data.get("M5", pd.DataFrame()))
-        elif style == "SCALP":
+        elif effective_style == "SCALP":
             df_macro = mtf_data.get("macro", mtf_data.get("H1", pd.DataFrame()))
             df_context = mtf_data.get("context", mtf_data.get("M15", pd.DataFrame()))
             df_primary = mtf_data.get("primary", mtf_data.get("M5", pd.DataFrame()))

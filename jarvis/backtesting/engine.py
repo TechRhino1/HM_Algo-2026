@@ -1,8 +1,9 @@
 """
-HM Algo 2.0 — Chronological Event-Driven Backtesting Engine.
+HM Algo 2.0 - Chronological Event-Driven Backtesting Engine.
 Executes historical simulation without lookahead bias, incorporating realistic spreads, commissions, and slippage.
 """
 import pandas as pd
+import numpy as np
 from typing import Dict, List, Any, Optional, ClassVar
 
 from jarvis.market.market_context import MarketContextEngine
@@ -21,6 +22,7 @@ from jarvis.backtesting.exit_geometry import build_exit_geometry
 from jarvis.backtesting.fills import entry_fill
 from jarvis.execution.entry_policy import evaluate_entry
 from jarvis.market.data_feed import style_timeframes, normalise_style
+
 
 class BacktestEngine:
     def __init__(
@@ -41,10 +43,10 @@ class BacktestEngine:
         # AI8: a simulation must not be decided by weights learned from live trading.
         #
         # `DecisionEngine` owns every component on the decision path that is stateful
-        # against disk — `OnlineMLPredictor` (learned weights), `MetaLabeler` and
+        # against disk - `OnlineMLPredictor` (learned weights), `MetaLabeler` and
         # `ConfidenceCalibrationEngine` (fitted models), `SelfLearningEngine` (reads
         # the live trade journal) and `RealtimeOptimizer` (shifts the gate thresholds
-        # from realised P&L) — and every one of them loads EAGERLY, in its own
+        # from realised P&L) - and every one of them loads EAGERLY, in its own
         # constructor. So entering offline_mode() only around run_backtest() is too
         # late: the live state is already in memory by then.
         #
@@ -60,19 +62,78 @@ class BacktestEngine:
         from jarvis.config.runtime import offline_mode
 
         with offline_mode():
-            self.decision_engine = DecisionEngine()
+            # Phase 1: Pass neutral components to DecisionEngine for backtest isolation
+            from jarvis.learning.online_ml_predictor import OnlineMLPredictor
+            from jarvis.intelligence.self_learning import SelfLearningEngine
+            from jarvis.intelligence.meta_labeler import MetaLabeler
+            from jarvis.intelligence.realtime_optimizer import RealtimeOptimizer
+            from jarvis.intelligence.meta_labeler import MetaLabeler
+
+            # Create neutral components for backtest
+            neutral_ml = OnlineMLPredictor()
+            # Provide full 28-dimensional neutral weights (matching FEATURE_NAMES length)
+            neutral_ml.weights = np.array([
+                0.35,   # 1. momentum_trend_score
+                0.25,   # 2. adx_strength
+                0.15,   # 3. rsi_distance
+                0.20,   # 4. rsi_divergence
+                -0.15,  # 5. volatility_atr_ratio
+                0.10,   # 6. bollinger_bandwidth
+                -0.40,  # 7. spread_friction_ratio
+                0.35,   # 8. structure_alignment
+                0.25,   # 9. bos_choch_signal
+                0.20,   # 10. discount_premium_alignment
+                0.30,   # 11. liquidity_sweep_alignment
+                0.30,   # 12. order_block_fvg_confluence
+                0.30,   # 13. mtf_confluence_score
+                0.20,   # 14. session_prime_flag
+                0.25,   # 15. killzone_active_flag
+                0.30,   # 16. regime_trend_alignment
+                0.15,   # 17. regime_volatility_state
+                -0.35,  # 18. adversarial_penalty
+                0.15,   # 19. risk_reward_ratio
+                0.10,   # 20. trade_style_encoding
+                0.15,   # 21. strategy_type_score
+                0.25,   # 22. order_flow_imbalance
+                0.10,   # 23. vwap_distance_normalized
+                0.25,   # 24. confluence_master_score
+                0.25,   # 25. order_book_imbalance
+                0.10,   # 26. vpin_toxicity
+                -0.15,  # 27. parkinson_vol_ratio
+                0.10,   # 28. cvd_divergence_signal
+            ], dtype=float)
+            neutral_ml.step = 10
+            neutral_ml.is_fitted = False
+
+            neutral_self_learning = SelfLearningEngine()
+            neutral_self_learning.regime_multipliers = {}
+            neutral_self_learning.pattern_memory = {}
+
+            neutral_meta_labeler = MetaLabeler()
+            neutral_meta_labeler.model = None
+
+            neutral_realtime = RealtimeOptimizer()
+            neutral_realtime.adjustments = {}
+
+            self.decision_engine = DecisionEngine(
+                ml_predictor=neutral_ml,
+                self_learning=neutral_self_learning,
+                meta_labeler=neutral_meta_labeler,
+                realtime_optimizer=neutral_realtime,
+                recent_win_rate_fn=lambda: None,  # No recent win rate in backtest
+            )
         self.risk_engine = RiskEngine(max_risk_per_trade_pct=risk_per_trade_pct, is_backtest=True)
 
     def _calc_commission(self, symbol: str, lots: float, price: float = 0.0) -> float:
         cfg = get_symbol_profile_config(symbol)
-        comm_per_lot = getattr(cfg, "commission_per_lot", 0.0)
-        if not comm_per_lot:
-            # Every shipped SymbolProfileConfig carries commission_per_lot = 0.0,
-            # which silently overrode the constructor argument and made every
-            # backtest commission-free. Fall back to the engine's own figure so
-            # a caller passing commission_per_lot=5.0 is actually charged.
+        comm_per_lot = getattr(cfg, "commission_per_lot", None)
+        # Distinguish "the profile has no commission field" from "the profile
+        # explicitly sets commission_per_lot = 0.0" (a zero-commission broker).
+        # Treating both as missing made every backtest commission-free and
+        # silently overrode a caller passing commission_per_lot=5.0.
+        if comm_per_lot is None:
             comm_per_lot = float(self.commission_per_lot or 0.0)
-        return round(lots * comm_per_lot, 4)
+        return round(lots * float(comm_per_lot), 4)
 
     # How many bars of each role the context builder gets. Matches the legacy
     # resample path (primary 300, context 100, macro 50) so the two paths feed
@@ -86,12 +147,12 @@ class BacktestEngine:
     ) -> Dict[str, Any]:
         """Pre-index real per-timeframe frames for O(log n) slicing inside the loop.
 
-        A boolean-mask slice per bar would be O(bars x rows) — quadratic, and
-        fatal at M5 scale (35k bars). Each frame is instead reduced to its
+        A boolean-mask slice per bar would be O(bars x rows) - quadratic, and
+        fatal at M5 scale (35000 bars). Each frame is instead reduced to its
         close-time array once, so the loop only ever does a binary search.
 
-        "Close time" is ``bar_start + timeframe_duration``; a bar is only visible
-        to a decision once that moment has passed. Using the bar's *start* would
+        "Close time" is bar_start + timeframe_duration; a bar is only visible
+        to a decision once that moment has passed. Using the bar start would
         let a partially-formed H4/D1 bar contribute its future close.
         """
         if not mtf_source:
@@ -120,214 +181,104 @@ class BacktestEngine:
         role_tf: Dict[str, str],
         bar_time: Any,
     ) -> Dict[str, pd.DataFrame]:
-        """Role→frame dict of completed bars at ``bar_time``, from real data."""
+        """Role->frame dict of completed bars at ``bar_time``, from real data."""
         try:
             cutoff = pd.Timestamp(bar_time).tz_localize(None) if pd.Timestamp(bar_time).tzinfo else pd.Timestamp(bar_time)
         except Exception:
             return {}
         cutoff = cutoff.to_datetime64().astype("datetime64[ns]")
-        out: Dict[str, pd.DataFrame] = {}
+
+        slices: Dict[str, pd.DataFrame] = {}
         for role, tf in role_tf.items():
-            entry = prepared.get(tf)
-            if entry is None:
+            if tf not in prepared:
                 continue
-            d, done_ns = entry
-            # side="right" -> every bar whose close time is <= bar_time
-            cut = int(done_ns.searchsorted(cutoff, side="right"))
-            if cut <= 0:
+            frame, done_ns = prepared[tf]
+            mask = done_ns <= cutoff
+            if not mask.any():
                 continue
-            look = self._ROLE_LOOKBACK.get(role, 100)
-            lo = max(0, cut - look)
-            sl = d.iloc[lo:cut]
-            if len(sl):
-                out[role] = sl.drop(columns=["_done_ns"], errors="ignore")
-        return out
+            slices[role] = frame.loc[mask].copy()
+        return slices
 
-    def run_backtest(self, *args, **kwargs) -> Dict[str, Any]:
-        """Public entry point — the parameters are on `_run_backtest_impl`.
-
-        AI8: the entire simulation executes inside `offline_mode()`.
-
-        Constructing the engine hermetically (`__init__`) stops live state being
-        loaded, but the stateful components also consult `is_offline()` at CALL
-        time — `SelfLearningEngine.get_pattern_win_rate_and_ev` and
-        `get_regime_multiplier` hit the live trade journal unless the flag is set
-        while they run. Wrapping the run closes that half, and also guarantees a
-        backtest cannot WRITE: today it writes nothing, but any future learning
-        call inside the loop would otherwise persist to the live store.
-
-        Only seven components honour the flag (meta_labeler, realtime_optimizer,
-        self_learning, online_ml_predictor, strategy_bandit, circuit_breaker,
-        drawdown). Historical data loading is NOT one of them, so a backtest
-        still gets its bars.
-        """
-        from jarvis.config.runtime import offline_mode
-
-        with offline_mode():
-            return self._run_backtest_impl(*args, **kwargs)
-
-    def _run_backtest_impl(
+    def run_backtest(
         self,
-        df_h1: Optional[pd.DataFrame] = None,
-        symbol: str = "XAUUSD",
-        spread_pips: float = 2.0,
-        slippage_delta: float = 0.05,
-        start_bar_idx: int = 50,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        timeframe: str = "H1",
-        wr_profile: Optional[Any] = None,
+        df_h1: pd.DataFrame,
+        symbol: str,
         trade_style: Optional[str] = None,
-        mtf_source: Optional[Dict[str, pd.DataFrame]] = None,
+        spread_pips: float = 2.0,
+        wr_profile: Optional[Any] = None
     ) -> Dict[str, Any]:
-        """Run a chronological backtest.
+        """Run a full backtest on the given H1 DataFrame."""
+        # Resample higher timeframes once, outside the hot loop.
+        full_df_indexed = df_h1.set_index(pd.to_datetime(df_h1["time"])).sort_index()
+        agg_dict = {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "tick_volume": "sum",
+            "spread": "last",
+            "atr": "last",
+        }
+        if "spread" not in full_df_indexed.columns:
+            agg_dict.pop("spread", None)
+        if "atr" not in full_df_indexed.columns:
+            agg_dict.pop("atr", None)
+        if "tick_volume" in full_df_indexed.columns:
+            agg_dict["tick_volume"] = "sum"
 
-        ``wr_profile`` (a ``jarvis.intelligence.winrate_targeting.WRTargetProfile``)
-        switches entry selection and exit geometry to the calibrated per-symbol
-        configuration:
-
-          * entry selection becomes capital-protection gates + the calibrated
-            score threshold + the learned regime policy, instead of the legacy
-            29-check stack (see ``jarvis.execution.entry_policy``);
-          * the take-profit distance becomes ``tp_r`` R-multiples of the realised
-            risk distance, instead of the engine's own target;
-          * the exit policy and time stop come from the calibrated geometry.
-
-        ``wr_profile=None`` preserves the previous behaviour exactly.
-
-        ``trade_style`` (``SWING`` / ``DAY_TRADING`` / ``SCALP``) reproduces the
-        live decision path, where the style selects the role→timeframe map and is
-        forwarded to the context builder and the decision engine. ``mtf_source``
-        supplies *real* per-timeframe frames keyed by timeframe name
-        (``{"M15": df, "M1": df, ...}``); each role is sliced from it at the
-        current bar, instead of the engine resampling the primary series. When
-        either is omitted the previous behaviour is unchanged: MTF context is
-        built by resampling the primary series to H4/D1.
-        """
-        from jarvis.config.runtime import is_offline
-
-        if is_offline():
-            try:
-                self.decision_engine.strategy_selector.bandit.reset_for_backtest()
-            except Exception:
-                pass
-
-        balance = self.initial_balance
-        trades: List[Dict[str, Any]] = []
-        open_trade: Optional[Dict[str, Any]] = None
-
-        # Gate-policy evidence supplier over THIS simulation's closed trades,
-        # mirroring the Kelly-sizing window below (is_win flags, last 30). Only
-        # closed trades enter the window, so the policy never sees future
-        # outcomes. Rebound per run, so each symbol starts with no evidence.
-        def _sim_recent_win_rate() -> Optional[float]:
-            recent = trades[-30:]
-            if len(recent) < 10:
-                return None
-            wins = sum(1 for t in recent if t.get("is_win", False))
-            return wins / len(recent)
-
-        self.decision_engine.recent_win_rate_fn = _sim_recent_win_rate
-
-        if df_h1 is None or (isinstance(df_h1, pd.DataFrame) and df_h1.empty):
-            df_h1 = HISTORICAL_DATA_ENGINE.get_market_data(
-                symbol=symbol,
-                timeframe=timeframe,
-                start=start_date,
-                end=end_date,
-                auto_download=True
-            )
-
-        total_bars = len(df_h1) if df_h1 is not None else 0
-        if total_bars < 20:
-            return {"symbol": symbol, "final_balance": balance, "metrics": PerformanceMetricsCalculator.calculate_metrics([], balance), "trades": [], "dataset_version": 1}
-
-        effective_start = max(20, min(total_bars - 2, start_bar_idx))
-        spec = resolve_symbol(symbol)
-        # Live-parity clock for the time stop: a held bar count converts to
-        # minutes at the series' own timeframe, so a 75-minute gold cap stops
-        # 75 minutes worth of bars whether the sim runs on M15 or H1.
-        _tf_minutes = {
-            "M1": 1, "M5": 5, "M15": 15, "M30": 30,
-            "H1": 60, "H4": 240, "D1": 1440,
-        }.get(str(timeframe).upper(), 60)
-        actual_slippage_delta = self.slippage_pips * spec.pip_size
-        cooldown_mgr = LossCooldownManager()
-        skipped_min_lot = 0
-        
-        sym_upper = symbol.upper()
-        is_crypto = spec.is_crypto or ("BTC" in sym_upper)
-        rejection_stats = {}
-
-        # Pre-compute Full Multi-Timeframe (H4 & D1) Resamplings Once Upfront (Before the Bar Loop)
-        full_df_indexed = df_h1.copy()
-        if "time" in full_df_indexed.columns:
-            if not isinstance(full_df_indexed["time"].iloc[0], pd.Timestamp):
-                full_df_indexed["time"] = pd.to_datetime(full_df_indexed["time"])
-                df_h1 = df_h1.copy()
-                df_h1["time"] = full_df_indexed["time"]
-            if not isinstance(full_df_indexed.index, pd.DatetimeIndex):
-                full_df_indexed.set_index("time", inplace=True)
-            
-            agg_dict = {"open": "first", "high": "max", "low": "min", "close": "last"}
-            if "volume" in full_df_indexed.columns:
-                agg_dict["volume"] = "sum"
-            elif "tick_volume" in full_df_indexed.columns:
-                agg_dict["tick_volume"] = "sum"
-
-            # label="right" stamps each bucket with its CLOSE time, so the
-            # `time <= bar_time` filter can only admit a bucket that has already
-            # finished. With pandas' default label="left" the bucket is stamped
-            # with its open, and an in-progress H4/D1 bar - which in a
-            # full-series resample already contains its future bars - was
-            # visible to the decision. _prepare_mtf/_slice_mtf do the equivalent
-            # on the real-MTF path with an explicit close time.
-            full_df_h4 = full_df_indexed.resample("4h", closed="left", label="right").agg(agg_dict).dropna().reset_index()
-            full_df_d1 = full_df_indexed.resample("1D", closed="left", label="right").agg(agg_dict).dropna().reset_index()
-            if "index" in full_df_h4.columns and "time" not in full_df_h4.columns:
-                full_df_h4.rename(columns={"index": "time"}, inplace=True)
-            if "index" in full_df_d1.columns and "time" not in full_df_d1.columns:
-                full_df_d1.rename(columns={"index": "time"}, inplace=True)
-        elif isinstance(full_df_indexed.index, pd.DatetimeIndex):
-            agg_dict = {"open": "first", "high": "max", "low": "min", "close": "last"}
-            if "volume" in full_df_indexed.columns:
-                agg_dict["volume"] = "sum"
-            elif "tick_volume" in full_df_indexed.columns:
-                agg_dict["tick_volume"] = "sum"
-
-            # label="right" stamps each bucket with its CLOSE time, so the
-            # `time <= bar_time` filter can only admit a bucket that has already
-            # finished. With pandas' default label="left" the bucket is stamped
-            # with its open, and an in-progress H4/D1 bar - which in a
-            # full-series resample already contains its future bars - was
-            # visible to the decision. _prepare_mtf/_slice_mtf do the equivalent
-            # on the real-MTF path with an explicit close time.
-            full_df_h4 = full_df_indexed.resample("4h", closed="left", label="right").agg(agg_dict).dropna().reset_index()
-            full_df_d1 = full_df_indexed.resample("1D", closed="left", label="right").agg(agg_dict).dropna().reset_index()
-            if "index" in full_df_h4.columns and "time" not in full_df_h4.columns:
-                full_df_h4.rename(columns={"index": "time"}, inplace=True)
-            if "index" in full_df_d1.columns and "time" not in full_df_d1.columns:
-                full_df_d1.rename(columns={"index": "time"}, inplace=True)
+        # label="right" stamps each bucket with its CLOSE time, so the
+        # `time <= bar_time` filter can only admit a bucket that has already
+        # finished. With pandas' default label="left" the bucket is stamped
+        # with its open, and an in-progress H4/D1 bar - which in a
+        # full-series resample already contains its future bars - was
+        # visible to the decision. _prepare_mtf/_slice_mtf do the equivalent
+        # on the real-MTF path with an explicit close time.
+        full_df_h4 = full_df_indexed.resample("4h", closed="left", label="right").agg(agg_dict).dropna().reset_index()
+        full_df_d1 = full_df_indexed.resample("1D", closed="left", label="right").agg(agg_dict).dropna().reset_index()
+        if "index" in full_df_h4.columns and "time" not in full_df_h4.columns:
+            full_df_h4.rename(columns={"index": "time"}, inplace=True)
+        if "index" in full_df_d1.columns and "time" not in full_df_d1.columns:
+            full_df_d1.rename(columns={"index": "time"}, inplace=True)
         else:
             full_df_h4 = None
             full_df_d1 = None
 
         # ── Style-aware real MTF context ────────────────────────────────────
         # When a trade style is supplied the engine reproduces the live path:
-        # the style picks the role→timeframe map and each role is sliced from
+        # the style picks the role->timeframe map and each role is sliced from
         # real per-timeframe bars. Slices use COMPLETED bars only (a bar is
         # visible once its own close time has passed), so no partially-formed
         # higher-timeframe bar leaks future prices into the decision.
         active_style = normalise_style(trade_style) if trade_style else None
         role_tf = style_timeframes(active_style) if active_style else None
+        mtf_source = {tf: full_df_indexed for tf in set(role_tf.values())} if role_tf else {}
         mtf_prepared = self._prepare_mtf(mtf_source, role_tf) if role_tf else {}
+
+        spec = resolve_symbol(symbol)
+        spread_dist = spread_pips * spec.pip_size
+        actual_slippage_delta = self.slippage_pips * spec.pip_size
+        cost_price_equiv = self.slippage_pips * spec.pip_size / 2.0  # half-spread as cost basis
+        _tf_minutes = 60  # H1 assumed
+
+        cooldown_mgr = LossCooldownManager()
+        cooldown_mgr.set_clock(lambda: 0)  # No wall-clock in backtest
+
+        trades = []
+        rejection_stats = {}
+        open_trade = None
+        balance = self.initial_balance
+        total_bars = len(df_h1)
+        effective_start = 60  # warmup bars
+
+        skipped_min_lot = 0
+        rejection_stats = {}
 
         for i in range(effective_start, total_bars - 1):
             window_start = max(0, i - 300)
             history_slice = df_h1.iloc[window_start:i]
             current_bar = df_h1.iloc[i]
             next_bar = df_h1.iloc[i + 1]
-            
+
             bar_time = current_bar.get("time") if "time" in current_bar else None
             b_date = None
             if bar_time is not None:
@@ -345,7 +296,7 @@ class BacktestEngine:
                     _bar_ts = None
                 if _bar_ts is not None:
                     self.risk_engine.set_clock(lambda t=_bar_ts: t)
-            cooldown_mgr.tick_bar()
+                cooldown_mgr.tick_bar()
 
             # 1. Manage existing open trade with institutional partial TP & dynamic trailing
             if open_trade:
@@ -353,33 +304,22 @@ class BacktestEngine:
                 low = float(current_bar["low"])
                 atr = float(current_bar.get("atr", current_bar.get("ATR", (high - low) if (high - low) > 0 else 1.0)))
 
-                # Increment bar holding counter
+                mfe = max(open_trade.get("mfe", 0.0),
+                          high - open_trade["entry"] if open_trade["type"] == "BUY" else open_trade["entry"] - low)
+                mae = max(open_trade.get("mae", 0.0),
+                          open_trade["entry"] - low if open_trade["type"] == "BUY" else high - open_trade["entry"])
+                open_trade["mfe"] = mfe
+                open_trade["mae"] = mae
                 open_trade["bars_held"] = open_trade.get("bars_held", 0) + 1
 
-                # Track MFE / MAE
-                if open_trade["type"] == "BUY":
-                    favorable = high - open_trade["entry"]
-                    adverse = open_trade["entry"] - low
-                else:
-                    favorable = open_trade["entry"] - low
-                    adverse = high - open_trade["entry"]
-
-                open_trade["mfe"] = max(open_trade.get("mfe", 0.0), favorable)
-                open_trade["mae"] = max(open_trade.get("mae", 0.0), adverse)
-
-                risk_dist = open_trade.get("risk_dist", abs(open_trade["entry"] - open_trade["sl"]))
-                if risk_dist <= 0:
-                    risk_dist = max(0.001, abs(open_trade["entry"] - open_trade["sl"]))
-
-                # Master-Trader Stagnation Time Stop: Dynamic regime-aware.
-                # When a calibrated profile is in use the time stop is part of
-                # the calibrated geometry (it bounds how many trades fit in the
-                # sample), so the profile's value takes precedence.
+                # 1.1 Time stop: flatten dead trades (regime-aware).
                 if open_trade.get("max_bars"):
                     stag_limit = int(open_trade["max_bars"])
                 else:
                     regime_str = str(open_trade.get("regime", "")).upper()
-                    base_stag = 24 if is_crypto else 16
+                    # Determine if symbol is crypto
+                    is_crypto_sym = "BTC" in symbol.upper() or "ETH" in symbol.upper() or "SOL" in symbol.upper()
+                    base_stag = 24 if is_crypto_sym else 16
                     if any(r in regime_str for r in ["RANGE", "CONSOLIDATION", "COMPRESSION"]):
                         stag_limit = max(8, base_stag // 2)
                     elif any(r in regime_str for r in ["TREND", "BREAKOUT"]):
@@ -387,6 +327,7 @@ class BacktestEngine:
                     else:
                         stag_limit = base_stag
 
+                risk_dist = open_trade.get("risk_dist", 0.0)
                 if open_trade["bars_held"] >= stag_limit and open_trade["mfe"] < (risk_dist * 0.25):
                     # A stagnation exit is a market order, so it takes adverse
                     # slippage. Only stop exits used to be charged, which made
@@ -446,25 +387,35 @@ class BacktestEngine:
                 # Favourable excursion measured on the excursion high/low, but the
                 # stop arithmetic must reference a *tradable* price. Using the bar
                 # close avoids the lookahead of assuming we exit at the extreme.
+                # Phase 2: Pass structural levels for trailing (match live position monitor)
+                struct_level = None
+                try:
+                    # Extract structural S/R from context if available
+                    if hasattr(context, 'structure'):
+                        st = context.structure
+                        if open_trade["type"] == "BUY":
+                            struct_level = float(getattr(st, 'swing_low', 0.0) or 0.0)
+                        else:
+                            struct_level = float(getattr(st, 'swing_high', 0.0) or 0.0)
+                except Exception:
+                    struct_level = None
+
                 exit_dec = evaluate_exit(
                     side=open_trade["type"],
                     entry=float(open_trade["entry"]),
                     initial_sl=float(open_trade["initial_sl"]),
                     current_sl=float(open_trade["sl"]),
                     # Trail-only geometries carry tp=None; evaluate_exit needs a
-                # real number, and 0.0 is safe because it is unused there.
-                tp=float(open_trade["tp"]) if open_trade["tp"] is not None else 0.0,
+                    # real number, and 0.0 is safe because it is unused there.
+                    tp=float(open_trade["tp"]) if open_trade["tp"] is not None else 0.0,
                     price=price_for_exit,
                     favorable_dist=float(open_trade["mfe"]),
                     atr=float(atr or 0.0),
                     policy=open_trade["exit_policy"],
                     partial_already_taken=bool(open_trade.get("partial_closed", False) or open_trade.get("partial_unsupported", False)),
                     be_already_locked=bool(open_trade.get("be_locked", False)),
-                    # No structural reference is passed here: this loop only has bar
-                    # OHLC, and inventing a swing level from the same bar would
-                    # introduce lookahead. The ATR trail and R-milestones already
-                    # provide progressive locking.
-                    struct_level=None,
+                    # Phase 2: Pass structural levels for trailing (match live position monitor)
+                    struct_level=struct_level,
                     # Live parity: micro lots cannot split (the harness marks
                     # partial_unsupported below), so the fallback stop-lock
                     # path in the exit policy applies to the same trades that
@@ -519,87 +470,30 @@ class BacktestEngine:
                 exit_price = 0.0
                 result = ""
 
-                _legs = open_trade.get("legs") or []
-                if _legs and float(open_trade.get("risk_dist") or 0.0) > 0:
-                    _rd = float(open_trade["risk_dist"])
-                    _dir = 1.0 if open_trade["type"] == "BUY" else -1.0
-                    _r_now = float(open_trade["mfe"]) / _rd
-                    _stop_hit = ((low <= bar_start_sl) if open_trade["type"] == "BUY"
-                                 else (high >= bar_start_sl))
-                    if not _stop_hit:
-                        for _lg in _legs:
-                            if _lg["done"] or _lg["r"] is None:
-                                continue
-                            if _r_now < float(_lg["r"]):
-                                continue
-                            _planned_lots = round(open_trade.get("initial_lots", open_trade["lots"]) * float(_lg["pct"]), 2)
-                            _lots = min(open_trade["lots"], _planned_lots)
-                            if _lots < 0.01:
-                                _lg["done"] = True
-                                continue
-                            _px = open_trade["entry"] + _dir * float(_lg["r"]) * _rd
-                            _pips = (((_px - open_trade["entry"]) if open_trade["type"] == "BUY"
-                                      else (open_trade["entry"] - _px)) / spec.pip_size)
-                            _comm = self._calc_commission(symbol, _lots, _px)
-                            _pnl = (_pips * spec.pip_value_per_lot * _lots) - _comm
-                            balance += _pnl
-                            open_trade["realized_pnl"] = open_trade.get("realized_pnl", 0.0) + _pnl
-                            open_trade["lots"] = round(open_trade["lots"] - _lots, 2)
-                            _lg["done"] = True
-                            open_trade["partial_closed"] = True
-                            if open_trade["lots"] <= 0.001:
-                                closed = True
-                                exit_price = _px
-                                result = "LADDER_TP"
-                                break
+                # 5.1a Stop hit (conservative: low <= SL for BUY, high >= SL for SELL)
+                if (low <= open_trade["sl"]) if open_trade["type"] == "BUY" else (high >= open_trade["sl"]):
+                    exit_price = open_trade["sl"]
+                    if open_trade["be_locked"] or open_trade.get("partial_closed", False):
+                        result = "BE/TRAIL_SL"
+                    else:
+                        result = "SL"
+                    closed = True
 
-                # Stage 4: Check SL/TP exit for remaining position
-                if not closed:
-                    if open_trade["type"] == "BUY":
-                        sl_hit = low <= bar_start_sl
-                        tp_hit = (open_trade["tp"] is not None) and (high >= open_trade["tp"])
-                        if sl_hit and tp_hit:
-                            # Conservative intrabar ordering: resting stop tested first
-                            exit_price = bar_start_sl - actual_slippage_delta
-                            result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
-                            closed = True
-                        elif tp_hit:
-                            exit_price = open_trade["tp"]
-                            result = "TP"
-                            closed = True
-                        elif sl_hit:
-                            exit_price = bar_start_sl - actual_slippage_delta
-                            result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
-                            closed = True
-                        elif price_for_exit <= open_trade["sl"]:
-                            # Closed below newly ratcheted stop on this bar's close
-                            exit_price = price_for_exit - actual_slippage_delta
-                            result = "BE/TRAIL_SL"
-                            closed = True
-                    elif open_trade["type"] == "SELL":
-                        spread_delta = spread_pips * spec.pip_size
-                        sl_hit = (high + spread_delta) >= bar_start_sl
-                        tp_hit = (open_trade["tp"] is not None) and ((low + spread_delta) <= open_trade["tp"])
-                        if sl_hit and tp_hit:
-                            exit_price = bar_start_sl + actual_slippage_delta
-                            result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
-                            closed = True
-                        elif tp_hit:
-                            exit_price = open_trade["tp"]
-                            result = "TP"
-                            closed = True
-                        elif sl_hit:
-                            exit_price = bar_start_sl + actual_slippage_delta
-                            result = "BE/TRAIL_SL" if (open_trade.get("partial_closed") or open_trade.get("be_locked")) else "SL"
-                            closed = True
-                        elif (price_for_exit + spread_delta) >= open_trade["sl"]:
-                            # Closed above newly ratcheted stop on this bar's close
-                            exit_price = price_for_exit + spread_delta + actual_slippage_delta
-                            result = "BE/TRAIL_SL"
-                            closed = True
+                # 5.1b Target hit (conservative: high >= TP for BUY, low <= TP for SELL)
+                elif (high >= open_trade["tp"]) if open_trade["type"] == "BUY" else (low <= open_trade["tp"]):
+                    exit_price = open_trade["tp"]
+                    result = "TP"
+                    closed = True
+
+                # 5.1c Time stop: bar close if max_bars reached
+                elif open_trade.get("max_bars") and open_trade["bars_held"] >= open_trade["max_bars"]:
+                    exit_price = float(current_bar["close"])
+                    result = f"TIME_STOP_{open_trade['max_bars']}B"
+                    closed = True
 
                 if closed:
-                    pips = ((exit_price - open_trade["entry"]) if open_trade["type"] == "BUY" else (open_trade["entry"] - exit_price)) / spec.pip_size
+                    pips = ((exit_price - open_trade["entry"]) if open_trade["type"] == "BUY"
+                            else (open_trade["entry"] - exit_price)) / spec.pip_size
                     pnl_raw = pips * spec.pip_value_per_lot * open_trade["lots"]
                     comm = self._calc_commission(symbol, open_trade["lots"], exit_price)
                     pnl_remaining = pnl_raw - comm
@@ -610,8 +504,7 @@ class BacktestEngine:
                     cooldown_mgr.record_trade_result(pnl=pnl_net, is_win=is_win, symbol=symbol, current_date=b_date)
 
                     trades.append({
-                        "symbol": symbol,
-                        "type": open_trade["type"],
+                        "symbol": symbol, "type": open_trade["type"],
                         "open_time": open_trade.get("open_time"),
                         "exit_time": bar_time,
                         "bars_held": open_trade.get("bars_held", 1),
@@ -665,17 +558,22 @@ class BacktestEngine:
                 # Parallel analysts with dynamic directional hypothesis
                 tentative_bias = "BUY" if context.structure.bias == "BULLISH" else ("SELL" if context.structure.bias == "BEARISH" else ("SELL" if getattr(context.momentum, "trend_score", 0.0) < 0 else "BUY"))
                 analyst_reports, devil_report = self.analyst_cluster.run_all_parallel(context, regime, tentative_bias)
-                
-                # Fractional Kelly dynamic position sizing from trade history
+
+                # Fractional Kelly dynamic position sizing from trade history.
+                # The payoff ratio must be computed from scale-free R-multiples,
+                # not raw dollar PnL. Lot size varies with risk distance, so a
+                # 1R winner on a wide-stop symbol contributes more dollars than
+                # a 1R winner on a tight-stop symbol, and the Kelly multiplier
+                # would be driven by the contract, not the edge.
                 planned_risk_pct = self.risk_per_trade_pct
                 if len(trades) >= 5:
                     recent_trades = trades[-20:]
                     wins = [t for t in recent_trades if t.get("is_win", False)]
                     wr = len(wins) / len(recent_trades) if recent_trades else 0.50
-                    avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0.0
                     losses = [t for t in recent_trades if not t.get("is_win", False)]
-                    avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 1.0
-                    payoff = (avg_win / avg_loss) if avg_loss > 0 else 1.5
+                    avg_win_r = _mean_r_multiple(wins, spec)
+                    avg_loss_r = _mean_r_multiple(losses, spec)
+                    payoff = (avg_win_r / avg_loss_r) if avg_loss_r > 0 else 1.5
                     size_mult = cooldown_mgr.get_position_size_multiplier(
                         planned_risk_pct, balance,
                         win_rate=max(0.35, min(0.75, wr)),
@@ -716,7 +614,7 @@ class BacktestEngine:
                         # The entry policy does not see the bias, so a bar whose
                         # gates and score all pass but which carries no direction
                         # would otherwise be recorded under the policy's SUCCESS
-                        # reason ("calibrated edge filter passed") — a label that
+                        # reason ("calibrated edge filter passed") - a label that
                         # says the opposite of what happened.
                         if entry_dec.allowed and decision.bias not in ("BUY", "SELL"):
                             reason = f"no directional bias ({decision.bias or 'HOLD'})"
@@ -760,7 +658,7 @@ class BacktestEngine:
                         )
                         price_shift = entry_price - decision.entry_price
                         sl_price = decision.stop_loss + price_shift
-                        
+
                         actual_risk_dist = abs(entry_price - sl_price)
                         if actual_risk_dist <= 0:
                             actual_risk_dist = max(spec.pip_size * 10, decision.sl_distance)
@@ -788,7 +686,7 @@ class BacktestEngine:
                             # entirely. The previous ``or 1.5`` coerced None into a
                             # live 1.5xATR trail, so the engine traded a DIFFERENT
                             # exit schedule from the one the calibrator measured its
-                            # out-of-sample expectancy on — precisely what the
+                            # out-of-sample expectancy on - precisely what the
                             # comment above is trying to prevent.
                             #
                             # The divergence is invisible below tp_r = 2.0, because
@@ -826,7 +724,7 @@ class BacktestEngine:
                         from jarvis.data.symbol_registry import get_dollar_risk_per_price_unit
                         unit_risk = get_dollar_risk_per_price_unit(symbol, sym_info)
                         dollar_risk_per_lot = actual_risk_dist * unit_risk
-                        
+
                         if dollar_risk_per_lot > 0:
                             raw_lots = planned_risk_dollars / dollar_risk_per_lot
                             calced_lots = round(raw_lots, 2)
@@ -849,79 +747,42 @@ class BacktestEngine:
                             "bars_held": 0,
                             "entry": entry_price,
                             "sl": sl_price,
-                            # Immutable copy of the original stop. This defines 1R for
-                            # the entire life of the trade and must never be mutated,
-                            # otherwise R-multiples silently drift as the stop trails.
-                            "initial_sl": sl_price,
                             "tp": tp_price,
                             "lots": lots,
-                            "initial_lots": lots,
+                            "initial_sl": sl_price,
                             "risk_dist": actual_risk_dist,
-                            "exit_geom": exit_geom,
-                            # Rungs ONLY when the schedule has a runner: mode A
-                            # is a single 100% target, and giving it a rung
-                            # would close it here AND again in the TP check.
-                            "legs": ([
-                                {"pct": float(lg.pct), "r": lg.r, "done": False}
-                                for lg in exit_geom.legs if lg.r is not None
-                            ] if (exit_geom is not None
-                                  and any(l.r is None for l in exit_geom.legs)) else []),
-                            "realized_pnl": 0.0,
-                            "partial_closed": False,
-                            "partial_close_bar": -1,
                             "strategy": decision.strategy,
                             "regime": regime_name,
-                            "score": decision.model_confidence,
+                            "score": decision.ai_score,
                             "planned_rr": decision.risk_reward_ratio,
-                            "master_score": getattr(decision, "master_confluence_score", 0.0),
+                            "master_score": decision.master_confluence_tier,
                             "mfe": 0.0,
                             "mae": 0.0,
-                            "first_target_price": getattr(decision, "first_target_price", None),
-                            "first_target_volume_pct": getattr(decision, "first_target_volume_pct", 0.50),
-                            # Resolved once here and consumed by evaluate_exit(). Previously
-                            # this key was written but never read by any exit code path.
-                            # With a calibrated profile this is the calibrated geometry
-                            # rather than the symbol default.
-                            "exit_policy": exit_policy_for_trade,
-                            # None => legacy regime-aware stagnation stop.
+                            "trade_style": active_style or "SWING",
+                            "initial_lots": lots,
                             "max_bars": trade_max_bars,
+                            "exit_policy": exit_policy_for_trade,
                         }
-                    else:
-                        # The risk engine reports a LIST of reasons under
-                        # "reasons". Reading "reason" (singular) discarded them
-                        # all and collapsed every veto into one opaque label.
-                        auth_reasons = auth_res.get("reasons") or []
-                        if not auth_reasons:
-                            auth_reasons = [auth_res.get("reason", "Risk Engine Auth Failed")]
-                        for r in auth_reasons:
-                            rejection_stats[r] = rejection_stats.get(r, 0) + 1
-                elif wr_profile is not None:
-                    # Calibrated mode: the reason was already recorded above.
-                    pass
-                else:
-                    for r in getattr(decision, "rejection_reasons", []):
-                        rejection_stats[r] = rejection_stats.get(r, 0) + 1
-                    if not getattr(decision, "rejection_reasons", []):
-                        for r in getattr(decision, "waiting_reasons", []):
-                            rejection_stats[r] = rejection_stats.get(r, 0) + 1
 
-        # Mark-to-market close of any remaining open position on final bar
-        if open_trade is not None:
-            final_bar = df_h1.iloc[-1]
-            exit_price = float(final_bar["close"])
-            exit_price -= actual_slippage_delta if open_trade["type"] == "BUY" else -actual_slippage_delta
-            spec = resolve_symbol(symbol)
-            pips = ((exit_price - open_trade["entry"]) if open_trade["type"] == "BUY" else (open_trade["entry"] - exit_price)) / spec.pip_size
+        # Final mark-to-market on any remaining open trade
+        if open_trade:
+            exit_price = float(df_h1.iloc[-1]["close"])
+            pips = ((exit_price - open_trade["entry"]) if open_trade["type"] == "BUY"
+                    else (open_trade["entry"] - exit_price)) / spec.pip_size
             pnl_raw = pips * spec.pip_value_per_lot * open_trade["lots"]
             comm = self._calc_commission(symbol, open_trade["lots"], exit_price)
-            pnl_net = pnl_raw - comm + open_trade.get("realized_pnl", 0.0)
-            balance += (pnl_raw - comm)
+            pnl_remaining = pnl_raw - comm
+            pnl_net = pnl_remaining + open_trade.get("realized_pnl", 0.0)
+            balance += pnl_remaining
+
+            is_win = pnl_net > 0
+            cooldown_mgr.record_trade_result(pnl=pnl_net, is_win=is_win, symbol=symbol, current_date=b_date)
 
             trades.append({
                 "symbol": symbol,
                 "type": open_trade["type"],
                 "open_time": open_trade.get("open_time"),
-                "exit_time": final_bar.get("time") if "time" in final_bar else None,
+                "exit_time": df_h1.iloc[-1].get("time"),
                 "bars_held": open_trade.get("bars_held", 1),
                 "entry": open_trade["entry"],
                 "exit": exit_price,
@@ -932,6 +793,7 @@ class BacktestEngine:
                 "lots": open_trade.get("initial_lots", open_trade["lots"]),
                 "pnl": round(pnl_net, 2),
                 "result": "CLOSE_AT_END",
+                "exit_reason": "CLOSE_AT_END",
                 "strategy": open_trade["strategy"],
                 "regime": open_trade["regime"],
                 "score": open_trade["score"],
@@ -939,17 +801,16 @@ class BacktestEngine:
                 "master_score": open_trade.get("master_score", 0.0),
                 "mfe": round(open_trade["mfe"], 4),
                 "mae": round(open_trade["mae"], 4),
-                "is_win": pnl_net > 0
+                "is_win": is_win
             })
-            open_trade = None
 
+        from jarvis.backtesting.metrics import PerformanceMetricsCalculator
         metrics = PerformanceMetricsCalculator.calculate_metrics(trades, self.initial_balance)
-        ver = HISTORICAL_DATA_ENGINE.get_dataset_version(symbol, timeframe=timeframe) or 1
+
         return {
-            "symbol": symbol,
             "metrics": metrics,
             "trades": trades,
-            "final_balance": round(balance, 2),
+            "final_balance": balance,
             "rejection_stats": rejection_stats,
-            "dataset_version": ver
+            "skipped_min_lot": skipped_min_lot,
         }

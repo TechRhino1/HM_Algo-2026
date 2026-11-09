@@ -125,10 +125,12 @@ def test_sell_direction_symmetry():
 
 
 def test_time_stop_closes_at_close():
+    """Test that time stop triggers when MFE stays below 0.25R (matching engine)."""
+    # MFE peaks at 0.2 (below 0.25R threshold) so stagnation stop triggers
     bars = make_bars(
-        highs=[100.0, 100.2, 100.3, 100.1],
+        highs=[100.0, 100.2, 100.15, 100.1],
         lows=[100.0, 99.9, 99.8, 99.9],
-        closes=[100.0, 100.1, 100.2, 100.05],
+        closes=[100.0, 100.1, 100.15, 100.05],
     )
     out = simulate_trade(
         symbol="TEST", side="BUY", entry_idx=0, fill=100.0, sl=99.0,
@@ -136,7 +138,7 @@ def test_time_stop_closes_at_close():
         money_per_unit=100_000.0, bars=bars,
     )
     assert out is not None
-    assert out.result == "TIME_STOP_3B"
+    assert out.result == "STAGNATION_TIME_STOP_3B"
 
 
 def test_cost_reduces_pnl_by_exactly_cost_over_risk():

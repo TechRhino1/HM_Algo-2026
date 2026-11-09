@@ -45,15 +45,14 @@ from typing import Any, List, Optional
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fallback defaults — used only when a symbol profile cannot be resolved.
-# Kept deliberately conservative (wide stop protection, late breakeven) because
-# premature breakeven was the single largest source of lost profit historically.
+# Phase 2: Adjusted for better expectancy - earlier trailing, higher TP targets
 # ─────────────────────────────────────────────────────────────────────────────
 DEFAULT_BE_TRIGGER_R = 2.0        # move SL to entry only after +2R
 DEFAULT_FAST_CASH_R = 0.75        # bank the first partial at +0.75R
 DEFAULT_FAST_CASH_VOLUME_PCT = 0.50
 DEFAULT_BE_BUFFER_PCT = 0.05      # buffer above/below entry when locking BE
-DEFAULT_RUNNER_TRAIL_ATR = 1.2    # trail width in ATR once running
-DEFAULT_TRAIL_ACTIVATION_R = 2.0  # only start trailing beyond +2R
+DEFAULT_RUNNER_TRAIL_ATR = 1.0    # trail width in ATR once running (Phase 2: tightened from 1.2)
+DEFAULT_TRAIL_ACTIVATION_R = 1.0  # only start trailing beyond +1R (Phase 2: lowered from 2.0)
 
 # Time stop (2026-10-20 ledger audit): half of all demo trades rode to a full
 # -1.00R stop (median R) because nothing ever freed a trade that neither ran
@@ -94,19 +93,12 @@ class ExitPolicy:
     milestones: List[tuple] = field(
         default_factory=lambda: [(1.0, -0.35), (1.5, 0.25), (2.0, 0.60), (2.8, 1.25), (3.8, 2.25), (5.0, 3.50)]
     )
-    # Bridge protection (2026-10-21 master evaluation): the proven ladder
-    # above only engages at +1.00R, but the ledger's death zone sits BELOW
-    # that — trades that peaked around +0.6..0.9R and still died at the full
-    # -1.00R stop. The cap arms only when the trade is actively GIVING BACK
-    # its peak (peak minus current excursion >= peak_bridge_retrace_r): a
-    # healthy runner at its peak never meets the retrace condition, so no
-    # stop can ratchet prematurely (the historic defect the canonical policy
-    # tests pin: "no stop ratchet before the +2R breakeven trigger"). The
-    # cap itself locks a FIXED LOSS level (peak_bridge_lock_r, a negative R
-    # below entry): it never locks profit and only converts a -1R
-    # round-trip into a -0.25R controlled loss.
-    peak_bridge_activate_r: float = 0.60
-    peak_bridge_retrace_r: float = 0.45
+    # Bridge protection (DISABLED Phase 2): was capping winners at -0.25R
+    # The bridge protection capped winners by locking SL at -0.25R after a +0.6R peak
+    # retracted 0.45R. This prematurely capped winners that could have run 5-10R.
+    # Disabled by setting activation threshold beyond practical reach.
+    peak_bridge_activate_r: float = 100.0  # Disabled - never activates
+    peak_bridge_retrace_r: float = 100.0   # Disabled
     peak_bridge_lock_r: float = -0.25
     # Time stop: a trade that has been alive longer than time_stop_minutes and
     # still sits below time_stop_min_r is flattened outright (a close decision,

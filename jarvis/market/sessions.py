@@ -11,7 +11,7 @@ from jarvis.data.schemas import SessionContext
 
 class SessionEngine:
     """Calculates active trading sessions, prime volume hours, killzones, and global market open/closed status."""
-    
+
     # Killzone definitions (UTC hours) — institutional high-probability entry windows
     KILLZONES: ClassVar[Dict[str, Tuple[int, int]]] = {
         "LONDON_OPEN":  (7, 10),   # 07:00-10:00 UTC — first directional move of the day
@@ -19,6 +19,11 @@ class SessionEngine:
         "LONDON_CLOSE": (15, 17),  # 15:00-17:00 UTC — mean reversion / position unwinding
     }
     ASIAN_RANGE = (0, 7)  # 00:00-07:00 UTC — defines the daily range box
+
+    # Phase 4: Killzone performance tracking
+    KILLZONE_PERFORMANCE: ClassVar[Dict[str, Dict[str, float]]] = {
+        kz: {"trades": 0, "wins": 0, "win_rate": 0.0, "expectancy_r": 0.0} for kz in KILLZONES.keys()
+    }
 
     # Marks a 24/7 instrument. `jarvis.data.tradingview_provider._CRYPTO_SYMBOLS`
     # serves a longer list (XRP, ADA, DOGE, AVAX, DOT, BNB...); those were falling
@@ -136,6 +141,27 @@ class SessionEngine:
         Used as a hard filter for Forex entries — only trade during London/NY killzones."""
         kz = SessionEngine.get_active_killzone(dt)
         return kz["is_in_killzone"]
+
+    @staticmethod
+    def update_killzone_performance(killzone: str, outcome_r: float) -> None:
+        """Update killzone performance with trade outcome."""
+        if killzone in SessionEngine.KILLZONE_PERFORMANCE:
+            perf = SessionEngine.KILLZONE_PERFORMANCE[killzone]
+            perf["trades"] += 1
+            if outcome_r > 0:
+                perf["wins"] += 1
+            perf["win_rate"] = perf["wins"] / perf["trades"]
+            # Update expectancy using running average
+            old_total = perf.get("total_r", 0.0)
+            perf["total_r"] = old_total + outcome_r
+            perf["expectancy_r"] = perf["total_r"] / perf["trades"]
+
+    @staticmethod
+    def get_killzone_performance(killzone: str) -> Dict[str, float]:
+        """Get performance stats for a killzone."""
+        if killzone in SessionEngine.KILLZONE_PERFORMANCE:
+            return dict(SessionEngine.KILLZONE_PERFORMANCE[killzone])
+        return {"trades": 0, "wins": 0, "win_rate": 0.0, "expectancy_r": 0.0}
 
     @staticmethod
     def is_index_prime_session(dt: Optional[datetime] = None) -> bool:

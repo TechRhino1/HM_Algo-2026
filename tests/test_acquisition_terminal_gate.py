@@ -119,7 +119,7 @@ class AcquisitionTerminalGateTest(unittest.TestCase):
         error = None
         df = None
         with mock.patch.object(acq, "MT5_AVAILABLE", True), \
-                mock.patch.object(acq, "mt5", fake), \
+                mock.patch.object(acq, "mt5", fake, create=True), \
                 mock.patch("jarvis.data.broker_symbols.ensure_mt5_terminal",
                            return_value=gate_open) as gate, \
                 mock.patch("jarvis.data.broker_symbols.resolve_broker_symbol",
@@ -208,7 +208,7 @@ class AcquisitionTerminalGateTest(unittest.TestCase):
         engine = self._engine()
         fake = _FakeMT5(bars=[_bar(1704067200)])
         with mock.patch.object(acq, "MT5_AVAILABLE", True), \
-                mock.patch.object(acq, "mt5", fake), \
+                mock.patch.object(acq, "mt5", fake, create=True), \
                 mock.patch("jarvis.data.broker_symbols.ensure_mt5_terminal",
                            return_value=True), \
                 mock.patch("jarvis.data.broker_symbols.resolve_broker_symbol",
