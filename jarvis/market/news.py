@@ -26,6 +26,8 @@ import logging
 
 import threading
 
+from typing import Optional
+
 import urllib.request
 
 import xml.etree.ElementTree as ET

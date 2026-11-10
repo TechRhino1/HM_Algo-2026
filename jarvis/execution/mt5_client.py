@@ -6,7 +6,7 @@ import os
 import time
 import logging
 import math
-from typing import Dict, List, Optional, Any, ClassVar
+from typing import Dict, List, Optional, Any, ClassVar, Tuple
 
 from jarvis.common.timeout_guard import TimeoutGuard
 from jarvis.data.broker_time import broker_utc_offset
@@ -110,6 +110,11 @@ class MT5Client:
                         trade_mode = getattr(acc, "trade_mode", 0)
                         mode_str = "DEMO" if trade_mode == 0 else ("REAL" if trade_mode == 2 else "CONTEST")
                         logger.info(f"Connected to MT5 Server: {acc.server} | Login: #{acc.login} | TradeMode: {mode_str} | Equity: ${acc.equity:.2f}")
+                        # Update mode based on actual account trade_mode
+                        if trade_mode == 0:
+                            self.mode = "demo"
+                        elif trade_mode == 2:
+                            self.mode = "live"
                         if self.mode == "demo" and trade_mode == 2:
                             logger.critical(
                                 f"SAFETY WARNING: Execution mode is DEMO, but connected to REAL MT5 account #{acc.login}! "
@@ -257,6 +262,11 @@ class MT5Client:
                         "volume_step": float(getattr(sym_info, "volume_step", 0.01) or 0.01),
                     })
                     self._symbol_spec_cache[resolved] = (now_ts, dict(spec_dict))
+                    # Update mode based on actual account trade_mode
+                    if trade_mode == 0:
+                        self.mode = "demo"
+                    elif trade_mode == 2:
+                        self.mode = "live"
         except Exception as e:
             logger.warning(f"Failed to fetch MT5 symbol info for {resolved}: {e}")
         return spec_dict

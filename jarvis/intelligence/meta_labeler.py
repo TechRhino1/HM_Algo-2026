@@ -13,6 +13,8 @@ candles (forward-return labels) and persisted to disk.
 """
 import logging
 import os
+from typing import Optional
+
 import numpy as np
 
 logger = logging.getLogger("JARVIS_MetaLabeler")

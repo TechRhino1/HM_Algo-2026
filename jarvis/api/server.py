@@ -121,7 +121,13 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
                 return cls.orchestrator
             try:
                 from jarvis.application.orchestrator import JarvisOrchestrator
-                mode = "live" if getattr(cls.mt5_client, "is_connected", False) else "paper"
+                # Determine execution mode from MT5 client's actual mode
+                # (live, demo, paper) rather than just connected/disconnected
+                mt5_mode = getattr(cls.mt5_client, "mode", "paper")
+                if mt5_mode in ("live", "demo", "paper"):
+                    mode = mt5_mode
+                else:
+                    mode = "paper"
                 logger.info("Initializing lazy fallback JarvisOrchestrator for web terminal (mode=%s)...", mode)
                 orch = JarvisOrchestrator(mode=mode)
                 cls.configure_orchestrator(orch)
@@ -587,22 +593,17 @@ class JarvisRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/telemetry_state", "/api/telemetry"):
                 snap = self.state_manager.get_state_snapshot()
                 acc_dict = snap.get("account")
-                if not acc_dict or acc_dict.get("balance", 0) == 0:
-                    # Only refresh from the broker when a connection is ALREADY
-                    # held. `get_account_snapshot()` connects on first use, and
-                    # `init_connection` retries with 1+2+4+8+16s backoff — so
-                    # calling it here parked a request thread for ~31s whenever
-                    # the terminal was down. Measured on the live server:
-                    # `/api/telemetry_state` timed out at 15s while every other
-                    # endpoint answered in ~0.15s, which reads as "this endpoint
-                    # is broken" rather than "a read is paying for a connect".
-                    # Connecting is the background synchroniser's job; a read
-                    # reports what is known, and reports nothing as nothing.
-                    if getattr(self.mt5_client, "is_connected", False):
-                        acc = self.mt5_client.get_account_snapshot()
-                        pos = self.mt5_client.get_open_positions()
-                        if acc and acc.login > 0:
-                            self.state_manager.sync_broker_state(acc, pos)
+                # Refresh from broker if: no account data, zero balance, OR MT5 is connected in live/demo mode
+                # (so we get real account info instead of paper/synthetic data)
+                mt5_connected = getattr(self.mt5_client, "is_connected", False)
+                mt5_mode = getattr(self.mt5_client, "mode", "paper")
+                should_refresh = (not acc_dict or acc_dict.get("balance", 0) == 0 or
+                                 (mt5_connected and mt5_mode in ("live", "demo")))
+                if should_refresh and getattr(self.mt5_client, "is_connected", False):
+                    acc = self.mt5_client.get_account_snapshot()
+                    pos = self.mt5_client.get_open_positions()
+                    if acc and acc.login > 0:
+                        self.state_manager.sync_broker_state(acc, pos)
                         snap = self.state_manager.get_state_snapshot()
                 
                 sym = query.get("symbol", ["XAUUSD"])[0]

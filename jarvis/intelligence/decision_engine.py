@@ -1760,6 +1760,7 @@ class DecisionEngine:
                 mtf_align = getattr(context, "mtf_alignment", {}) or {}
                 h4_b = mtf_align.get("H4", "NEUTRAL") if isinstance(mtf_align, dict) else "NEUTRAL"
                 ema20_dist = getattr(context.momentum, "ema20_distance", 0.0) if hasattr(context, "momentum") else 0.0
+                ts_v = float(getattr(context.momentum, "trend_score", 0.0) or 0.0) if hasattr(context, "momentum") else 0.0
                 if regime_bear and h4_b == "BEARISH" and ts_v <= -10.0 and ema20_dist <= 0.5:
                     strat_p = _bounded_bayesian_probability_update(strat_p, 0.05, style, is_micro_mode)
                 strat_rr = max(2.5, strat_rr * 1.2)
